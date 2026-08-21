@@ -1,0 +1,17 @@
+{
+  "name": "nonchalant-monorepo",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "node bench/reconcile.bench.mjs && node bench/process-scale.bench.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.0",
+    "fast-check": "^4.1.0"
+  }
+}
