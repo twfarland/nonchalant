@@ -1,0 +1,390 @@
+// The process runtime (M3): spawn drives an async generator, publishing every
+// yield through a graph `source` — so process reads inside derives/effects get
+// path-precise wakes for free, and the local update path is literally the wire
+// codec (docs/DESIGN.md "write plain, read tracked").
+//
+// Lifecycle (docs/DESIGN.md, docs/DECISIONS.md #7, Q1–Q3):
+//   - Self: FIFO backpressured mailbox; `latest()` drops the queue and skips to
+//     the newest message; `signal` aborts per instance; `send` is self-send.
+//   - Ownership: spawns during the synchronous window of a process resumption
+//     attach to that process and die with it. Dispose order: mailbox closes,
+//     `finally` blocks run, owned children die — in that order.
+//   - Crash: readers keep the last value with `stale: true`; pending asks
+//     REJECT; queued casts survive into the restarted instance and replay.
+//     `restart: 'on-crash'` re-runs the generator from its init args (the
+//     recovery state, Erlang position) up to `maxRestarts` times.
+//   - Bounded mailbox (`mailbox: n`): overflow drops the oldest message
+//     (a dropped ask rejects), with a one-shot dev warning.
+
+import { source, effect, untracked } from './graph.ts'
+import type { Json } from './reconcile.ts'
+import type { Proc, Process, Self } from './types.ts'
+
+export interface SpawnOpts<T> {
+  /** First readable value; decides `Process<T>` vs `Process<T | undefined>`. */
+  initial?: T
+  /** 'on-crash' re-runs the generator from its args after a throw. Default 'never'. */
+  restart?: 'never' | 'on-crash'
+  /** Restart budget for 'on-crash' (default 3); exceeded → terminal crash. */
+  maxRestarts?: number
+  /** Mailbox bound; overflow drops the oldest message (drop-oldest, dev warning). */
+  mailbox?: number
+}
+
+// ---------- mailbox ----------
+
+interface MailboxHooks<In> {
+  bound?: number
+  onDrop?: (msg: In) => void
+  onDeliver?: () => void
+  onIdle?: () => void
+}
+
+interface Taker<In> {
+  resolve: (r: IteratorResult<In>) => void
+  latest: boolean
+}
+
+class Mailbox<In> {
+  private queue: In[] = []
+  private takers: Taker<In>[] = []
+  private warned = false
+  private drainScheduled = false
+  closed = false
+
+  constructor(private hooks: MailboxHooks<In>) {}
+
+  push(msg: In): void {
+    if (this.closed) {
+      this.hooks.onDrop?.(msg)
+      return
+    }
+    const head = this.takers[0]
+    if (head !== undefined && !head.latest) {
+      this.takers.shift()
+      this.hooks.onDeliver?.()
+      head.resolve({ value: msg, done: false })
+      return
+    }
+    this.queue.push(msg)
+    // a waiting latest() taker gets the newest of the burst, not the first:
+    // defer delivery one microtask so same-tick sends can supersede
+    if (head !== undefined) this.scheduleDrain()
+    const bound = this.hooks.bound
+    if (bound !== undefined && this.queue.length > bound) {
+      const dropped = this.queue.shift() as In
+      if (!this.warned) {
+        this.warned = true
+        console.warn(`nonchalant: mailbox overflow (bound ${bound}) — dropping oldest message`)
+      }
+      this.hooks.onDrop?.(dropped)
+    }
+  }
+
+  private scheduleDrain(): void {
+    if (this.drainScheduled) return
+    this.drainScheduled = true
+    Promise.resolve().then(() => {
+      this.drainScheduled = false
+      const head = this.takers[0]
+      if (this.closed || this.queue.length === 0 || head === undefined || !head.latest) return
+      this.takers.shift()
+      this.hooks.onDeliver?.()
+      head.resolve({ value: this.drainToNewest(), done: false })
+    })
+  }
+
+  private drainToNewest(): In {
+    const msg = this.queue[this.queue.length - 1] as In
+    for (let i = 0; i < this.queue.length - 1; i++) this.hooks.onDrop?.(this.queue[i] as In)
+    this.queue.length = 0
+    return msg
+  }
+
+  take(latest: boolean): Promise<IteratorResult<In>> {
+    if (this.queue.length > 0) {
+      const msg = latest ? this.drainToNewest() : (this.queue.shift() as In)
+      this.hooks.onDeliver?.()
+      return Promise.resolve({ value: msg, done: false })
+    }
+    if (this.closed) return Promise.resolve({ value: undefined as never, done: true })
+    this.hooks.onIdle?.()
+    return new Promise((resolve) => this.takers.push({ resolve, latest }))
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    for (const taker of this.takers) taker.resolve({ value: undefined as never, done: true })
+    this.takers = []
+    for (const msg of this.queue) this.hooks.onDrop?.(msg)
+    this.queue = []
+  }
+}
+
+const selfFor = <In>(mailbox: Mailbox<In>, signal: AbortSignal, send: (msg: In) => void): Self<In> => ({
+  signal,
+  send,
+  [Symbol.asyncIterator]: (): AsyncIterator<In> => ({ next: () => mailbox.take(false) }),
+  latest: (): AsyncIterable<In> => ({
+    [Symbol.asyncIterator]: (): AsyncIterator<In> => ({ next: () => mailbox.take(true) }),
+  }),
+})
+
+/**
+ * A standalone Self — a private mailbox for wrapping or testing processes
+ * (middleware hands one to an inner proc). Iteration ends when `signal` aborts.
+ */
+export function channel<In>(signal?: AbortSignal): Self<In> {
+  const mailbox = new Mailbox<In>({})
+  const sig = signal ?? new AbortController().signal
+  if (signal !== undefined) {
+    if (signal.aborted) mailbox.close()
+    else signal.addEventListener('abort', () => mailbox.close(), { once: true })
+  }
+  return selfFor(mailbox, sig, (msg) => mailbox.push(msg))
+}
+
+// ---------- ownership scope ----------
+
+interface ProcessCore {
+  children: Set<ProcessCore>
+  dispose(): void
+}
+
+// Ambient scope, valid during the synchronous window of a process resumption
+// (body code between a resume and its next await/yield). Spawns after an
+// intervening await inside one step run unowned — spawn before awaiting.
+let currentScope: ProcessCore | null = null
+
+// ---------- spawn ----------
+
+type Meta = { pending: boolean; stale: boolean; errored: boolean }
+
+export function spawnProcess<T, In, A>(
+  proc: Proc<T, In, A>,
+  args: A,
+  opts?: SpawnOpts<T>,
+): Process<T | undefined, In> {
+  const hasInitial = opts !== undefined && 'initial' in opts
+  const src = source<Json>((hasInitial ? opts.initial : undefined) as unknown as Json)
+  const meta = source<Meta>({ pending: true, stale: false, errored: false })
+  let m: Meta = { pending: true, stale: false, errored: false }
+  const setMeta = (patch: Partial<Meta>): void => {
+    const next = { ...m, ...patch }
+    if (next.pending === m.pending && next.stale === m.stale && next.errored === m.errored) return
+    m = next
+    meta.publish(next)
+  }
+
+  let phase: 'running' | 'done' | 'crashed' | 'disposed' = 'running'
+  let errorValue: unknown
+  let hasValue = hasInitial
+  let gen: AsyncGenerator<T> | null = null
+  let controller = new AbortController()
+  let restarts = 0
+
+  const pendingAsks = new Map<object, (err: unknown) => void>()
+  const rejectAsks = (err: unknown): void => {
+    for (const reject of pendingAsks.values()) reject(err)
+    pendingAsks.clear()
+  }
+
+  const mailbox = new Mailbox<In>({
+    ...(opts?.mailbox !== undefined ? { bound: opts.mailbox } : {}),
+    onDrop: (msg) => {
+      const reject = pendingAsks.get(msg as object)
+      if (reject !== undefined) {
+        pendingAsks.delete(msg as object)
+        reject(new Error('nonchalant: ask dropped — mailbox overflow or process ended'))
+      }
+    },
+    onDeliver: () => setMeta({ pending: true }),
+    onIdle: () => setMeta({ pending: false }),
+  })
+
+  const core: ProcessCore = { children: new Set(), dispose: () => disposeProcess() }
+  const parent = currentScope
+  if (parent !== null) parent.children.add(core)
+
+  const disposeChildren = (): void => {
+    for (const child of [...core.children]) child.dispose()
+    core.children.clear()
+  }
+
+  // scope window: body code runs synchronously inside this call until its
+  // first await/yield — spawns in that window attach to this process
+  const step = <R>(fn: () => Promise<R>): Promise<R> => {
+    const prev = currentScope
+    currentScope = core
+    try {
+      return fn()
+    } finally {
+      currentScope = prev
+    }
+  }
+
+  const drive = async (): Promise<void> => {
+    while (true) {
+      controller = new AbortController()
+      const g = proc(selfFor(mailbox, controller.signal, (msg) => mailbox.push(msg)), args)
+      gen = g
+      try {
+        while (true) {
+          const r = await step(() => g.next())
+          if (r.done) {
+            if (phase === 'running') {
+              phase = 'done'
+              setMeta({ pending: false })
+            }
+            break
+          }
+          src.publish(r.value as unknown as Json)
+          hasValue = true
+          errorValue = undefined
+          setMeta({ pending: false, stale: false, errored: false })
+        }
+      } catch (err) {
+        if (phase !== 'disposed') {
+          errorValue = err
+          controller.abort()
+          rejectAsks(err)
+          disposeChildren() // the crashed instance's spawns die with it
+          if (opts?.restart === 'on-crash' && restarts < (opts.maxRestarts ?? 3)) {
+            restarts++
+            setMeta({ pending: true, stale: true, errored: true })
+            continue // same mailbox: queued casts replay into the fresh instance
+          }
+          phase = 'crashed'
+          setMeta({ pending: false, stale: true, errored: true })
+        }
+      }
+      break
+    }
+    // end of life, any path: generator settled (finally blocks have run)
+    gen = null
+    mailbox.close()
+    rejectAsks(
+      errorValue !== undefined && phase === 'crashed'
+        ? errorValue
+        : new Error(`nonchalant: process ${phase === 'disposed' ? 'disposed' : 'ended'}`),
+    )
+    disposeChildren() // owned children die last (dispose order per DESIGN)
+    if (parent !== null) parent.children.delete(core)
+  }
+
+  const disposeProcess = (): void => {
+    if (phase === 'disposed' || phase === 'done' || phase === 'crashed') {
+      if (phase !== 'disposed') {
+        phase = 'disposed'
+        setMeta({ stale: true })
+      }
+      disposeChildren()
+      for (const finish of [...closers]) finish()
+      return
+    }
+    phase = 'disposed'
+    if (parent !== null) parent.children.delete(core)
+    mailbox.close() // 1. mailbox closes: body's `for await` ends, queued asks reject
+    controller.abort()
+    const g = gen
+    if (g !== null) void step(() => g.return(undefined as never)).catch(() => {}) // 2. finally blocks run; 3. drive() then disposes children
+    setMeta({ pending: false, stale: true })
+    for (const finish of [...closers]) finish()
+  }
+
+  void drive()
+
+  // ---------- outside face ----------
+
+  const read = (): T | undefined => src() as unknown as T | undefined
+
+  const closers = new Set<() => void>()
+
+  const asyncIterator = (): AsyncIterator<T> => {
+    let buffered = false
+    let latest: T | undefined
+    let emitted = false
+    let ended = false
+    let wake: (() => void) | undefined
+    const signalWake = (): void => {
+      const w = wake
+      wake = undefined
+      if (w) w()
+    }
+    const stop = effect(() => {
+      void meta() // subtree dep: wakes on lifecycle transitions
+      void src() // subtree dep: wakes on every yield
+      if (hasValue) {
+        const v = untracked(() => src()) as unknown as T
+        if (!emitted || v !== latest) {
+          latest = v
+          emitted = true
+          buffered = true
+        }
+      }
+      if (phase !== 'running') ended = true
+      signalWake()
+    })
+    const finish = (): void => {
+      if (!ended) ended = true
+      stop()
+      closers.delete(finish)
+      signalWake()
+    }
+    closers.add(finish)
+    return {
+      async next(): Promise<IteratorResult<T>> {
+        while (!buffered && !ended) {
+          await new Promise<void>((resolve) => {
+            wake = resolve
+          })
+        }
+        if (buffered) {
+          buffered = false
+          return { value: latest as T, done: false }
+        }
+        finish()
+        return { value: undefined as never, done: true }
+      },
+      async return(): Promise<IteratorResult<T>> {
+        finish()
+        return { value: undefined as never, done: true }
+      },
+    }
+  }
+
+  const ask = (msg: Record<string, unknown>): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      if (phase !== 'running') {
+        reject(new Error(`nonchalant: ask on ${phase} process`))
+        return
+      }
+      const full = {
+        ...msg,
+        reply: (res: unknown): void => {
+          pendingAsks.delete(full)
+          resolve(res)
+        },
+      }
+      pendingAsks.set(full, reject)
+      mailbox.push(full as In)
+    })
+
+  Object.defineProperties(read, {
+    pending: { get: () => meta().pending },
+    stale: { get: () => meta().stale },
+    error: {
+      get: () => {
+        void meta().errored // tracked contexts wake when the error state flips
+        return errorValue
+      },
+    },
+  })
+  const p = read as unknown as Record<PropertyKey, unknown>
+  p['send'] = (msg: In): void => mailbox.push(msg)
+  p['ask'] = ask
+  p[Symbol.asyncIterator] = asyncIterator
+  p[Symbol.dispose] = disposeProcess
+  return read as unknown as Process<T | undefined, In>
+}

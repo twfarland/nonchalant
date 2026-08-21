@@ -129,8 +129,25 @@ input immutability, sharing short-circuit, __proto__ guard).
 
 Here: verified types, working+tested reconcile, protocol spec, benches, this dump.
 Next: ROADMAP.md M1–M9 (graph port → process runtime → dom → registry → wire →
-host → Mario golden → docs). Open questions: DECISIONS.md bottom (epoch scoping,
-predict scope, mailbox overflow, npm scope claim, RFC 6901).
+host → Mario golden → docs). M1 (reconcile hardening) landed: RFC 6901 escaping,
+prefix/suffix splice detection, minimality property tests, CI perf budget.
+M2 (the graph) landed: alien-signals core ported 1:1 (core/src/system.ts); path
+precision implemented as per-reader *gate* signals — publish tests the patch
+against each reader's recorded PathTree (core/src/track.ts) and bumps only
+affected gates, so granularity rides on stock equality-cut propagation rather
+than a modified core; `derive` is a real Process (error surface, lossy async
+iteration, dispose); effects flush on a microtask, `flush()` drains manually.
+M3 (process runtime) landed: spawn publishes yields through a graph source
+(process reads are path-precise in effects/derives); Self with FIFO mailbox,
+burst-correct `latest()`, per-instance abort signal, self-send; `channel`;
+ownership via ambient scope during the synchronous window of each resumption
+(spawn before awaiting — spawns after an intervening await run unowned);
+dispose order mailbox→finally→children; ask/reply with crash rejection;
+restart-from-args with cast replay; bounded drop-oldest mailbox; leak suite
+green (WeakRef + `gc({execution:'async'})` — plain gc() false-fails under V8
+conservative stack scanning). Q3 mailbox-overflow is now implemented as decided.
+Open questions: DECISIONS.md bottom (epoch scoping, predict scope, npm scope
+claim).
 
 ## Voice and priorities (so future sessions match)
 

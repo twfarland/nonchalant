@@ -9,21 +9,124 @@ export type {
 } from './types.ts'
 export { reconcile, applyPatch } from './reconcile.ts'
 export type { Json, Op, Patch } from './reconcile.ts'
+export { flush } from './graph.ts'
+export { channel } from './process.ts'
+export type { SpawnOpts } from './process.ts'
 
+import { computed, effect } from './graph.ts'
+import { spawnProcess, type SpawnOpts } from './process.ts'
 import type { Proc, Process, Self } from './types.ts'
 
 const TODO = (m: string) => new Error(`@nonchalant/core: ${m} not implemented yet — see docs/ROADMAP.md`)
 
 /** Run an async generator as a supervised local process. `initial` decides T | undefined vs T. */
-export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A): Process<T | undefined, In>
-export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A, opts: { initial: T }): Process<T, In>
-export function spawn(..._args: unknown[]): never {
-  throw TODO('spawn (M3)')
+export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A, opts: SpawnOpts<T> & { initial: T }): Process<T, In>
+export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A, opts?: SpawnOpts<T>): Process<T | undefined, In>
+export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A, opts?: SpawnOpts<T>): Process<T | undefined, In> {
+  return spawnProcess(proc, args, opts)
 }
 
 /** A pure memoised computation over other processes. No mailbox. */
-export function derive<T>(_fn: () => T): Process<T> {
-  throw TODO('derive (M2)')
+export function derive<T>(fn: () => T): Process<T> {
+  let error: unknown
+  const wrapped = (): T => {
+    try {
+      const v = fn()
+      error = undefined
+      return v
+    } catch (e) {
+      error = e
+      throw e
+    }
+  }
+  const c = computed(wrapped)
+  let disposed = false
+  const closers = new Set<() => void>()
+
+  const read = (): T => {
+    if (disposed) return c.peek() as T
+    const v = c.read()
+    // a failed update leaves the graph clean with the stale value; keep throwing
+    // until a recompute succeeds and clears `error`
+    if (error !== undefined) throw error
+    return v
+  }
+
+  const asyncIterator = (): AsyncIterator<T> => {
+    let buffered = false
+    let latest: T | undefined
+    let failure: unknown
+    let failed = false
+    let done = disposed
+    let wake: (() => void) | undefined
+    const signalWake = (): void => {
+      const w = wake
+      wake = undefined
+      if (w) w()
+    }
+    let stop = (): void => {}
+    if (!done) {
+      stop = effect(() => {
+        try {
+          latest = read()
+          buffered = true
+        } catch (e) {
+          failure = e
+          failed = true
+        }
+        signalWake()
+      })
+    }
+    const finish = (): void => {
+      if (!done) {
+        done = true
+        stop()
+        closers.delete(finish)
+        signalWake()
+      }
+    }
+    closers.add(finish)
+    return {
+      async next(): Promise<IteratorResult<T>> {
+        while (!buffered && !failed && !done) {
+          await new Promise<void>((resolve) => {
+            wake = resolve
+          })
+        }
+        if (failed) {
+          failed = false
+          const e = failure
+          failure = undefined
+          finish()
+          throw e
+        }
+        if (buffered) {
+          buffered = false
+          return { value: latest as T, done: false }
+        }
+        return { value: undefined as never, done: true }
+      },
+      async return(): Promise<IteratorResult<T>> {
+        finish()
+        return { value: undefined as never, done: true }
+      },
+    }
+  }
+
+  Object.defineProperties(read, {
+    pending: { get: () => false },
+    stale: { get: () => disposed },
+    error: { get: () => error },
+  })
+  const withSymbols = read as unknown as Record<symbol, unknown>
+  withSymbols[Symbol.asyncIterator] = asyncIterator
+  withSymbols[Symbol.dispose] = (): void => {
+    if (disposed) return
+    disposed = true
+    for (const finish of [...closers]) finish()
+    c.dispose()
+  }
+  return read as unknown as Process<T>
 }
 
 /** Attach a view process to a sink. Disposal unbinds everything beneath, in order. */

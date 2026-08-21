@@ -22,6 +22,9 @@ Settled across proposal drafts 1–3 (full arguments: docs/design-proposal.html)
 ## Open questions
 - Q1 Per-yield epoch scoping vs explicit dispose → ship explicit-first.
 - Q2 predict/rebase in v1 → stale+replay in v1; predict behind a flag after splice-vs-splice property tests.
-- Q3 Mailbox overflow policy → bounded, drop-oldest for casts, dev warning; bound is a spawn option.
+- ~~Q3 Mailbox overflow policy~~ → implemented in M3 as decided: bounded via
+  `spawn(..., { mailbox: n })`, drop-oldest (a dropped ask rejects), one-shot dev
+  warning.
 - Q4 npm: claim `nonchalant` + `@nonchalant` scope before first publish.
-- Q5 RFC 6901 path escaping in reconcile/applyPatch (currently rejected keys).
+- ~~Q5 RFC 6901 path escaping~~ → resolved in M1: `~0`/`~1` escaping implemented
+  in reconcile/applyPatch; malformed escapes rejected at apply time.

@@ -29,9 +29,9 @@ Host → client:
        | ["del",    path]
        | ["splice", path, start, remove, insert[]]
 
-- `path` is JSON-pointer-style: `""` is the root, `"/items/3/done"` descends.
-  RFC 6901 escaping (`~0`, `~1`) is TODO; until then keys containing `/` or `~`
-  are rejected at reconcile time.
+- `path` is an RFC 6901 JSON pointer: `""` is the root, `"/items/3/done"`
+  descends; `~` and `/` inside keys are escaped as `~0` and `~1`. Hosts MUST
+  reject malformed escapes (`~` followed by anything other than `0` or `1`).
 - Hosts MUST reject path segments `__proto__`, `constructor`, `prototype`
   (prototype pollution guard; see core/src/reconcile.ts).
 - The first `yield` after lookup or reconnect is a full snapshot: ops from root

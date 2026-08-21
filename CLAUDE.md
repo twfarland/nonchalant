@@ -30,4 +30,10 @@ is our regression suite).
 
 ## Status
 M0 done (types verified on TS 7.0.2; reconcile implemented + property-tested;
-protocol spec drafted). Next: M1 reconcile hardening, M2 alien-signals port.
+protocol spec drafted). M1 done (RFC 6901 escaping; splice detection; minimality
+property tests; reconcile perf budget asserted in CI). M2 done (alien-signals core
+ported; per-reader gate signals give path-precise wakes; tracked-read proxy;
+`derive` as Process; microtask batching + `flush()`). M3 done (spawn/Self/channel;
+yields publish through a source so process reads are path-precise; disposal
+cascade; ask/reply; restart policies; bounded mailbox; leak suite green).
+Next: M4 dom.

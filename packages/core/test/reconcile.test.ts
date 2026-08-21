@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { reconcile, applyPatch, type Json } from '../src/reconcile.ts'
 
-// Wire-safe keys until RFC 6901 escaping lands (see reconcile.ts TODO).
-const key = fc.stringMatching(/^[a-zA-Z_][a-zA-Z0-9_]{0,6}$/)
+// Any string key is wire-safe now (RFC 6901 escaping), except the prototype-
+// pollution guard set, which reconcile paths may name but applyPatch must reject.
+const key = fc
+  .oneof(fc.string({ maxLength: 8 }), fc.constantFrom('a/b', '~', '~0', '~1', 'a~/b', '/', ''))
+  .filter((k) => !['__proto__', 'constructor', 'prototype'].includes(k))
 
 const { json } = fc.letrec<{ json: Json }>((tie) => ({
   json: fc.oneof(
@@ -64,6 +67,55 @@ describe('reconcile / applyPatch', () => {
     expect(reconcile([1, 2, 3], [1])).toStrictEqual([['splice', '', 1, 2, []]])
   })
 
+  it('mid-array insert becomes a single splice', () => {
+    const a = { id: 'a' }, b = { id: 'b' }, c = { id: 'c' }, x = { id: 'x' }, y = { id: 'y' }
+    expect(reconcile([a, b, c], [a, x, y, b, c])).toStrictEqual([['splice', '', 1, 0, [x, y]]])
+  })
+
+  it('mid-array removal becomes a single splice', () => {
+    const a = { id: 'a' }, b = { id: 'b' }, c = { id: 'c' }, d = { id: 'd' }
+    expect(reconcile([a, b, c, d], [a, d])).toStrictEqual([['splice', '', 1, 2, []]])
+  })
+
+  it('minimality: any contiguous insert of shared-identity neighbours is exactly one op', () => {
+    fc.assert(
+      fc.property(
+        fc.array(json, { maxLength: 8 }),
+        fc.array(json, { minLength: 1, maxLength: 4 }),
+        fc.nat(8),
+        (base, inserted, posSeed) => {
+          const pos = base.length === 0 ? 0 : posSeed % (base.length + 1)
+          const next = [...base.slice(0, pos), ...inserted, ...base.slice(pos)]
+          const patch = reconcile(base, next)
+          expect(patch).toHaveLength(1)
+          expect(patch[0]?.[0]).toBe('splice')
+          expect(applyPatch(base, patch)).toStrictEqual(next)
+        },
+      ),
+      { numRuns: 300 },
+    )
+  })
+
+  it('minimality: any contiguous removal is exactly one op', () => {
+    fc.assert(
+      fc.property(fc.array(json, { minLength: 1, maxLength: 8 }), fc.nat(8), fc.nat(8), (base, posSeed, lenSeed) => {
+        const pos = posSeed % base.length
+        const count = 1 + (lenSeed % (base.length - pos))
+        const next = [...base.slice(0, pos), ...base.slice(pos + count)]
+        const patch = reconcile(base, next)
+        expect(patch).toHaveLength(1)
+        expect(patch[0]?.[0]).toBe('splice')
+        expect(applyPatch(base, patch)).toStrictEqual(next)
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('one changed element between shared neighbours stays a scoped set, not a splice', () => {
+    const a = { id: 'a' }, b = { id: 'b', done: false }, c = { id: 'c' }
+    expect(reconcile([a, b, c], [a, { id: 'b', done: true }, c])).toStrictEqual([['set', '/1/done', true]])
+  })
+
   it('root type changes are a single root set', () => {
     expect(reconcile({ a: 1 }, [1])).toStrictEqual([['set', '', [1]]])
   })
@@ -74,7 +126,19 @@ describe('reconcile / applyPatch', () => {
     expect(({} as Record<string, unknown>)['x']).toBeUndefined()
   })
 
-  it('rejects keys needing RFC 6901 escaping (until implemented)', () => {
-    expect(() => reconcile({}, { 'a/b': 1 })).toThrow(/RFC 6901/)
+  it('escapes RFC 6901 special characters in keys', () => {
+    expect(reconcile({}, { 'a/b': 1 })).toStrictEqual([['set', '/a~1b', 1]])
+    expect(reconcile({}, { '~': 1 })).toStrictEqual([['set', '/~0', 1]])
+    expect(reconcile({ 'm~n': { 'x/y': 0 } }, { 'm~n': { 'x/y': 1 } })).toStrictEqual([
+      ['set', '/m~0n/x~1y', 1],
+    ])
+    // '~01' must decode to the literal key '~1', not to '/'
+    expect(reconcile({ '~1': 0 }, {})).toStrictEqual([['del', '/~01']])
+    expect(applyPatch({ '~1': 0, keep: true }, [['del', '/~01']])).toStrictEqual({ keep: true })
+  })
+
+  it('rejects malformed escape sequences in paths', () => {
+    expect(() => applyPatch({}, [['set', '/a~2b', 1]])).toThrow(/invalid escape/)
+    expect(() => applyPatch({}, [['set', '/a~', 1]])).toThrow(/invalid escape/)
   })
 })

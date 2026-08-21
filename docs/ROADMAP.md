@@ -4,17 +4,32 @@ Milestones are dependency-ordered; each lands with its tests. Perf budgets are C
 assertions, not aspirations.
 
 - **M0 — bootstrap** ✅ repo, verified type surface, reconcile + property tests, benches, docs.
-- **M1 — reconcile hardening**: RFC 6901 escaping; splice *detection* (move/insert in
-  the middle currently degrades to per-index sets — acceptable, not optimal); op-count
-  minimality bounds; CI perf budget (1-of-10k ≤ 100µs on CI hardware).
-- **M2 — the graph**: port alien-signals core (262 lines, keep their constraints: no
-  Array/Set/Map in hot path, no recursion); `derive`; tracked-read proxy with path
-  recording; notification precision tests (assert exact wake counts per patch);
-  diamond/glitch tests; microtask batching + `flush()`.
-- **M3 — the process runtime**: `spawn`, `Self` (FIFO mailbox, `latest()`, `signal`,
-  self-send), `channel`, disposal cascade, `ask`/reply, restart policies, bounded
-  mailbox. Leak suite: FinalizationRegistry-based "nothing retained after dispose"
-  (the acto lesson). types.check.ts stops being aspirational.
+- **M1 — reconcile hardening** ✅ RFC 6901 escaping (`~0`/`~1`, malformed escapes
+  rejected at apply); splice detection via shared prefix/suffix trim — contiguous
+  mid-array insert/removal is now exactly one splice (property-tested); same-length
+  reorders (moves/swaps) still degrade to per-index sets — keyed reconciliation is
+  the sink's job (M4); CI perf budget asserted (1-of-10k ≤ 100µs median,
+  `reconcile.perf.test.ts`, override via RECONCILE_BUDGET_US).
+- **M2 — the graph** ✅ alien-signals core ported faithfully (`src/system.ts`, their
+  constraints kept: no Array/Set/Map in hot path, no recursion); node layer + `source`
+  in `src/graph.ts` — each (source, reader) pair gets a hidden *gate* signal, publish
+  reconciles prev→next and bumps only gates whose recorded paths the patch affects,
+  so path precision rides on stock equality-cut propagation; tracked-read proxy with
+  path recording (`src/track.ts`: leaf/structural/subtree dependency rules, splice
+  index boundaries); `derive` with its full Process face (callable, error surface,
+  lossy async iteration, dispose); notification precision tests assert exact wake
+  counts per patch; diamond/glitch tests; microtask batching + exported `flush()`.
+- **M3 — the process runtime** ✅ `spawn` drives the generator and publishes every
+  yield through a graph `source` — process reads get path-precise wakes for free;
+  `Self` (FIFO backpressured mailbox; `latest()` defers a microtask so same-tick
+  bursts supersede, then drains to newest; per-instance `signal`; self-send);
+  `channel` (standalone Self for middleware/testing); disposal cascade (mailbox
+  closes → `finally` runs → owned children die, ambient sync-window ownership);
+  `ask`/reply with rejection on crash/end/overflow; `restart: 'on-crash'` from init
+  args with `maxRestarts`, queued casts replayed; bounded mailbox (drop-oldest +
+  dev warning). Leak suite passes under `gc({execution:'async'})` (plain `gc()`
+  false-fails on V8 conservative stack scanning — see process.leaks.test.ts).
+  types.check.ts is no longer aspirational: spawn/derive/cell are real.
 - **M4 — dom**: tag constructors (`/tags`, `var_` escapes, `h()` for SVG/custom
   elements), the DOM sink, keyed reconciliation, per-slot pending/error, event
   binding, exit-transition hook. **The sprezzatura bug list as a regression suite**:

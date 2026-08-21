@@ -1,10 +1,8 @@
 // Structural diff and patch — the single update path for local and remote yields.
-// reconcile(prev, next) emits ops on JSON-pointer-style paths; applyPatch(prev, ops)
-// must reproduce next exactly (property-tested). Identity guards before recursion:
-// path strings are only built along the changed spine (measured ~5x on 10k items).
-//
-// TODO(protocol): RFC 6901 escaping for keys containing '/' or '~'. Until then,
-// such keys are rejected by reconcile to keep the wire unambiguous.
+// reconcile(prev, next) emits ops on RFC 6901 JSON-pointer paths (`~` ⇒ `~0`,
+// `/` ⇒ `~1`); applyPatch(prev, ops) must reproduce next exactly (property-tested).
+// Identity guards before recursion: path strings are only built along the changed
+// spine (measured ~5x on 10k items).
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 
@@ -18,10 +16,22 @@ export type Patch = Op[]
 const isRecord = (v: Json): v is { [key: string]: Json } =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
-const checkKey = (k: string): string => {
-  if (k.includes('/') || k.includes('~'))
-    throw new Error(`reconcile: unsupported key ${JSON.stringify(k)} (RFC 6901 escaping not yet implemented)`)
-  return k
+const escapeSegment = (k: string): string =>
+  k.includes('~') || k.includes('/') ? k.replaceAll('~', '~0').replaceAll('/', '~1') : k
+
+function unescapeSegment(s: string): string {
+  if (!s.includes('~')) return s
+  let out = ''
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '~') {
+      const n = s[++i]
+      if (n === '0') out += '~'
+      else if (n === '1') out += '/'
+      else throw new Error(`applyPatch: invalid escape in path segment ${JSON.stringify(s)}`)
+    } else out += c
+  }
+  return out
 }
 
 export function reconcile(prev: Json, next: Json): Patch {
@@ -33,20 +43,34 @@ export function reconcile(prev: Json, next: Json): Patch {
 function walk(prev: Json, next: Json, path: string, ops: Patch): void {
   if (prev === next) return
   if (Array.isArray(prev) && Array.isArray(next)) {
-    const n = Math.min(prev.length, next.length)
-    for (let i = 0; i < n; i++) {
+    // Trim the identity-shared prefix and suffix so a contiguous mid-array
+    // insert or removal collapses to a single splice instead of per-index sets.
+    const pLen = prev.length, nLen = next.length
+    const minLen = Math.min(pLen, nLen)
+    let start = 0
+    while (start < minLen && prev[start] === next[start]) start++
+    let suffix = 0
+    while (suffix < minLen - start && prev[pLen - 1 - suffix] === next[nLen - 1 - suffix]) suffix++
+    const pEnd = pLen - suffix, nEnd = nLen - suffix
+    if (start === pEnd && start === nEnd) return
+    if (start === pEnd) { ops.push(['splice', path, start, 0, next.slice(start, nEnd)]); return }
+    if (start === nEnd) { ops.push(['splice', path, start, pEnd - start, []]); return }
+    // Both windows non-empty: walk the overlap per index (indices agree in prev
+    // and next coordinates here), then one splice for the length delta.
+    const common = Math.min(pEnd, nEnd)
+    for (let i = start; i < common; i++) {
       if (prev[i] !== next[i]) walk(prev[i] as Json, next[i] as Json, `${path}/${i}`, ops)
     }
-    if (next.length > prev.length) ops.push(['splice', path, prev.length, 0, next.slice(prev.length)])
-    else if (next.length < prev.length) ops.push(['splice', path, next.length, prev.length - next.length, []])
+    if (nEnd > pEnd) ops.push(['splice', path, common, 0, next.slice(common, nEnd)])
+    else if (pEnd > nEnd) ops.push(['splice', path, common, pEnd - common, []])
     return
   }
   if (isRecord(prev) && isRecord(next)) {
-    for (const k in prev) if (!(k in next)) ops.push(['del', `${path}/${checkKey(k)}`])
+    for (const k in prev) if (!(k in next)) ops.push(['del', `${path}/${escapeSegment(k)}`])
     for (const k in next) {
       if (prev[k] !== next[k]) {
-        if (k in prev) walk(prev[k] as Json, next[k] as Json, `${path}/${checkKey(k)}`, ops)
-        else ops.push(['set', `${path}/${checkKey(k)}`, next[k] as Json])
+        if (k in prev) walk(prev[k] as Json, next[k] as Json, `${path}/${escapeSegment(k)}`, ops)
+        else ops.push(['set', `${path}/${escapeSegment(k)}`, next[k] as Json])
       }
     }
     return
@@ -58,11 +82,16 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
 
 const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
 
-function parsePath(path: string): string[] {
+/** Internal (used by track.ts): decode a pointer into segments, rejecting forbidden keys. */
+export function parsePath(path: string): string[] {
   if (path === '') return []
+  if (path[0] !== '/') throw new Error(`applyPatch: path must start with "/" (${JSON.stringify(path)})`)
   const keys = path.slice(1).split('/')
-  for (const k of keys)
+  for (let i = 0; i < keys.length; i++) {
+    const k = unescapeSegment(keys[i] as string)
     if (FORBIDDEN.has(k)) throw new Error(`applyPatch: illegal path segment ${JSON.stringify(k)}`)
+    keys[i] = k
+  }
   return keys
 }
 
