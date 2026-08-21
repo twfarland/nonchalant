@@ -252,7 +252,7 @@ footer {
 <div class="page">
 
 <header class="mast">
-  <div class="eyebrow">Architecture Proposal &nbsp;·&nbsp; Draft 3</div>
+  <div class="eyebrow">Architecture Proposal &nbsp;·&nbsp; Draft 3.1 &nbsp;·&nbsp; Repo bootstrapped</div>
   <h1>Nonchalant</h1>
   <p class="deck">One primitive. A process holds its own state, yields values over time, and does not care which side of the wire it runs on.</p>
   <hr class="mast-rule">
@@ -461,7 +461,32 @@ cart.send({ type: <span class="s">'checkout'</span> })              <span class=
 <section>
   <div class="sec-head"><span class="sec-num">07</span><h2>Exercises: the design under load</h2></div>
 
-  <p>Five problems that other libraries exist to solve, worked in full. Each compiled under strict TypeScript. The measure of the design is how little of it each one needs.</p>
+  <p>Six problems that other libraries exist to solve, worked in full. Each compiled under strict TypeScript. The measure of the design is how little of it each one needs.</p>
+
+  <h3>Transient state &mdash; the closed-over process</h3>
+  <p>Component-local state is <em>most</em> state, and it must cost nothing to declare. A transient process is an anonymous <code>spawn</code> closing over whatever is in scope &mdash; plain JavaScript closures are the capture mechanism, and the ambient scope is the lifetime:</p>
+
+<pre><code><span class="k">function</span> <span class="hl">Counter</span>(): VNode {
+  <span class="k">const</span> count = <span class="hl">cell</span>(0)                       <span class="c">// anonymous, transient, closed over</span>
+  <span class="k">return</span> div({ <span class="k">class</span>: <span class="s">'counter'</span> },
+    button({ onclick: () =&gt; count.send(count() - 1) }, <span class="s">'−'</span>),
+    span({}, count),                          <span class="c">// a Process is already a valid slot</span>
+    button({ onclick: () =&gt; count.send(count() + 1) }, <span class="s">'+'</span>))
+}
+
+<span class="c">// cell is not a primitive — it is five lines of userland, shipped as sugar:</span>
+<span class="k">function</span> <span class="hl">cell</span>&lt;T&gt;(initial: T): Process&lt;T, T&gt; {
+  <span class="k">return</span> spawn&lt;T, T, <span class="k">void</span>&gt;(<span class="k">async function*</span> (self: Self&lt;T&gt;) {
+    <span class="k">for await</span> (<span class="k">const</span> next <span class="k">of</span> self) <span class="k">yield</span> next
+  }, <span class="k">undefined</span>, { initial })
+}</code></pre>
+
+  <p>Two rules make this safe, and the review found both needed stating rather than inventing:</p>
+  <ul>
+    <li><strong>Ownership is ambient.</strong> A process spawned during view construction attaches to the enclosing view process's scope and dies with it, recursively. Transient state is anonymous and scope-owned; shared state is named and registry-owned. Nothing to unsubscribe, nothing to forget.</li>
+    <li><strong>Inside a generator body, reads are pulls.</strong> <code>cart()</code> in imperative code is a snapshot now &mdash; no subscription. Subscription is iteration: <code>for await (const c of cart)</code>. Only <code>derive</code>, bindings and effects auto-track, so a transient process can close over ten other processes without accreting a dependency web it never wanted.</li>
+  </ul>
+  <p>The showcase transient is an <em>interaction</em>: a drag process spawned on pointerdown, yielding offsets, dying on pointerup &mdash; gesture state with a lifetime instead of a tangle of listeners. The boundary stands, though: per-row processes across a 10k list remain the documented anti-pattern; a process per <em>widget</em> is cheap, a process per <em>node</em> is not.</p>
 
   <h3>Typeahead &mdash; cancellation and racing</h3>
   <p>The problem that acto's <code>flatMapLatest</code> existed for, and the graveyard of hand-rolled debounce. The mailbox's two iteration modes carry it:</p>
@@ -679,6 +704,29 @@ cart.send({ type: <span class="s">'undo'</span> })       <span class="c">// type
   </table>
   </div>
 
+  <h3>Proving it: tests, examples, docs</h3>
+  <div class="grid2">
+    <div class="card">
+      <h4>The old bugs are the regression suite</h4>
+      <p>Every defect found in sprezzatura and acto becomes a named test: the XSS strings, the table and SVG parsing failures, <code>key: 0</code>, adjacent-text joining, the leak-on-dispose class (checked with <code>FinalizationRegistry</code>), the diamond glitch that double-stepped Mario. The past is the test plan.</p>
+    </div>
+    <div class="card">
+      <h4>Conformance vectors are the spec</h4>
+      <p>The wire ships JSON in/out vector files alongside the prose. The in-memory transport is the reference implementation; a future BEAM host certifies against the same files. &ldquo;Language-agnostic&rdquo; becomes checkable, not aspirational.</p>
+    </div>
+    <div class="card">
+      <h4>The examples ladder</h4>
+      <p>counter &rarr; todomvc &rarr; typeahead &rarr; form &rarr; router &rarr; query cache &rarr; undo &rarr; multi-tab &rarr; <strong>shared cart</strong> (the one-line local&rarr;server move &mdash; the pitch demo) &rarr; 7GUIs, with cells last to stress derivations.</p>
+    </div>
+    <div class="card">
+      <h4>Mario is golden</h4>
+      <p>Ported unchanged from the 2016 demo, with its physics bug fixed by construction. CI asserts the budget: <strong>one view yield total, &le;3 DOM writes per frame</strong>, counted by MutationObserver. Then the canvas sink runs the same Mario unchanged &mdash; retargeting demonstrated, not asserted.</p>
+    </div>
+  </div>
+  <p>Docs follow the same ladder: a tutorial (&ldquo;Thinking in processes&rdquo;), a concepts section mirroring &sect;03&ndash;&sect;06, the exercises as recipes, the protocol spec with its vectors, and coming-from guides for React, Solid and LiveView.</p>
+
+  <div class="note"><b>Status: the repo exists.</b> <code>~/dev/nonchalant</code> &mdash; pnpm monorepo, four packages, M0 committed. The type surface from &sect;04 is in <code>core/src/types.ts</code> with the verified acceptance harness as a test; <code>reconcile</code>/<code>applyPatch</code> are implemented and property-tested (the round-trip property caught a real prototype-semantics edge on its first run); the protocol is specced in <code>docs/PROTOCOL.md</code>; the full handover context is <code>docs/DESIGN.md</code>. <code>pnpm check</code> and <code>pnpm test</code> are green.</div>
+
   <h3>Toolchain</h3>
   <ul>
     <li><strong>TypeScript 7</strong> (the native compiler &mdash; this document's examples were checked on 7.0.2), <code>strict</code>, <code>verbatimModuleSyntax</code>. ESM-only, real <code>exports</code> map, <code>sideEffects: false</code>, no committed build output.</li>
@@ -711,7 +759,9 @@ cart.send({ type: <span class="s">'undo'</span> })       <span class="c">// type
 <section class="qs">
   <div class="sec-head"><span class="sec-num">12</span><h2>Settled, and still open</h2></div>
 
-  <p><strong>Newly settled by the review:</strong> read-side path tracking (write plain, read tracked); <code>Call</code>/<code>ask</code> request-response; the registry with typed schemas, unifying DI, caching and remote addressing; <code>connect</code> returning a Registry; mailbox semantics &mdash; FIFO with <code>latest()</code>, answering draft 2's open question; <code>initial</code> deciding <code>T | undefined</code> vs <code>T</code> in the type, answering the other; supervision, partition and prediction designs; <code>reconcile</code> relocated to core with measured budgets.</p>
+  <p><strong>Newly settled in 3.1:</strong> transient closed-over processes confirmed as the <code>useState</code> case &mdash; anonymous spawn, ambient-scope ownership, pull-vs-iterate read semantics, <code>cell()</code> as non-primitive sugar; the test/examples/docs plan (&sect;10); and the monorepo bootstrapped with the verified types and a property-tested <code>reconcile</code>.</p>
+
+  <p><strong>Settled by the review:</strong> read-side path tracking (write plain, read tracked); <code>Call</code>/<code>ask</code> request-response; the registry with typed schemas, unifying DI, caching and remote addressing; <code>connect</code> returning a Registry; mailbox semantics &mdash; FIFO with <code>latest()</code>, answering draft 2's open question; <code>initial</code> deciding <code>T | undefined</code> vs <code>T</code> in the type, answering the other; supervision, partition and prediction designs; <code>reconcile</code> relocated to core with measured budgets.</p>
 
   <div class="q">
     <h4>Is per-yield epoch scoping worth adding?</h4>
@@ -739,7 +789,7 @@ cart.send({ type: <span class="s">'undo'</span> })       <span class="c">// type
 </section>
 
 <footer>
-  Draft 3 &middot; Produced by a design review of draft 2: six findings (read granularity unspecified; no request/response; transport/address conflation; mailbox semantics under await; crash behaviour unmechanised; list-diff honesty), each resolved in the text. New in this draft: write-plain/read-tracked, <code>Call</code>/<code>ask</code>, the registry, wire rev 2 with call/reply and lookup, five worked exercises, measured reconcile budgets, supervision and partition designs. &nbsp;All type signatures and examples compiled together under <code>tsc --strict</code>, TypeScript 7.0.2. Reconcile and process-scale figures measured on Node v22.12.0.
+  Draft 3.1 &middot; Adds: transient closed-over processes (&sect;07), the proving-it plan (&sect;10), and repo bootstrap status. &middot; Draft 3 was produced by a design review of draft 2: six findings (read granularity unspecified; no request/response; transport/address conflation; mailbox semantics under await; crash behaviour unmechanised; list-diff honesty), each resolved in the text. New in this draft: write-plain/read-tracked, <code>Call</code>/<code>ask</code>, the registry, wire rev 2 with call/reply and lookup, five worked exercises, measured reconcile budgets, supervision and partition designs. &nbsp;All type signatures and examples compiled together under <code>tsc --strict</code>, TypeScript 7.0.2. Reconcile and process-scale figures measured on Node v22.12.0.
 </footer>
 
 </div>
