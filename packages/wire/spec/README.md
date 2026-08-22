@@ -21,9 +21,13 @@ Patch-application semantics — what `applyPatch(prev, patch)` must do:
 - Every JSON key is valid, including `__proto__`, `constructor`, and
   `prototype`; implementations MUST create own data properties without invoking
   prototype setters.
-- `error: true` cases MUST be rejected: malformed escapes, invalid array
-  indices/ranges, and splices on non-arrays. Rejecting means refusing the patch
-  — not applying a prefix of it.
+- `error: true` cases MUST be rejected: malformed escapes, paths that are
+  neither `""` nor `/`-prefixed, non-integer or negative splice numbers,
+  invalid array indices/ranges, and splices on non-arrays. Rejecting means
+  refusing the patch — not applying a prefix of it. Rejection may happen at
+  either layer — the reference codec refuses unprefixed paths and bad splice
+  numbers at decode time (`decodeHost` returns null) and the rest at apply
+  time — but a malformed patch MUST NOT be applied.
 
 ## session-*.json
 

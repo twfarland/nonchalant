@@ -174,6 +174,30 @@ describe('dynamic slots', () => {
     route[Symbol.dispose]()
   })
 
+  it('unmounting closes an async-iterable slot: its return() runs even mid-await', async () => {
+    const root = container()
+    let returned = false
+    let push: ((v: string) => void) | undefined
+    const iterable: AsyncIterable<string> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () =>
+          new Promise<IteratorResult<string>>((resolve) => {
+            push = (v) => resolve({ value: v, done: false })
+          }),
+        return: async (): Promise<IteratorResult<string>> => {
+          returned = true
+          return { value: undefined, done: true }
+        },
+      }),
+    }
+    const view = mount(root, div({}, iterable))
+    push!('hi')
+    await tick()
+    expect(root.querySelector('div')!.textContent).toBe('hi')
+    view[Symbol.dispose]()
+    expect(returned).toBe(true) // the suspended iterator was released, not abandoned
+  })
+
   it('a throwing binding keeps its previous content', async () => {
     const root = container()
     const n = cell(1)

@@ -257,11 +257,13 @@ function createChildRec(
     parent.insertBefore(marker, anchor)
     const region = createRegion(doc, parent, marker, ns)
     let dead = false
+    const it = slot[Symbol.asyncIterator]()
     void (async () => {
       try {
-        for await (const v of slot) {
-          if (dead) return
-          untracked(() => region.apply(v as Slot))
+        while (true) {
+          const r = await it.next()
+          if (dead || r.done === true) return
+          untracked(() => region.apply(r.value as Slot))
         }
       } catch (e) {
         if (!dead) warn('slot iterable failed; keeping content', e)
@@ -274,6 +276,9 @@ function createChildRec(
       region,
       dispose: () => {
         dead = true
+        // a silent iterator never resolves next(); closing it releases the
+        // subscription it holds (a process iterator's effect, a generator's finally)
+        void Promise.resolve(it.return?.()).catch(() => {})
         region.destroy()
       },
     }

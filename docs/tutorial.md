@@ -1,7 +1,7 @@
 # Thinking in processes
 
-This tutorial builds a working cart, step by step. By the end, you'll move its
-state from the browser tab to a server without touching the view. All the code
+This tutorial builds a working cart, step by step. By the end, you'll use the
+same view with either a local registry or a server-backed one. All the code
 here is runnable — most of it comes straight from `examples/`.
 
 ## 1. State is a process
@@ -149,37 +149,48 @@ const cart = shop.lookup('cart', { userId })
 
 That one operation covers a lot of ground. It's dependency injection (any part
 of the app can look up the session — no prop drilling). It's a query cache
-(same name + args = same process; watchers are refcounted; idle entries get
-evicted, and the next lookup refetches). The twenty-line query cache is a real
-test: `packages/core/test/registry.test.ts`.
+(same name + args = same process; watchers are counted; idle entries get
+evicted, and the next lookup refetches). These lifecycle rules are covered by
+`packages/core/test/registry.test.ts`.
 
-## 7. The one line
+## 7. Use a remote registry
 
-`connect(transport)` returns the same registry interface, backed by a server.
-That's the whole trick behind the pitch demo (`examples/shared-cart`):
+`connect(transport)` returns the same lookup interface, backed by a server.
+The shared-cart example makes the boundary visible:
 
 ```ts
 const shop = registry({ cart: define(cart) })                        // in this tab
 // const shop = connect<Shop>(webSocketTransport('ws://…:4321/'))    // on the server
 ```
 
-The cart's code doesn't change, because it never knew where it was running.
+The cart and view code do not change because they depend on the registry
+interface rather than a concrete location.
 Updates cross the wire as small patches (the same format used locally), remote
 reads stay fine-grained, losing the connection leaves readers on the last
 value with `stale: true`, and reconnecting just re-fetches the state and diffs
 it against what you already had — bindings for unchanged data sleep through
 the whole thing.
 
-The server side is three lines (`examples/shared-cart/server.ts`):
+The server setup is small (`examples/shared-cart/server.ts`):
 
 ```ts
 import { serve } from '@nonchalant/host'
-const host = await serve({ cart: define(cart) }, { port: 4321 })
+const host = await serve({ cart: define(cart) }, {
+  port: 4321,
+  allowedOrigins: ['https://shop.example'],
+  authorize: async (request) => Boolean(await sessionFromRequest(request)),
+})
 ```
+
+The open default is convenient for the local example, not a production
+security policy. Origin checks protect browser handshakes; authorization
+decides who may connect. Your process must still enforce which records and
+operations that authenticated caller may use. See [Hosting safely](hosting.md).
 
 ## Where to next
 
 - [Concepts](concepts.md) — the reference, with pointers to the tests.
 - [Recipes](recipes.md) — typeahead, undo/redo, routing, forms, drag.
 - [Migration](migration.md) — coming from React, Solid, or LiveView.
+- [Hosting safely](hosting.md) — authentication and deployment boundaries.
 - [Protocol](PROTOCOL.md) — the wire format, for any language.

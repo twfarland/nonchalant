@@ -9,10 +9,10 @@ important — what doesn't carry over.
 |---|---|
 | `useState` | a closed-over `cell` (or any process) — no hook rules, no ordering constraints |
 | `useReducer` | the `for await (msg of self)` loop — your generator body is the reducer |
-| `useEffect` | usually nothing (lifetimes are scopes); for real side effects, `effect(fn)` with a cleanup return |
+| `useEffect` | often scope ownership; for external side effects, `effect(fn)` with a cleanup return |
 | `useMemo` / `useCallback` | `derive(fn)` / plain closures — nothing re-renders, so there's nothing to defend against |
 | Context / prop drilling | `registry.lookup(name)` — works inside or outside the view tree |
-| TanStack Query | `define(queryProc, { evict })` + `lookup(name, args)` — see the recipes |
+| part of TanStack Query's cache lifecycle | `define(queryProc, { evict })` + `lookup(name, args)` — see the recipes |
 | Suspense boundaries | not needed: a pending promise occupies only its own slot |
 | the `key` prop | the same `key` attr, same job (and `key: 0` works) |
 
@@ -49,16 +49,17 @@ and reactive expressions need an explicit thunk: `() => cart().total`.
 
 | LiveView | nonchalant |
 |---|---|
-| a LiveView process | a process — genuinely the same idea: state, messages, a mailbox |
+| a LiveView process | the nearest counterpart: state, messages, and a mailbox, but without BEAM isolation |
 | `handle_event` | a message arriving in `for await (msg of self)` |
 | assigns diffing → HTML over the wire | state diffing → **data patches** over the wire, never HTML |
 | `phx-click` | `onclick: () => proc.send(…)` — and the handler can also be purely local |
 | reconnect and re-render | re-lookup + full state, diffed against what the client kept |
 | PubSub | a shared named process that both sides look up |
 
-Your Erlang instincts transfer almost directly: `send` is a cast, `ask` is a
-call, `restart: 'on-crash'` restarts from the init args, children die with
-their supervisor. The big shift: the wire carries state instead of rendered
+Some Erlang vocabulary transfers: `send` resembles a cast, `ask` resembles a
+call, `restart: 'on-crash'` restarts from the init args, and owned children
+are disposed with their parent. This remains cooperative JavaScript, not an
+OTP supervision system. The big shift: the wire carries state instead of rendered
 templates, so the client owns rendering (any sink — DOM or canvas), local-only
 interactions cost no round-trip, and the server half can be written in any
 language (`docs/PROTOCOL.md` plus the conformance vectors are the contract).
@@ -71,4 +72,5 @@ worker threads are the containment strategy.
    existing UI via plain reads and `send`.
 2. Move views over piece by piece — `mount` can own a single island.
 3. Route shared or cached things through a registry as you touch them.
-4. Do the wire last. By then it's one line.
+4. Add the wire last. The registry substitution is small; authentication,
+   authorization, JSON boundaries, and failure handling are the real work.

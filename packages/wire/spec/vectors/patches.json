@@ -22,6 +22,8 @@
     { "name": "constructor is an ordinary own key", "prev": {}, "patch": [["set", "/constructor", 1]], "next": { "constructor": 1 } },
     { "name": "prototype is an ordinary nested key", "prev": { "a": {} }, "patch": [["set", "/a/prototype", 1]], "next": { "a": { "prototype": 1 } } },
     { "name": "malformed escape ~2 is rejected", "prev": {}, "patch": [["set", "/a~2b", 1]], "error": true },
+    { "name": "path without a leading slash is rejected", "prev": { "x": 1 }, "patch": [["set", "x", 2]], "error": true },
+    { "name": "non-integer splice start is rejected", "prev": [1, 2], "patch": [["splice", "", 0.5, 0, []]], "error": true },
     { "name": "trailing ~ is rejected", "prev": {}, "patch": [["set", "/a~", 1]], "error": true },
     { "name": "splice on a non-array is rejected", "prev": { "a": 1 }, "patch": [["splice", "/a", 0, 0, [1]]], "error": true },
     { "name": "negative splice start is rejected", "prev": [1], "patch": [["splice", "", -1, 0, []]], "error": true },

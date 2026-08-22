@@ -27,18 +27,22 @@ export const encode = (msg: ClientMsg | HostMsg): string => JSON.stringify(msg)
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+// values need no deep check: JSON.parse output is JSON-shaped by construction
 const isPatch = (v: unknown): v is Patch =>
   Array.isArray(v) &&
   v.every(
     (op) =>
       Array.isArray(op) &&
       typeof op[1] === 'string' &&
+      (op[1] === '' || op[1].startsWith('/')) &&
       ((op[0] === 'set' && op.length === 3) ||
         (op[0] === 'del' && op.length === 2) ||
         (op[0] === 'splice' &&
           op.length === 5 &&
-          typeof op[2] === 'number' &&
-          typeof op[3] === 'number' &&
+          Number.isInteger(op[2]) &&
+          Number.isInteger(op[3]) &&
+          (op[2] as number) >= 0 &&
+          (op[3] as number) >= 0 &&
           Array.isArray(op[4]))),
   )
 

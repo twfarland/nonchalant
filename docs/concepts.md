@@ -19,7 +19,8 @@ its published snapshots, and its lifecycle. The handle is what you hold after
 | `p.stale` | True when the value survived a crash or a lost connection; clears on the next good yield. |
 | `p.error` | The last failure, if any. |
 | `for await (v of p)` | A live stream of values. Lossy on purpose: you always get the latest, never a backlog. |
-| `p[Symbol.dispose]()` | Ends the process. The mailbox closes, `finally` blocks run, then anything it spawned dies too — in that order. |
+| `p[Symbol.dispose]()` | Starts teardown immediately: closes the mailbox, aborts the signal, and requests generator return. Owned children are disposed after the generator settles. It does not wait for asynchronous `finally` work. |
+| `await p[Symbol.asyncDispose]()` | Starts teardown and waits until this process and its owned-child finalizers have settled. |
 
 Tests: `packages/core/test/process.test.ts`; the type rules are in
 `types.check.ts`, where the `@ts-expect-error` lines are the point — if one
@@ -49,6 +50,13 @@ Ownership: whatever a process spawns belongs to it and dies with it. The
 attachment happens during the synchronous part of each step — spawn before
 you `await`, or the child ends up unowned. Registry processes are deliberately
 unowned: shared state shouldn't die with whichever caller happened to start it.
+
+Disposal is cooperative. The synchronous symbol establishes the teardown
+point but cannot make an awaited promise settle. Use the async symbol when a
+test, shutdown path, or resource handoff must know that finalizers have
+finished. In either case, pass `self.signal` to long-running operations; if an
+operation ignores abort and never settles, asynchronous disposal must wait for
+it.
 
 One consequence worth internalizing: **a process that returns is over**, and
 its children are disposed with it. A view process that spawns page-local state
@@ -85,13 +93,20 @@ context go through a short-lived read-only proxy that records what was looked
 at — a number read here, a list iterated there — and the diff is matched
 against that record.
 
+State is plain data. Yields should be JSON-shaped — objects, arrays,
+primitives. Anything else (a `Date`, a `Map`, a class instance) is handled as
+an *atomic leaf*: reads return it untouched and changes compare by identity,
+so it works locally — but there is no path tracking inside it, and only JSON
+crosses a transport, so such values don't survive a remote `lookup`.
+
 Effects run in a batch once per microtask; `flush()` runs them now. Derives
 don't need either — reading one always gives a consistent answer (the diamond
 test proves no half-updated values are ever visible).
 
 Tests: `graph.test.ts` (exact wake counts, glitch freedom), `reconcile.test.ts`
 (property-based round-trips, minimal splices), `reconcile.perf.test.ts`
-(1 change in 10k items diffs in ≤ 100 µs — a CI assertion).
+(1 change in 10k items diffs in ≤ 100 µs — a CI assertion), `process.test.ts`
+("non-plain immutable values are tracked as atomic leaves").
 
 ## Views and sinks
 
@@ -144,7 +159,7 @@ flowchart LR
     T <--> T2
 ```
 `expose(reg, transport)` serves a registry; `connect(transport)` gives you the
-same registry interface backed by the other side. Under the hood each remote
+same lookup interface backed by the other side. Under the hood each remote
 process is a local process that applies incoming patches, which is why remote
 reads are just as fine-grained as local ones, a crash on the host shows up as
 `stale: true` here, and reconnecting is nothing special: look the name up
@@ -153,7 +168,10 @@ again, get the full state, diff it against what you kept.
 The format is documented for other languages in `packages/wire/spec/` — the
 JSON vectors there are the contract, and this repo's CI runs them too.
 `@nonchalant/host` puts it on real WebSockets; each connection is its own
-session and cleans up after itself.
+session and cleans up after itself. This interface similarity does not erase
+network constraints: wire values are JSON, requests can fail, and access must
+be authorized at the host and inside application processes. See
+[Hosting safely](hosting.md).
 
 ## What updates cost, measured
 
@@ -163,15 +181,15 @@ knowing (measured on Node v22.12, a 10k-item list of small objects; the
 
 | situation | cost per yield | verdict |
 |---|---|---|
-| immutable update, 1 of 10,000 items changed | ~46 µs | free at interaction rate; fine at 60 fps |
-| immutable append to 10,000 | ~38 µs | same |
-| immutable update, 1 of 100,000 | ~760 µs | fine per keystroke; not per frame |
-| zero structural sharing, 10,000 items (mutate-and-clone) | ~4,900 µs | the pathology — spread what changed, reuse the rest |
-| small state (a form, a game HUD), even with zero sharing | ~4 µs | never matters |
+| immutable update, 1 of 10,000 items changed | ~46 µs | within the repository's frame budget |
+| immutable append to 10,000 | ~38 µs | similar cost |
+| immutable update, 1 of 100,000 | ~760 µs | reasonable for occasional interaction; measure frame loops |
+| zero structural sharing, 10,000 items (mutate-and-clone) | ~4,900 µs | reuse unchanged objects to avoid this case |
+| small state (a form, a game HUD), even with zero sharing | ~4 µs | unlikely to be the bottleneck |
 
-The guidance that falls out: yields at interaction rate are always fine;
-yields at frame rate want frame-sized state — which is what per-frame state
-looks like anyway (the golden demo's world is five numbers).
+The practical guidance is to reuse unchanged objects and keep frame-rate
+snapshots small. These figures describe one benchmark environment, so measure
+your own data shapes when the write path is performance-sensitive.
 
 ## The budgets, in one place
 

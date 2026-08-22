@@ -308,6 +308,74 @@ describe('channel', () => {
 })
 
 describe('disposal cascade', () => {
+  it('synchronous disposal starts teardown without waiting for an async finalizer', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let finalized = false
+    const p = spawn(
+      async function* (self: Self<never>) {
+        try {
+          yield 'running'
+          for await (const _ of self) void _
+        } finally {
+          await gate
+          finalized = true
+        }
+      },
+      undefined,
+    )
+    await tick()
+
+    p[Symbol.dispose]()
+    expect(finalized).toBe(false)
+    release()
+    await p[Symbol.asyncDispose]()
+    expect(finalized).toBe(true)
+  })
+
+  it('async disposal waits for parent and owned-child finalizers', async () => {
+    const order: string[] = []
+    let releaseParent!: () => void
+    let releaseChild!: () => void
+    const parentGate = new Promise<void>((resolve) => { releaseParent = resolve })
+    const childGate = new Promise<void>((resolve) => { releaseChild = resolve })
+    const parent = spawn(
+      async function* (self: Self<never>) {
+        try {
+          spawn(
+            async function* (childSelf: Self<never>) {
+              try {
+                yield 'owned-child'
+                for await (const _ of childSelf) void _
+              } finally {
+                await childGate
+                order.push('owned-child')
+              }
+            },
+            undefined,
+          )
+          yield 'parent'
+          for await (const _ of self) void _
+        } finally {
+          await parentGate
+          order.push('parent')
+        }
+      },
+      undefined,
+    )
+    await tick()
+
+    const disposed = parent[Symbol.asyncDispose]()
+    await tick()
+    expect(order).toEqual([])
+    releaseParent()
+    await tick()
+    expect(order).toEqual(['parent'])
+    releaseChild()
+    await disposed
+    expect(order).toEqual(['parent', 'owned-child'])
+  })
+
   it('mailbox closes, finally runs, owned children die — in order', async () => {
     const order: string[] = []
     const child: Proc<number, never, void> = async function* (self) {

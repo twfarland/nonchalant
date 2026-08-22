@@ -17,7 +17,7 @@ are self-contained — no backends required.
 | `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
-| `shared-cart/` | **the pitch demo** — state moves tab → server by changing one line |
+| `shared-cart/` | the same cart and view using either a local or remote registry |
 | `mario/` | ⏱ the golden demo: 1 view yield, ≤ 3 DOM writes/frame, CI-asserted |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | the standard krausest benchmark app, keyed |

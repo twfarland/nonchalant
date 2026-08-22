@@ -64,6 +64,13 @@ describe('codec', () => {
     expect(decodeHost('not json')).toBeNull()
     expect(decodeHost('{"op":"yield","ref":"r1","patch":[["frobnicate","/x"]]}')).toBeNull()
   })
+
+  it('rejects patches with malformed paths or splice numbers at decode time', () => {
+    expect(decodeHost('{"op":"yield","ref":"r1","patch":[["set","x",1]]}')).toBeNull()
+    expect(decodeHost('{"op":"yield","ref":"r1","patch":[["splice","",-1,0,[]]]}')).toBeNull()
+    expect(decodeHost('{"op":"yield","ref":"r1","patch":[["splice","",0.5,0,[]]]}')).toBeNull()
+    expect(decodeHost('{"op":"yield","ref":"r1","patch":[["splice","",0,-2,[]]]}')).toBeNull()
+  })
 })
 
 describe('connect / expose end to end', () => {
@@ -141,6 +148,16 @@ describe('connect / expose end to end', () => {
     expect(log).toEqual(['spawn', 'dispose'])
     conn.close()
     stop()
+  })
+
+  it('an ask made while disconnected rejects immediately instead of hanging', async () => {
+    const { link, conn, teardown } = setup()
+    const rcart = conn.lookup('cart')
+    await until(() => rcart() !== undefined)
+    link.disconnect()
+    await until(() => rcart.stale)
+    await expect(rcart.ask({ type: 'count' })).rejects.toBeInstanceOf(WireError)
+    teardown()
   })
 
   it('reconnect is a re-lookup: full patch, and unchanged paths sleep through it', async () => {

@@ -142,12 +142,14 @@ export function derive<T>(fn: () => T): Process<T> {
   })
   const withSymbols = read as unknown as Record<symbol, unknown>
   withSymbols[Symbol.asyncIterator] = asyncIterator
-  withSymbols[Symbol.dispose] = (): void => {
+  const dispose = (): void => {
     if (disposed) return
     disposed = true
     for (const finish of [...closers]) finish()
     c.dispose()
   }
+  withSymbols[Symbol.dispose] = dispose
+  withSymbols[Symbol.asyncDispose] = async (): Promise<void> => dispose()
   return read as unknown as Process<T>
 }
 

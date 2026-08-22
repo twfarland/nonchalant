@@ -108,3 +108,10 @@ where every peer hears every message:
 
 The Node host (`@nonchalant/host`) additionally serves `GET /schema` over
 HTTP: `{ "protocol": 2, "names": [...] }` — the whitelist, for discovery.
+
+The protocol does not define identity or grant access. A published schema only
+limits process names; it does not prove who the client is or whether that
+client may use particular lookup arguments and messages. The Node host can
+reject WebSocket upgrades by browser origin and authenticate requests, while
+application processes remain responsible for record- and operation-level
+authorization. See [Hosting safely](hosting.md).

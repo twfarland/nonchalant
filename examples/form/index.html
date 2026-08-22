@@ -14,7 +14,7 @@
 </main>
 <aside class="explain">
 <h2>How it works</h2>
-<p>The submit is a <code>Call</code> message: the form gets a typed promise for its own outcome instead of watching status fields go by. FIFO backpressure means a double-click queues behind the first submit instead of racing it.</p>
+<p>The submit is a <code>Call</code> message: the form gets a typed promise for its own outcome instead of watching status fields go by. The FIFO mailbox serializes handling, so a double-click queues behind the first submit instead of racing it.</p>
 <pre><code><span class="k">type</span> SignupMsg = Call&lt;{ <span class="k">type</span>: <span class="s">'submit'</span>; email: string }, { ok: boolean; error?: string }&gt;
 
 <span class="c">// inside the process, a call is an ordinary message carrying reply:</span>

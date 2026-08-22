@@ -1,9 +1,8 @@
 # Testing processes
 
-Processes were designed to be held; it turns out things that can be held are
-easy to test. This page is the method — three levels, cheapest first — and
-the specific advantages the model unlocks. Every pattern points at a real
-test in this repo.
+Process inputs and outputs are explicit, so most behavior can be tested
+without a UI. This page uses three levels, from plain functions to the full
+runtime, and points each pattern at a test in this repository.
 
 ## Level 1: pure functions
 
@@ -49,7 +48,7 @@ Two habits make this level go further:
 
 ## Level 3: the spawned process
 
-Spawn when the test is *about* the runtime semantics: lifecycle, supervision,
+Spawn when the test is *about* runtime semantics: lifecycle, ownership,
 sharing, granularity.
 
 - **Faces.** `p()`, `p.pending`, `p.stale`, `p.error` are synchronous reads —
@@ -63,6 +62,8 @@ sharing, granularity.
 - **Ownership and leaks.** Dispose and assert release with `WeakRef` +
   `gc({ execution: 'async' })` — `packages/core/test/process.leaks.test.ts`
   (note: plain `gc()` false-fails under V8's conservative stack scanning).
+  When assertions depend on an asynchronous `finally` block, use
+  `await p[Symbol.asyncDispose]()`; synchronous disposal only starts teardown.
 - **The wire without sockets.** `memoryPair()` is a transport with
   `disconnect()` / `reconnect()` / `settle()` — partition tests are three
   lines: `packages/wire/test/wire.test.ts`. The conformance vectors in

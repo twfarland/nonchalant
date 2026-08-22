@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest'
 import { define, effect } from '@nonchalant/core'
 import type { Call, Definition, Proc } from '@nonchalant/core'
 import { connect, webSocketTransport } from '@nonchalant/wire'
+import { WebSocket } from 'ws'
 import { serve } from '../src/index.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -37,6 +38,74 @@ const cart: Proc<CartState, CartMsg, { userId: string }> = async function* (self
 type Shop = { cart: Definition<CartState, CartMsg, { userId: string }> }
 
 describe('node host over real websockets', () => {
+  it('checks browser origins and authorization before accepting a connection', async () => {
+    const host = await serve<Shop>(
+      { cart: define(cart) },
+      {
+        allowedOrigins: ['https://shop.example'],
+        authorize: async (request) => request.headers.authorization === 'Bearer test-token',
+      },
+    )
+
+    const status = (headers: Record<string, string>): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const ws = new WebSocket(host.url, { headers })
+        let settled = false
+        const finish = (code: number): void => {
+          if (settled) return
+          settled = true
+          resolve(code)
+        }
+        ws.on('open', () => {
+          finish(101)
+          ws.close()
+        })
+        ws.on('unexpected-response', (_request, response) => {
+          response.resume()
+          finish(response.statusCode ?? 0)
+        })
+        ws.on('error', (error) => {
+          if (!settled) reject(error)
+        })
+      })
+
+    await expect(fetch(`http://127.0.0.1:${host.port}/schema`)).resolves.toHaveProperty('status', 401)
+    await expect(
+      fetch(`http://127.0.0.1:${host.port}/schema`, {
+        headers: { authorization: 'Bearer test-token' },
+      }),
+    ).resolves.toHaveProperty('status', 200)
+    await expect(
+      status({ origin: 'https://attacker.example', authorization: 'Bearer test-token' }),
+    ).resolves.toBe(403)
+    await expect(status({ origin: 'https://shop.example' })).resolves.toBe(401)
+    await expect(status({ origin: 'https://shop.example', authorization: 'Bearer test-token' })).resolves.toBe(101)
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
+  it('passes missing origins to a custom origin policy for non-browser clients', async () => {
+    let seenOrigin: string | undefined = 'not-called'
+    const host = await serve<Shop>(
+      { cart: define(cart) },
+      {
+        allowedOrigins: (origin) => {
+          seenOrigin = origin
+          return origin === undefined
+        },
+      },
+    )
+    const ws = new WebSocket(host.url)
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', resolve)
+      ws.on('error', reject)
+    })
+    expect(seenOrigin).toBeUndefined()
+    ws.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
   it('serves lookups, casts, calls; sessions share processes; schema endpoint lists names', async () => {
     const host = await serve<Shop>({ cart: define(cart) })
 
@@ -100,6 +169,17 @@ describe('node host over real websockets', () => {
     await until(() => host.sessions() === 0)
 
     conn.close()
+    await host.close()
+  }, 15000)
+
+  it('a message over maxPayloadBytes closes the connection with 1009', async () => {
+    const host = await serve<Shop>({ cart: define(cart) }, { maxPayloadBytes: 1024 })
+    const ws = new WebSocket(host.url)
+    await new Promise<void>((resolve) => ws.on('open', resolve))
+    const closed = new Promise<number>((resolve) => ws.on('close', resolve))
+    ws.on('error', () => {}) // ws surfaces the payload violation as an error before closing
+    ws.send('x'.repeat(4096))
+    expect(await closed).toBe(1009)
     await host.close()
   }, 15000)
 })

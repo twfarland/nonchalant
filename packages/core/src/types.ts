@@ -30,8 +30,10 @@ export interface ProcessBase<T> {
   readonly error: unknown
   /** Lossy latest-value stream; each iterator is an independent multicast subscription. */
   [Symbol.asyncIterator](): AsyncIterator<T>
-  /** Ends the process: mailbox closes, `finally` blocks run, owned children die, in order. */
+  /** Starts teardown synchronously: closes the mailbox, aborts work, and requests generator return. */
   [Symbol.dispose](): void
+  /** Starts teardown and resolves after this process and all owned-child finalizers have settled. */
+  [Symbol.asyncDispose](): Promise<void>
 }
 
 export type Process<T, In = never> = ProcessBase<T> &
@@ -54,6 +56,9 @@ export interface Self<In> extends AsyncIterable<In> {
   send(msg: In): void
 }
 
+/** The generator shape `spawn` runs. Yield JSON-shaped plain data: non-plain
+ * values (Date, Map, class instances) are tracked as atomic leaves and never
+ * cross a transport — see docs/concepts.md, "State is plain data". */
 export type Proc<T, In, Args> = (self: Self<In>, args: Args) => AsyncGenerator<T>
 
 // ---------- registry ----------

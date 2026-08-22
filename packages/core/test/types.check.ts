@@ -23,6 +23,7 @@ declare const cartProc: Proc<CartState, CartMsg, { userId: string }>
 // --- spawn: `initial` decides whether reads are total ---
 const cart = spawn(cartProc, { userId: 'u1' }, { initial: { items: [], total: 0 } })
 const total0: CartState = cart() // no undefined
+const cartDisposed: Promise<void> = cart[Symbol.asyncDispose]()
 
 const noInit = spawn(cartProc, { userId: 'u1' })
 // @ts-expect-error — without initial, a read may be undefined
@@ -107,5 +108,5 @@ hist.send({ type: 'undo' })
 hist.send({ type: 'add', item: { id: 2, title: 'y', done: false } })
 
 // silence unused locals
-void total0; void total1; void rcart; void hist; void cart; void lc; void found; void counted; void fakeDefinition
+void total0; void total1; void rcart; void hist; void cart; void cartDisposed; void lc; void found; void counted; void fakeDefinition
 export {}

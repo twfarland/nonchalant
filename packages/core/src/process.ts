@@ -50,9 +50,13 @@ class Mailbox<In> {
   private takers: Taker<In>[] = []
   private warned = false
   private drainScheduled = false
+  private hooks: MailboxHooks<In>
   closed = false
 
-  constructor(private hooks: MailboxHooks<In>) {}
+  // no parameter property: the package ships erasable-syntax-only TS
+  constructor(hooks: MailboxHooks<In>) {
+    this.hooks = hooks
+  }
 
   push(msg: In): void {
     if (this.closed) {
@@ -157,6 +161,7 @@ export function channel<In>(signal?: AbortSignal): Self<In> & Disposable {
 interface ProcessCore {
   children: Set<ProcessCore>
   dispose(): void
+  settled(): Promise<void>
 }
 
 // Ambient scope, valid during the synchronous window of a process resumption
@@ -246,12 +251,23 @@ export function spawnProcess<T, In, A>(
     onIdle: () => setMeta({ pending: false }),
   })
 
-  const core: ProcessCore = { children: new Set(), dispose: () => disposeProcess() }
+  let completion: Promise<void> = Promise.resolve()
+  const core: ProcessCore = {
+    children: new Set(),
+    dispose: () => disposeProcess(),
+    settled: () => completion,
+  }
   const parent = currentScope
   if (parent !== null) parent.children.add(core)
 
+  const childSettlements = new Set<Promise<void>>()
   const disposeChildren = (): void => {
-    for (const child of [...core.children]) child.dispose()
+    for (const child of [...core.children]) {
+      child.dispose()
+      const settled = child.settled()
+      childSettlements.add(settled)
+      void settled.finally(() => childSettlements.delete(settled))
+    }
     core.children.clear()
   }
 
@@ -313,6 +329,7 @@ export function spawnProcess<T, In, A>(
         : new Error(`nonchalant: process ${phase === 'disposed' ? 'disposed' : 'ended'}`),
     )
     disposeChildren() // owned children die last (dispose order per DESIGN)
+    await Promise.all([...childSettlements])
     if (parent !== null) parent.children.delete(core)
     internal?.onSettled?.()
   }
@@ -337,13 +354,13 @@ export function spawnProcess<T, In, A>(
     for (const finish of [...closers]) finish()
   }
 
-  void drive()
-
   // ---------- outside face ----------
 
   const read = (): T | undefined => src() as unknown as T | undefined
 
   const closers = new Set<() => void>()
+
+  completion = drive()
 
   const asyncIterator = (): AsyncIterator<T> => {
     let buffered = false
@@ -430,5 +447,9 @@ export function spawnProcess<T, In, A>(
   p['ask'] = ask
   p[Symbol.asyncIterator] = asyncIterator
   p[Symbol.dispose] = disposeProcess
+  p[Symbol.asyncDispose] = async (): Promise<void> => {
+    disposeProcess()
+    await completion
+  }
   return read as unknown as Process<T | undefined, In>
 }

@@ -33,15 +33,19 @@ for await (const { q } of self.latest()) {
 }
 ```
 
-This prevents a backlog, but it does not cancel the request already in flight;
-that request completes before the newest queued query begins. `examples/typeahead`.
+This prevents a backlog, but it does not cancel the request already in flight:
+that request completes — and its yield publishes — before the newest queued
+query begins, which is why each yield carries its own `q`. If even a transient
+stale result matters, don't await in the loop: stamp each request with an
+epoch, run it in the background, `self.send` the result back, and ignore
+results whose epoch is old. `examples/typeahead`.
 
 ## Forms — ask for the outcome
 
 Make the submit a `Call` message. The form gets a typed promise for its own
 result instead of watching status fields go by. `examples/form`.
 
-## A query cache — twenty lines of registry
+## A small query cache
 
 ```ts
 const users = registry({
@@ -139,8 +143,8 @@ operator zoo here, because the classics dissolve into the primitives —
 | `startWith` | `initial` |
 | retry / error channels | `restart` policies, `stale`, `error` |
 
-Shipping these as a library would just put names on one-liners. The two that
-genuinely carry logic are recipes:
+Most of these mappings are short enough to keep near the code that uses them.
+Two patterns that carry more lifecycle logic are shown below:
 
 ```ts
 // merge: pump several processes into one mailbox
@@ -186,7 +190,10 @@ is the same code you'd write for local state — posts are casts, history
 arrives as patches, a dead server shows as `stale: true` until the
 reconnecting transport finds it again. `examples/chat`.
 
-## The one-line move
+## Switching a registry to a remote host
 
-Local registry → `connect(webSocketTransport(url))`. Nothing else changes.
-`examples/shared-cart`.
+Replace a local registry with `connect(webSocketTransport(url))` when the
+callers only depend on the registry interface. The process and view can stay
+the same, but deployment adds JSON boundaries, latency, disconnection,
+authentication, and authorization. `examples/shared-cart` shows the code
+change; [Hosting safely](hosting.md) covers the operational boundary.
