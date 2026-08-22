@@ -9,6 +9,17 @@
 <body>
 <h1>Typeahead</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p><code>self.latest()</code> is the entire debounce/race/cancel story: while a search is in flight the loop is not listening, and when it finishes it resumes at the <em>newest</em> query, skipping every stale keystroke in between. The abort signal cancels in-flight work if the process is disposed.</p>
+<pre><code>for await (const { q } of self.latest()) {
+  yield { q, results, pending: true }
+  try {
+    results = await api.search(q, { signal: self.signal })
+    yield { q, results, pending: false }
+  } catch { /* aborted or failed; the loop simply continues */ }
+}</code></pre>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

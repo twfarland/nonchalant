@@ -9,6 +9,15 @@
 <body>
 <h1>Multi-tab sync</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>Every tab requests the same Web Lock; the browser grants it to one, and that tab hosts the counter over a BroadcastChannel transport. Every tab — the winner included — connects as a client, so the code is uniform. Close the hosting tab and the lock, and the job, move to another.</p>
+<pre><code>void navigator.locks.request(CHANNEL, async () =&gt; {
+  expose(registry({ counter: define(counter) }), hostTransport)
+  hostTransport.announce()     // tells every tab to look up again
+  await new Promise(() =&gt; {})  // hold the lock for this tab's lifetime
+})</code></pre>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

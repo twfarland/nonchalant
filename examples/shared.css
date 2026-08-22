@@ -102,6 +102,37 @@ thead th, tr th { color: var(--muted); font-weight: 500; }
 .cart ul { list-style: none; margin: 0.5rem 0; padding: 0; }
 .cart li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
 
+/* the how-it-works section under every demo */
+.explain {
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  max-width: 44rem;
+}
+.explain h2 { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.explain p { max-width: 70ch; }
+.explain a { word-break: break-all; }
+
+code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+}
+pre {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
 /* js-framework-benchmark: enough of the expected classes to look sane */
 .jumbotron { margin-bottom: 1rem; }
 .btn { font: inherit; }

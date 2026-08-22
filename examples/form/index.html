@@ -9,6 +9,17 @@
 <body>
 <h1>Form (+ask)</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>The submit is a <code>Call</code> message: the form gets a typed promise for its own outcome instead of watching status fields go by. FIFO backpressure means a double-click queues behind the first submit instead of racing it.</p>
+<pre><code>type SignupMsg = Call&lt;{ type: 'submit'; email: string }, { ok: boolean; error?: string }&gt;
+
+// inside the process, a call is an ordinary message carrying reply:
+msg.reply(await fakeSignup(msg.email))
+
+// in the view, the answer is just an awaited promise:
+const res = await store.ask({ type: 'submit', email })</code></pre>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

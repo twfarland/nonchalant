@@ -56,9 +56,11 @@ Same key → same fetch, shared by everyone. Last watcher leaves → 30 seconds 
 gone. Next lookup → fresh fetch. That's the useful core of a query library,
 and it's a passing test: `packages/core/test/registry.test.ts`.
 
-The full construct — loading and error states, retry, stale-while-refetch,
-prefix invalidation, and mutations as `ask()` — is `examples/lib/query.ts`
-(about eighty lines), running in `examples/query`.
+The full story — loading and error states, retry, stale-while-refetch, and
+mutations as `ask()` on the query itself (write-through, one explicit ripple
+instead of an invalidation graph) — is `examples/query`, with the schema
+tested headlessly in `examples/query/shop.test.ts` and the reasoning written
+up right on the demo page.
 
 ## Routing — the URL is a process
 

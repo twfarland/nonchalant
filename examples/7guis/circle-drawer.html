@@ -9,6 +9,17 @@
 <body>
 <h1>7GUIs — Circle drawer</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>SVG through <code>h()</code> — the namespace is inferred down the tree. Undo/redo works on snapshots, and a whole radius drag collapses into one undo step: the first resize remembers the pre-drag state, and releasing the slider commits it.</p>
+<pre><code>} else if (msg.type === 'resize') {
+  if (dragBase === null) dragBase = circles          // remember where the drag began
+  circles = circles.map((c) =&gt; c.id === msg.id ? { ...c, r: msg.r } : c)
+} else if (msg.type === 'commit') {
+  if (dragBase !== null &amp;&amp; dragBase !== circles) snapshot(dragBase)
+  dragBase = null                                     // the drag is one undo step
+}</code></pre>
+</section>
 <script type="module" src="./circle-drawer.ts"></script>
 </body>
 </html>

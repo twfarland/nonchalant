@@ -9,13 +9,22 @@
   th { background: var(--paper); position: sticky; top: 0; }
   td { border: 1px solid var(--line); padding: 0; }
   input.cell { border: 0; border-radius: 0; width: 90px; margin: 0; padding: 2px 6px; }
-  .cells { max-height: 80vh; max-width: 95vw; overflow: auto; display: inline-block;
+  .cells { max-height: 70vh; max-width: 95vw; overflow: auto; display: inline-block;
            background: var(--card); border: 1px solid var(--line); }
 </style>
 </head>
 <body>
 <h1>7GUIs — Cells</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>Every cell's value is a derive that parses its formula and resolves references by reading other cells' derives — so dependency tracking is automatic and exact. Edit A1 and only formulas that (transitively) mention A1 recompute; unrelated cells never even re-parse (the test counts evaluations). A formula whose result didn't change wakes nobody downstream, and reference cycles come back as <code>#CYCLE</code> instead of a hang.</p>
+<pre><code>d = derive(() =&gt; {
+  const src = formulas()[key] ?? ''    // tracked read: exactly this cell's path
+  if (!src.startsWith('=')) return literalOrText(src)
+  return parseExpr(tokenize(src), (ref) =&gt; numberOf(valueOf(ref)()))
+})</code></pre>
+</section>
 <script type="module" src="./cells-app.ts"></script>
 </body>
 </html>

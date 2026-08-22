@@ -9,6 +9,17 @@
 <body>
 <h1>Counter</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>This is the whole app. <code>cell(0)</code> is five lines of sugar over <code>spawn</code> — a process whose messages are its next values — and a process is already a valid slot, so <code>span({}, count)</code> is a live binding. The function runs once; there is no re-render.</p>
+<pre><code>function Counter(): VNode {
+  const count = cell(0)
+  return div({ class: 'card' },
+    button({ onclick: () =&gt; count.send(count() - 1) }, '-'),
+    span({ class: 'value' }, count),
+    button({ onclick: () =&gt; count.send(count() + 1) }, '+'))
+}</code></pre>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

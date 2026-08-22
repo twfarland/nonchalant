@@ -8,8 +8,10 @@ import { MarioView, initialMario, mario, type Dims } from './mario.ts'
 
 const world = spawn(mario, undefined, { initial: initialMario })
 
-const dims = cell<Dims>({ w: innerWidth, h: innerHeight })
-addEventListener('resize', () => dims.send({ w: innerWidth, h: innerHeight }))
+const stage = document.getElementById('stage')!
+const size = (): Dims => ({ w: stage.clientWidth, h: stage.clientHeight })
+const dims = cell<Dims>(size())
+addEventListener('resize', () => dims.send(size()))
 
 const keys = new Set<string>()
 const sendArrows = (): void =>
@@ -39,4 +41,4 @@ const view = spawn(async function* (_self: Self<never>): AsyncGenerator<VNode> {
   yield MarioView(world, dims)
 }, undefined)
 
-mount(document.body, view)
+mount(stage, view)

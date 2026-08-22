@@ -9,6 +9,10 @@
 <body>
 <h1>7GUIs — Temperature converter</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>Two cells, synced both ways by their input handlers; an unparseable value updates its own field and leaves the other alone. No derived-state framework needed for a two-way constraint — it's two sends.</p>
+</section>
 <script type="module" src="./temperature.ts"></script>
 </body>
 </html>

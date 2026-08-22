@@ -5,10 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mario — nonchalant</title>
 <link rel="stylesheet" href="../shared.css">
-<style>body { margin: 0; padding: 0; overflow: hidden; background: rgb(174,238,238); }</style>
+<style>
+  #stage { position: relative; height: min(60vh, 480px); min-height: 300px;
+    overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+</style>
 </head>
 <body>
-
+<h1>Mario <span class="muted">— arrow keys to walk, up to jump</span></h1>
+<div id="stage"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>The physics is verbatim from the classic Elm-architecture demo. The input handling is the point: arrows are <em>state</em> inside the process and only ticks step the world — holding a key down re-sends the same arrows and moves nothing, so the classic key-repeat double-step cannot happen (it's regression-tested).</p>
+<pre><code>for await (const msg of self) {
+  if (msg.type === 'arrows') {
+    arrows = { x: msg.x, y: msg.y }     // input is state, not a step
+  } else {
+    m = step(msg.delta, arrows, m)      // only ticks move the world
+    yield m
+  }
+}</code></pre>
+<p>The view yields <strong>once</strong>; two attribute bindings (position style, sprite src) carry every frame. CI asserts the budgets: one view yield total, at most 3 DOM writes per frame, zero node churn — <code>mario.golden.test.ts</code>.</p>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

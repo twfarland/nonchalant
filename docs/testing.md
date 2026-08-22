@@ -59,7 +59,7 @@ sharing, granularity.
 - **Exact wake counts.** Granularity is observable: count effect runs (or DOM
   writes) and assert the precise number, because the model promises exactness
   — `packages/core/test/graph.test.ts`, `packages/dom/test/dom.test.ts`,
-  `examples/lib/query.test.ts`.
+  `examples/query/shop.test.ts` (write-through mutations, failure re-sync).
 - **Ownership and leaks.** Dispose and assert release with `WeakRef` +
   `gc({ execution: 'async' })` — `packages/core/test/process.leaks.test.ts`
   (note: plain `gc()` false-fails under V8's conservative stack scanning).

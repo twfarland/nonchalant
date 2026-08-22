@@ -85,15 +85,15 @@ export function MarioView(m: Process<MarioState>, dims: Process<Dims>): VNode {
   return div(
     {
       style: () =>
-        `width: ${dims().w}px; height: ${dims().h}px; background: rgb(174,238,238); position: fixed;`,
+        `width: ${dims().w}px; height: ${dims().h}px; background: rgb(174,238,238); position: absolute;`,
     },
     div({
       style: () =>
-        `width: ${dims().w}px; height: 50px; background: rgb(74,167,43); position: fixed; bottom: 0px;`,
+        `width: ${dims().w}px; height: 50px; background: rgb(74,167,43); position: absolute; bottom: 0px;`,
     }),
     img({
       src: () => sprite(m()),
-      style: () => `position: fixed; z-index: 1; bottom: ${m().y + 46}px; left: ${m().x}px;`,
+      style: () => `position: absolute; z-index: 1; bottom: ${m().y + 46}px; left: ${m().x}px;`,
     }),
   )
 }

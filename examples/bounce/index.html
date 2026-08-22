@@ -9,6 +9,16 @@
 <body>
 <h1>Bounce (one process, two renderers)</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>One physics process, two renderers reading the same yields. The left panel is the DOM sink — keyed divs with style bindings. The right is a canvas redrawn by one tracked effect. Retargeting isn't a feature; a renderer is just another reader.</p>
+<pre><code>// the canvas "sink" is one effect
+effect(() =&gt; {
+  const { balls } = sim()
+  ctx.clearRect(0, 0, W, H)
+  for (const b of balls) drawBall(ctx, b)
+})</code></pre>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

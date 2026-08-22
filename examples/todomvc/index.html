@@ -9,6 +9,19 @@
 <body>
 <h1>TodoMVC</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>One process owns the state: messages in, one immutable yield per message. The generator body is the reducer — no actions, no dispatch table, just a loop.</p>
+<pre><code>for await (const msg of self) {
+  switch (msg.type) {
+    case 'add':    todos = [...todos, { id: nextId++, title: msg.title, done: false }]; break
+    case 'toggle': todos = todos.map((t) =&gt; t.id === msg.id ? { ...t, done: !t.done } : t); break
+    // destroy / toggle-all / clear-completed / filter ...
+  }
+  yield { todos, filter }
+}</code></pre>
+<p>The list is a keyed thunk hole: toggling a todo patches exactly one row; every other node sleeps. The process lives in <code>todos.ts</code>, where its tests drive the generator directly — message in, yield out — with no runtime or DOM (see <code>docs/testing.md</code>).</p>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

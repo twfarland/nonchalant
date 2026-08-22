@@ -1,63 +1,16 @@
-// Server state, the process way. TanStack's client shape (a cache, keyed
-// fetchers, an invalidation graph) exists because caches are dumb stores that
-// must be told what went stale. A process isn't dumb — it OWNS its data:
-//
-//   - a query is a named definition; lookup gives caching, dedup, sharing,
-//     and gc without a client object;
-//   - a mutation is an ask() ON THE QUERY ITSELF: it performs the write,
-//     replies, and yields the updated state — write-through, no refetch
-//     round-trip, no invalidation bookkeeping;
-//   - cross-entity ripples are explicit, typed messages (the user process
-//     nudges the users list), not a cache-key dependency graph;
-//   - loading and failure are the process face: pending covers the first
-//     fetch, refreshes, AND in-flight mutations; a failed write crashes the
-//     process, the ask rejects, and the restart policy re-syncs from the
-//     server automatically.
-//
-// If you want TanStack's exact API shape anyway (say, mid-migration), it's
-// eighty lines of userland: ../lib/query.ts.
+// Server state, the process way — the schema lives in shop.ts (where its
+// tests drive it headlessly); this file is the view. The page itself explains
+// why TanStack Query's feature list falls out of the primitives here.
 //
 // Things to try: pick a user (cached on revisit); rename someone (the detail
 // updates write-through, the list refreshes); submit an empty name (the ask
-// rejects, the error shows, the process re-syncs).
+// rejects, the error shows, the process re-syncs from the server).
 
-import { cell, define, registry } from '@nonchalant/core'
-import type { Call, VNode } from '@nonchalant/core'
+import { cell } from '@nonchalant/core'
+import type { VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, form, h2, input, li, p, span, ul } from '@nonchalant/dom/tags'
-import { getUser, listUsers, renameUser, type User } from './api.ts'
-
-// ---------- the schema: queries are definitions ----------
-
-type UsersMsg = { type: 'refresh' }
-type UserMsg = { type: 'refresh' } | Call<{ type: 'rename'; name: string }, User>
-
-const shop = registry({
-  users: define<{ id: number; name: string }[], UsersMsg, void>(
-    async function* (self) {
-      yield await listUsers()
-      for await (const _ of self.latest()) yield await listUsers()
-    },
-    { evict: 60_000, restart: 'on-crash' },
-  ),
-
-  user: define<User, UserMsg, { id: number }>(
-    async function* (self, { id }) {
-      yield await getUser(id)
-      for await (const msg of self) {
-        if (msg.type === 'refresh') {
-          yield await getUser(id)
-        } else {
-          const updated = await renameUser(id, msg.name) // a throw rejects the ask; restart re-syncs
-          msg.reply(updated)
-          yield updated // write-through: the new state, no refetch
-          shop.lookup('users').send({ type: 'refresh' }) // the one explicit ripple
-        }
-      }
-    },
-    { evict: 60_000, restart: 'on-crash' },
-  ),
-})
+import { shop } from './shop.ts'
 
 const selected = cell(0)
 

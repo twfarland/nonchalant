@@ -9,6 +9,25 @@
 <body>
 <h1>Undo/redo</h1>
 <div id="app"></div>
+<section class="explain">
+<h2>How it works</h2>
+<p>A process is a function, so middleware is function composition — no store enhancers, no plugin API. The wrapper hands the inner process a private mailbox (<code>channel</code>) and owns the history itself. The same shape gives logging, persistence, and replay.</p>
+<pre><code>function withHistory(proc, depth = 100) {
+  return async function* (self, args) {
+    const inner = channel(self.signal)   // a private Self for the wrapped proc
+    const it = proc(inner, args)
+    let current = (await it.next()).value
+    const past = [], future = []
+    yield current
+    for await (const msg of self) {
+      if (msg.type === 'undo' &amp;&amp; past.length) { future.push(current); current = past.pop() }
+      else if (msg.type === 'redo' &amp;&amp; future.length) { past.push(current); current = future.pop() }
+      else { past.push(current); inner.send(msg); current = (await it.next()).value }
+      yield current
+    }
+  }
+}</code></pre>
+</section>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>
