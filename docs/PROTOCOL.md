@@ -1,27 +1,48 @@
-# The Nonchalant wire protocol (rev 2 — draft)
+# The Nonchalant wire protocol (rev 2)
 
 Transport-agnostic (WebSocket, BroadcastChannel, in-memory, anything ordered and
 reliable). Carries **state patches of plain data — never markup, never code**.
 Any language can implement the host half; this file plus the conformance vectors
 (`packages/wire/spec/vectors/*.json`, format in `packages/wire/spec/README.md`)
-are the contract. A BEAM host certifies against the same vectors the reference
+are the contract. External hosts certify against the same vectors the reference
 implementation runs in CI (`packages/wire/test/vectors.test.ts`).
 
 ## Messages
 
 Client → host:
 
-    { op: "lookup", ref, name, args }   // get-or-spawn by schema name
+    { op: "lookup", ref, name, args? }  // get-or-spawn by schema name; args are data
     { op: "send",   ref, msg }          // cast: fire-and-forget
     { op: "call",   ref, id, msg }      // ask(): correlated request
     { op: "exit",   ref }               // release; host disposes when unwatched
 
 Host → client:
 
-    { op: "yield",  ref, patch }        // reconcile(prev, next) since previous yield
+    { op: "yield",  ref, patch }        // reconcile(prev, next) since the previous yield
     { op: "reply",  ref, id, value }
-    { op: "done",   ref, value? }
-    { op: "raise",  ref, error }
+    { op: "done",   ref, value? }       // normal completion
+    { op: "raise",  ref, error }        // failure — see the error shape below
+
+`ref` is a client-chosen opaque string. On shared-bus transports, clients make
+refs globally unique (the reference implementation prefixes a per-session id).
+
+## A session
+
+```mermaid
+sequenceDiagram
+    participant C as client
+    participant H as host
+    C->>H: lookup ref=r1 name=cart
+    H->>C: yield r1 [full snapshot: ops against nothing]
+    C->>H: send r1 {type: add, ...}
+    H->>C: yield r1 [set /items/0 ..., set /total ...]
+    C->>H: call r1 id=1 {type: checkout}
+    H->>C: reply r1 id=1 {ok: true}
+    Note over C,H: connection drops and returns
+    C->>H: lookup ref=r1 name=cart
+    H->>C: yield r1 [full snapshot again]
+    C->>H: exit r1
+```
 
 ## Patch grammar
 
@@ -36,17 +57,54 @@ Host → client:
 - Hosts MUST reject path segments `__proto__`, `constructor`, `prototype`
   (prototype pollution guard; the reference implementation is
   packages/core/src/reconcile.ts).
-- The first `yield` after lookup or reconnect is a full snapshot: ops from root
-  against an empty previous state. Reconnect is therefore not a special case.
+- The first `yield` after **any** lookup is a full snapshot: ops applied
+  against an empty previous state. A lookup on a ref that is already being
+  watched restarts the watch the same way. Reconnect is therefore not a
+  special case: the client re-issues its lookups and receives full snapshots,
+  which it diffs against whatever it kept.
+
+## Errors
+
+`error` is a Json value. Two conventions:
+
+- **Call rejection**: when `error` is an object carrying a numeric `id`, the
+  raise rejects exactly that pending call and nothing else. The host sends
+  this when a call fails, is dropped by mailbox overflow, or targets an
+  unknown ref.
+- **Process failure**: an `error` without an `id` means the process itself
+  failed. Clients keep the last value (readers see `stale: true`) and reject
+  all pending calls for the ref. No further yields arrive until a re-lookup.
+
+The reference implementation emits `{ message, id? }`; hosts may add fields.
+A lookup for a name outside the schema MUST answer with a process-level raise.
 
 ## Semantics
 
 - `lookup` is get-or-spawn against the host's **published schema** — the schema
-  is simultaneously the TypeScript contract and the security whitelist. Nothing
-  outside it can be spawned remotely. `args` are data.
+  is simultaneously the type contract and the security whitelist. Nothing
+  outside it can be spawned remotely.
 - One `reply` per `call` id; a crashed process rejects its pending calls
-  (`raise` with the id-bearing error) rather than silently retrying.
+  rather than silently retrying.
 - Casts arriving while a process is restarting are retained in a bounded
   mailbox and replayed; the overflow policy is drop-oldest (a dropped call
   is rejected).
 - Ordering: per-ref FIFO both directions. No cross-ref ordering guarantees.
+- Yields may be conflated: a host that observes state lossily (latest-value)
+  sends patches between consecutive *observed* snapshots. Patches always
+  compose; clients cannot tell the difference.
+
+## Transports
+
+A transport carries opaque strings, ordered and reliably, and reports
+open/close. Two additional rules for shared buses (e.g. BroadcastChannel),
+where every peer hears every message:
+
+- Peers MUST ignore anything that does not decode as a message addressed to
+  their side (the codec's direction filtering makes a bus safe).
+- The literal string `nonchalant:announce` is not a message: a host posts it
+  when it (re)starts serving, and peers treat it as a transport `open` —
+  clients respond by re-issuing their lookups. This is how a replacement host
+  picks up existing tabs.
+
+The Node host (`@nonchalant/host`) additionally serves `GET /schema` over
+HTTP: `{ "protocol": 2, "names": [...] }` — the whitelist, for discovery.

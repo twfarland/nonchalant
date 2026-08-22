@@ -5,7 +5,10 @@ that holds it to the promise.
 
 ## Process (from the outside)
 
-`Process<T, In>` is what you hold after `spawn` or `lookup`:
+You *write* a process as an async generator; `spawn` *runs* it and returns
+`Process<T, In>` — a handle to the running instance that owns its mailbox,
+its published snapshots, and its lifecycle. The handle is what you hold after
+`spawn` or `lookup`:
 
 | member | what it does |
 |---|---|
@@ -57,11 +60,23 @@ equality cut — is what keeps chains of derivations quiet.
 
 Every yield goes through the same pipeline: diff the new value against the old
 (`reconcile`), keep the new snapshot, wake only the readers whose recorded
-paths the diff touched. The propagation engine is a faithful port of
-alien-signals (`core/src/system.ts`). The path tracking sits on top: reads
-inside a tracked context go through a short-lived read-only proxy that records
-what was looked at — a number read here, a list iterated there — and the diff
-is matched against that record.
+paths the diff touched.
+
+```mermaid
+flowchart LR
+    Y["yield next"] --> R["reconcile(prev, next)<br/>= a patch of changed paths"]
+    R --> G{"did this reader's<br/>recorded paths change?"}
+    G -->|yes| W["recompute it"] --> E{"did its result<br/>change?"}
+    G -->|no| S["it sleeps"]
+    E -->|yes| D["its own readers wake"]
+    E -->|no| S2["its readers sleep<br/>(the equality cut)"]
+```
+
+The propagation engine is a faithful port of alien-signals
+(`core/src/system.ts`). The path tracking sits on top: reads inside a tracked
+context go through a short-lived read-only proxy that records what was looked
+at — a number read here, a list iterated there — and the diff is matched
+against that record.
 
 Effects run in a batch once per microtask; `flush()` runs them now. Derives
 don't need either — reading one always gives a consistent answer (the diamond
@@ -104,6 +119,22 @@ Tests: `registry.test.ts`.
 
 Eight JSON ops (`lookup/send/call/exit` from the client, `yield/reply/done/
 raise` from the host), carrying state patches — never markup, never code.
+
+```mermaid
+flowchart LR
+    subgraph client
+        B["bindings and derives"] --> F["Process handle<br/>(a local patch-applying process)"]
+        F -->|"send / call"| T["transport"]
+        T -->|"yield: patch"| F
+    end
+    subgraph host
+        T2["transport"] --> X["expose()"]
+        X -->|"lookup = get-or-spawn"| REG["registry schema<br/>(the whitelist)"]
+        REG --> P[["the process"]]
+        P -->|"yields → reconcile → patches"| X
+    end
+    T <--> T2
+```
 `expose(reg, transport)` serves a registry; `connect(transport)` gives you the
 same registry interface backed by the other side. Under the hood each remote
 process is a local process that applies incoming patches, which is why remote

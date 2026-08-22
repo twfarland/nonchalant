@@ -1,8 +1,9 @@
 # CLAUDE.md — nonchalant
 
-A UI library built on one primitive: a **Process** (async generator; plain-`let`
-state; message in, yields out; location-transparent). Read `docs/concepts.md`
-for the model; `README.md` is the front page.
+A UI library built on one primitive: a **Process** (written as an async
+generator — plain-`let` state, message in, yields out; `spawn` runs it and
+returns the typed handle; location-transparent). Read `docs/concepts.md` for
+the model; `README.md` is the front page.
 
 ## Commands
 - `pnpm check` — strict tsc over all packages, examples, and tests

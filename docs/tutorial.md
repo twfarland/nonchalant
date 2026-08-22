@@ -7,8 +7,10 @@ here is runnable — most of it comes straight from `examples/`.
 ## 1. State is a process
 
 In nonchalant, state isn't a store you configure or a hook you call. It's a
-**process**: an async generator. Its local variables are the state, its
-mailbox is the input, and everything it `yield`s gets published.
+**process**. You write one as an async generator — its local variables are the
+state, its mailbox is the input, and everything it `yield`s gets published.
+`spawn` runs the generator and gives you back a handle to the running
+instance; the handle is what you read, send to, and dispose.
 
 ```ts
 import { spawn } from '@nonchalant/core'

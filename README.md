@@ -1,9 +1,11 @@
 # Nonchalant
 
-A UI library built on one primitive. A **process** is an async generator: its
-state is plain `let` variables, its input is a mailbox, and everything it
-`yield`s is published. State is a process of data; a view is a process of UI;
-a server actor is a process on the other end of a socket. Same type, same
+A UI library built on one primitive. You write a **process** as an async
+generator — its state is plain `let` variables, its input is a mailbox, and
+everything it `yield`s is published. `spawn` runs it and hands you a live,
+typed handle: call it to read, `send` it messages, `ask` it questions, iterate
+it, dispose it. State is a process of data; a view is a process of UI; a
+server actor is a process on the other end of a socket. Same handle, same
 lifecycle, same rules.
 
 ```ts
@@ -49,6 +51,20 @@ mount(document.getElementById('app')!, div({},
   contract; any language can implement the host half.
 - **Small.** Core is 6.2 KB gzipped; core + DOM + tags is 10.6 KB. Both are CI
   budgets, not aspirations.
+
+```mermaid
+flowchart LR
+    subgraph tab [this tab]
+        V[view bindings] -->|"send / ask"| L[registry.lookup]
+        L --> P1[[cart process]]
+        P1 -->|"yield → diff → wake by path"| V
+    end
+    subgraph server [or a server]
+        P2[[the same cart process]]
+    end
+    L -.->|"connect(url): the one-line move"| W["8-op wire, JSON patches"]
+    W -.-> P2
+```
 
 ## Try it
 
