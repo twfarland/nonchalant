@@ -343,7 +343,11 @@ export function effect(fn: () => void | (() => void)): () => void {
   const mark = openGates.length
   try {
     ++runDepth
-    e.cleanup = e.fn()
+    const cleanup = e.fn()
+    e.cleanup = typeof cleanup === 'function' ? cleanup : undefined
+  } catch (error) {
+    disposeEffect(e)
+    throw error
   } finally {
     --runDepth
     activeSub = prevSub
@@ -380,7 +384,8 @@ function run(e: EffectNode): void {
     try {
       ++cycle
       ++runDepth
-      e.cleanup = e.fn()
+      const cleanup = e.fn()
+      e.cleanup = typeof cleanup === 'function' ? cleanup : undefined
     } finally {
       --runDepth
       activeSub = prevSub

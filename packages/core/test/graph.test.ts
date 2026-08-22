@@ -364,6 +364,29 @@ describe('flush error handling', () => {
 })
 
 describe('effect lifecycle', () => {
+  it('an effect that throws on its first run releases every dependency', () => {
+    let watchers = 0
+    const src = source(
+      { n: 0 },
+      { onWatchers: (count) => (watchers = count) },
+    )
+
+    expect(() =>
+      effect(() => {
+        void src().n
+        throw new Error('initial failure')
+      }),
+    ).toThrow('initial failure')
+    expect(watchers).toBe(0)
+  })
+
+  it('only function returns are treated as cleanups', () => {
+    // TypeScript callers get the narrow return type, but the runtime boundary
+    // must remain safe for JavaScript and dynamically composed effects.
+    const stop = effect((() => 1) as () => void)
+    expect(() => stop()).not.toThrow()
+  })
+
   it('a returned cleanup runs before each re-run and on dispose', () => {
     const src = source<{ n: number }>({ n: 0 })
     const log: string[] = []
