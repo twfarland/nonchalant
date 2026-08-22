@@ -12,7 +12,7 @@ are self-contained — no backends required.
 | `form/` | `ask()` — a submit that learns its own outcome (try someone@taken.com) |
 | `router/` | pages as view processes over the userland router in `lib/router.ts` |
 | `undo-redo/` | middleware as function composition over `channel` |
-| `query/` | TanStack-style queries + mutations from `lib/query.ts`, in action |
+| `query/` | server state the process way: queries as definitions, mutations as `ask()` |
 | `drag/` | a gesture with a lifetime: born on pointerdown, dead on pointerup |
 | `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |

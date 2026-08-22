@@ -20,6 +20,45 @@ export interface Router<R> {
   dispose(): void
 }
 
+/**
+ * The same interface over the History API — real paths, no `#`. The back
+ * button works exactly as in any SPA router: pushState/replaceState navigate,
+ * popstate updates the route. The cost isn't history, it's hosting: every
+ * path must serve the app's HTML ("history fallback"), which is why the demo
+ * gallery — a plain multi-page directory — uses hashRouter instead.
+ */
+export function historyRouter<R>(parse: (path: string) => R): Router<R> {
+  const read = (): R => parse(location.pathname)
+
+  const route = spawn<R, R, void>(async function* (self: Self<R>) {
+    const onPop = (): void => self.send(read())
+    addEventListener('popstate', onPop)
+    self.signal.addEventListener('abort', () => removeEventListener('popstate', onPop))
+    yield read()
+    for await (const r of self.latest()) yield r
+  }, undefined, { initial: read() })
+
+  const navigate = (path: string, opts?: NavigateOpts): void => {
+    if (opts?.replace ?? true) history.replaceState(null, '', path)
+    else history.pushState(null, '', path)
+    // pushState/replaceState don't fire popstate — nudge the route ourselves
+    ;(route as unknown as { send(r: R): void }).send(read())
+  }
+
+  return {
+    route: route as Process<R>,
+    navigate,
+    link: (path, opts) => ({
+      href: path,
+      onclick: (e) => {
+        e.preventDefault()
+        navigate(path, opts)
+      },
+    }),
+    dispose: () => route[Symbol.dispose](),
+  }
+}
+
 export function hashRouter<R>(parse: (path: string) => R): Router<R> {
   const read = (): R => parse(location.hash.replace(/^#/, '') || '/')
 

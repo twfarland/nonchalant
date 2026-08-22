@@ -1,5 +1,8 @@
-// TanStack Query's working core as a userland construct — because a query is
-// just a process. What each feature costs here:
+// TanStack Query's working core as a userland construct — API shape included,
+// for when you're migrating and want the familiar client. If you're starting
+// fresh, the with-the-grain version is smaller still: queries as typed
+// registry definitions and mutations as ask() on the owning process — see
+// ../query/main.ts. What each TanStack feature costs here:
 //
 //   caching + dedup      lookup is get-or-spawn: same key, same process
 //   sharing              everyone who looks a key up reads the same yields

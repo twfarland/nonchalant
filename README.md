@@ -99,6 +99,7 @@ pnpm check     # strict TypeScript across packages and examples
 | [Thinking in processes](docs/tutorial.md) | the tutorial — build a cart, end with it on a server |
 | [Concepts](docs/concepts.md) | the reference: each concept, its contract, its tests |
 | [Recipes](docs/recipes.md) | typeahead, forms, query cache, routing, undo/redo, drag |
+| [Testing](docs/testing.md) | driving generators directly, transcripts, views as data |
 | [Migration](docs/migration.md) | coming from React, Solid, or LiveView |
 | [Protocol](docs/PROTOCOL.md) | the wire spec, for any language |
 | [Examples](examples/README.md) | the demo ladder |

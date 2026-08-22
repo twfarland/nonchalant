@@ -68,7 +68,9 @@ whole scope), yields a loading state, `await import()`s the chunk, and yields
 the new page. Navigation, loading states, code splitting, and teardown in a
 dozen lines of ordinary code. The router itself — route process, `navigate`,
 spreadable `link()` attrs that replace history by default — is a forty-line
-userland construct: `examples/lib/router.ts`, used by `examples/router`.
+userland construct: `examples/lib/router.ts`, used by `examples/router`. It
+ships in two flavors, `hashRouter` and `historyRouter` (real paths via
+pushState/popstate; needs history-fallback hosting).
 
 ## Undo/redo — wrap the process
 
@@ -119,6 +121,59 @@ One tab wins a Web Lock and hosts over a `BroadcastChannel` transport; every
 tab connects as a client. Close the hosting tab and the lock — and the hosting
 job — moves to another. The protocol never assumed a server, just a transport.
 `examples/multi-tab`.
+
+## Where are the operators?
+
+If you're arriving from RxJS or an FRP library: there's deliberately no
+operator zoo here, because the classics dissolve into the primitives —
+
+| operator | here |
+|---|---|
+| `map` / `filter` / `scan` over values | `derive(() => f(p()))` — or just code in the loop |
+| `combineLatest` | one derive reading several processes |
+| `fold` / reducers | the `for await` loop *is* the fold |
+| `flatMapLatest` / `switchMap` | `self.latest()` |
+| `startWith` | `initial` |
+| retry / error channels | `restart` policies, `stale`, `error` |
+
+Shipping these as a library would just put names on one-liners. The two that
+genuinely carry logic are recipes:
+
+```ts
+// merge: pump several processes into one mailbox
+function merge<T>(...sources: Process<T>[]): Process<T | undefined, T> {
+  return spawn<T, T, void>(async function* (self) {
+    for (const s of sources)
+      void (async () => {
+        for await (const v of s) {
+          if (self.signal.aborted) break
+          self.send(v)
+        }
+      })()
+    for await (const v of self) yield v
+  }, undefined)
+}
+
+// debounce: yield ms after the source goes quiet
+function debounced<T>(source: Process<T>, ms: number): Process<T | undefined> {
+  return spawn<T, never, void>(async function* (self) {
+    const settled = channel<T>(self.signal)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    void (async () => {
+      for await (const v of source) {
+        if (self.signal.aborted) break
+        clearTimeout(timer)
+        timer = setTimeout(() => settled.send(v), ms)
+      }
+    })()
+    for await (const v of settled) yield v
+  }, undefined)
+}
+```
+
+(One honest caveat: a pump loop notices disposal on the *next* source value —
+fine for UI streams; break out via `it.return()` from an abort listener if a
+source may go silent forever.)
 
 ## A chat room — the wire doing what it's for
 
