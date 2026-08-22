@@ -137,14 +137,16 @@ function seal(node: RecNode): void {
   for (const c of kids.values()) seal(c)
 }
 
-/** Does any op in the patch intersect the recorded read-paths? */
-export function affects(tree: PathTree, patch: Patch): boolean {
-  for (const op of patch) if (opAffects(tree, op)) return true
+/** Does any op in the patch intersect the recorded read-paths? `segsList` carries the pre-parsed path per op — parse once per publish, not once per reader. */
+export function affects(tree: PathTree, patch: Patch, segsList?: string[][]): boolean {
+  for (let i = 0; i < patch.length; i++) {
+    const op = patch[i]!
+    if (opAffects(tree, op, segsList !== undefined ? segsList[i]! : parsePath(op[1]))) return true
+  }
   return false
 }
 
-function opAffects(tree: PathTree, op: Op): boolean {
-  const segs = parsePath(op[1])
+function opAffects(tree: PathTree, op: Op, segs: string[]): boolean {
   let node = tree
   for (let i = 0; i < segs.length; i++) {
     if (node.subtree || node.leaf) return true

@@ -203,6 +203,166 @@ describe('batching', () => {
   })
 })
 
+describe('publishes during a reader run (deferred wake decision)', () => {
+  it('wakes the reader when the in-flight run read a path the publish changed', () => {
+    // the read-set grows to /b in run 2; a mid-run publish to /b must not be
+    // judged against run 1's paths and lost
+    const src = source<{ mode: string; a: number; b: number }>({ mode: 'a', a: 0, b: 0 })
+    let runs = 0
+    let seen = -1
+    const stop = effect(() => {
+      runs++
+      const v = src()
+      if (v.mode === 'a') {
+        seen = v.a
+      } else {
+        seen = v.b
+        if (v.b === 0) src.publish({ mode: 'b', a: 0, b: 1 })
+      }
+    })
+    expect(runs).toBe(1)
+    src.publish({ mode: 'b', a: 0, b: 0 })
+    flush()
+    expect(runs).toBe(3) // mode switch, then the deferred /b wake
+    expect(seen).toBe(1)
+    stop()
+  })
+
+  it('skips the reader when the in-flight run never read the changed path', () => {
+    // a mid-run publish to an untouched sibling wakes other readers, not the writer
+    const src = source<{ a: number; z: number }>({ a: 0, z: 0 })
+    let aRuns = 0
+    let zRuns = 0
+    let zSeen = 0
+    const stopA = effect(() => {
+      aRuns++
+      if (src().a === 1) src.publish({ a: 1, z: 99 })
+    })
+    const stopZ = effect(() => {
+      zRuns++
+      zSeen = src().z
+    })
+    src.publish({ a: 1, z: 0 })
+    flush()
+    expect(aRuns).toBe(2) // initial + the /a wake — its own /z publish must not re-run it
+    expect(zRuns).toBe(2) // initial + the /z publish from inside A's run
+    expect(zSeen).toBe(99)
+    stopA()
+    stopZ()
+  })
+
+  it('a path read only after the mid-run publish still wakes the reader', () => {
+    // the read comes after the publish but sees the pre-publish snapshot (the
+    // recorder wraps the snapshot captured at first read) — must not stay stale
+    const src = source<{ go: boolean; n: number }>({ go: false, n: 0 })
+    let runs = 0
+    let last = -2
+    let published = false
+    const stop = effect(() => {
+      runs++
+      const v = src()
+      if (v.go && !published) {
+        published = true
+        src.publish({ go: true, n: 1 })
+      }
+      last = v.go ? v.n : -1
+    })
+    src.publish({ go: true, n: 0 })
+    flush()
+    expect(runs).toBe(3)
+    expect(last).toBe(1)
+    stop()
+  })
+
+  it('a publish during the first run is judged against the finalized paths', () => {
+    // related path → exactly one re-run
+    const src = source<{ n: number; other: number }>({ n: 0, other: 0 })
+    let runs = 0
+    let seen = -1
+    const stop = effect(() => {
+      runs++
+      seen = src().n
+      if (runs === 1) src.publish({ n: 5, other: 0 })
+    })
+    expect(runs).toBe(1)
+    flush()
+    expect(runs).toBe(2)
+    expect(seen).toBe(5)
+    stop()
+
+    // unrelated path → no re-run
+    const src2 = source<{ n: number; other: number }>({ n: 0, other: 0 })
+    let runs2 = 0
+    const stop2 = effect(() => {
+      runs2++
+      void src2().n
+      if (runs2 === 1) src2.publish({ n: 0, other: 1 })
+    })
+    flush()
+    expect(runs2).toBe(1)
+    stop2()
+  })
+
+  it('a mid-run publish reaching the reader only through a derive still wakes it', () => {
+    // the wake propagates while the reader is mid-run (PENDING is set without a
+    // queue entry) — the reader must be re-queued when its run ends
+    const src = source<{ n: number; written: boolean }>({ n: 0, written: false })
+    const doubled = derive(() => src().n * 2)
+    let runs = 0
+    let seen = -1
+    const stop = effect(() => {
+      runs++
+      seen = doubled()
+      if (!untracked(() => src().written)) src.publish({ n: 1, written: true })
+    })
+    flush()
+    expect(runs).toBe(2)
+    expect(seen).toBe(2)
+    stop()
+  })
+})
+
+describe('flush error handling', () => {
+  it('an effect that throws does not strand later queued effects', () => {
+    const src = source<{ n: number }>({ n: 0 })
+    let seen = -1
+    const stopBoom = effect(() => {
+      if (src().n === 1) throw new Error('boom')
+    })
+    const stopTail = effect(() => {
+      seen = src().n
+    })
+    src.publish({ n: 1 })
+    expect(() => flush()).toThrow('boom')
+    expect(seen).toBe(1) // the effect queued behind the thrower still ran
+    src.publish({ n: 2 })
+    flush() // the queue is clean afterwards
+    expect(seen).toBe(2)
+    stopBoom()
+    stopTail()
+  })
+
+  it('only the first error propagates; every queued effect still runs', () => {
+    const src = source<{ n: number }>({ n: 0 })
+    let tailRuns = 0
+    const stops = [
+      effect(() => {
+        if (src().n === 1) throw new Error('first')
+      }),
+      effect(() => {
+        if (src().n === 1) throw new Error('second')
+      }),
+      effect(() => {
+        tailRuns += src().n
+      }),
+    ]
+    src.publish({ n: 1 })
+    expect(() => flush()).toThrow('first')
+    expect(tailRuns).toBe(1)
+    for (const stop of stops) stop()
+  })
+})
+
 describe('effect lifecycle', () => {
   it('a returned cleanup runs before each re-run and on dispose', () => {
     const src = source<{ n: number }>({ n: 0 })

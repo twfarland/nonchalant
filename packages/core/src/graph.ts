@@ -16,6 +16,11 @@
 // exported for a manual synchronous drain. Derives are pull-based and always
 // read consistently regardless of flush timing.
 //
+// A publish that lands while a reader is mid-run cannot be judged then: the
+// run's final read-set is unknowable (reads later in the run still see the
+// pre-publish snapshot through the open recorder). Those publishes are parked
+// on the gate and judged in finalizeGates against the freshly sealed paths.
+//
 // Internal module: the public faces are `derive` / `flush` (index.ts, M2) and
 // the process runtime (M3).
 
@@ -24,12 +29,12 @@ import {
   MUTABLE,
   WATCHING,
   RECURSED_CHECK,
-  RECURSED,
   DIRTY,
   PENDING,
+  type Link,
   type ReactiveNode,
 } from './system.ts'
-import { reconcile, type Json } from './reconcile.ts'
+import { parsePath, reconcile, type Json, type Op } from './reconcile.ts'
 import { affects, createRecorder, type PathTree, type Recorder } from './track.ts'
 
 interface EffectNode extends ReactiveNode {
@@ -60,6 +65,9 @@ interface Gate {
   reader: ReactiveNode
   paths: PathTree | null
   recorder: Recorder | null
+  // ops published while `recorder` was open, judged at finalizeGates
+  deferredOps: Op[]
+  deferredSegs: string[][]
 }
 
 // Marks a parent whose deps include at least one child effect, gating the
@@ -78,6 +86,24 @@ const queued: (EffectNode | undefined)[] = []
 // a stack so nested runs finalize only their own recordings.
 const openGates: Gate[] = []
 
+function enqueue(node: ReactiveNode): void {
+  let insertIndex = queuedLength
+  let firstInsertedIndex = insertIndex
+  let e: EffectNode | undefined = node as EffectNode
+  do {
+    queued[insertIndex++] = e
+    e.flags &= ~WATCHING
+    e = e.subs?.sub as EffectNode | undefined
+  } while (e !== undefined && e.flags & WATCHING)
+  queuedLength = insertIndex
+  // reverse the inserted run so parent effects run before their children
+  while (firstInsertedIndex < --insertIndex) {
+    const left = queued[firstInsertedIndex]
+    queued[firstInsertedIndex++] = queued[insertIndex]
+    queued[insertIndex] = left
+  }
+}
+
 const { link, unlink, propagate, checkDirty, shallowPropagate } = createReactiveSystem({
   update(node: ReactiveNode): boolean {
     if ('getter' in node) return updateComputed(node as ComputedNode)
@@ -85,23 +111,7 @@ const { link, unlink, propagate, checkDirty, shallowPropagate } = createReactive
     node.flags = MUTABLE
     return true
   },
-  notify(node: ReactiveNode): void {
-    let insertIndex = queuedLength
-    let firstInsertedIndex = insertIndex
-    let e: EffectNode | undefined = node as EffectNode
-    do {
-      queued[insertIndex++] = e
-      e.flags &= ~WATCHING
-      e = e.subs?.sub as EffectNode | undefined
-    } while (e !== undefined && e.flags & WATCHING)
-    queuedLength = insertIndex
-    // reverse the inserted run so parent effects run before their children
-    while (firstInsertedIndex < --insertIndex) {
-      const left = queued[firstInsertedIndex]
-      queued[firstInsertedIndex++] = queued[insertIndex]
-      queued[insertIndex] = left
-    }
-  },
+  notify: enqueue,
   unwatched(node: ReactiveNode): void {
     if ('getter' in node) {
       if (node.depsTail !== undefined) {
@@ -149,7 +159,7 @@ export function source<T extends Json>(
         subsTail: undefined,
         flags: MUTABLE,
       }
-      gate = { node, source: state, reader: sub, paths: null, recorder: null }
+      gate = { node, source: state, reader: sub, paths: null, recorder: null, deferredOps: [], deferredSegs: [] }
       node.gate = gate
       state.gates.set(sub, gate)
       state.onWatchers?.(state.gates.size)
@@ -173,21 +183,36 @@ export function source<T extends Json>(
     const patch = reconcile(state.snapshot, next)
     state.snapshot = next
     if (patch.length === 0) return
+    const segsList = patch.map((op) => parsePath(op[1]))
+    // O(watchers) scan; an inverted path index would make it O(affected) —
+    // headroom, not needed at documented scales (reconcile.perf budget)
     for (const gate of state.gates.values()) {
-      // paths === null: reader's first run has not finalized yet — conservative wake
-      if (gate.paths !== null && !affects(gate.paths, patch)) continue
-      const node = gate.node
-      node.pendingValue = node.pendingValue + 1
-      node.flags = MUTABLE | DIRTY
-      const subs = node.subs
-      if (subs !== undefined) {
-        propagate(subs, runDepth !== 0)
-        scheduleFlush()
+      if (gate.recorder !== null) {
+        // reader mid-run: park the ops, finalizeGates judges them
+        for (let i = 0; i < patch.length; i++) {
+          gate.deferredOps.push(patch[i]!)
+          gate.deferredSegs.push(segsList[i]!)
+        }
+        continue
       }
+      // recorder === null ⇒ paths !== null (finalizeGates runs in every reader's finally)
+      if (gate.paths !== null && !affects(gate.paths, patch, segsList)) continue
+      wakeGate(gate)
     }
   }
 
   return Object.assign(read, { publish })
+}
+
+function wakeGate(gate: Gate): void {
+  const node = gate.node
+  node.pendingValue = node.pendingValue + 1
+  node.flags = MUTABLE | DIRTY
+  const subs = node.subs
+  if (subs !== undefined) {
+    propagate(subs, runDepth !== 0)
+    scheduleFlush()
+  }
 }
 
 function finalizeGates(mark: number): void {
@@ -195,6 +220,14 @@ function finalizeGates(mark: number): void {
     const gate = openGates.pop()!
     gate.paths = gate.recorder!.finalize()
     gate.recorder = null
+    if (gate.deferredOps.length !== 0) {
+      const ops = gate.deferredOps
+      const segs = gate.deferredSegs
+      gate.deferredOps = []
+      gate.deferredSegs = []
+      // callers clear RECURSED_CHECK before finalizing, so this wake notifies normally
+      if (affects(gate.paths, ops, segs)) wakeGate(gate)
+    }
   }
 }
 
@@ -220,6 +253,13 @@ export function computed<T>(getter: (previousValue?: T) => T): ComputedHandle<T>
     read: () => computedOper(node),
     peek: () => node.value,
     dispose: () => {
+      // detach subscribers first: a live effect's dep list must not pin the disposed node
+      let l: Link | undefined = node.subs
+      while (l !== undefined) {
+        const next: Link | undefined = l.nextSub
+        unlink(l, l.sub)
+        l = next
+      }
       node.flags = 0
       disposeAllDepsInReverse(node)
     },
@@ -310,7 +350,18 @@ export function effect(fn: () => void | (() => void)): () => void {
     e.flags &= ~RECURSED_CHECK
     finalizeGates(mark)
   }
+  requeueIfDirtied(e)
   return () => disposeEffect(e)
+}
+
+/** An inner publish reaching a running effect through a computed sets PENDING without queueing (RECURSED_CHECK was up) — catch it once the run is over. */
+function requeueIfDirtied(e: EffectNode): void {
+  const flags = e.flags
+  // WATCHING absent ⇒ disposed, or already queued by a finalizeGates wake
+  if (flags & WATCHING && flags & (DIRTY | PENDING)) {
+    enqueue(e)
+    scheduleFlush()
+  }
 }
 
 function run(e: EffectNode): void {
@@ -337,6 +388,7 @@ function run(e: EffectNode): void {
       finalizeGates(mark)
       purgeDeps(e)
     }
+    requeueIfDirtied(e)
   } else if (e.deps !== undefined) {
     e.flags = WATCHING | (flags & HAS_CHILD_EFFECT)
   }
@@ -394,9 +446,11 @@ function purgeDeps(sub: ReactiveNode): void {
 // ---------- scheduling ----------
 
 let flushScheduled = false
+let flushing = false
 
 function scheduleFlush(): void {
-  if (flushScheduled) return
+  // wakes raised mid-flush are drained by the running loop — no microtask needed
+  if (flushScheduled || flushing) return
   flushScheduled = true
   // Promise, not queueMicrotask: pure ES, keeps core free of host-specific APIs
   Promise.resolve().then(() => {
@@ -407,22 +461,30 @@ function scheduleFlush(): void {
 
 /** Drain pending effect notifications now. Publishes otherwise batch to one flush per microtask. */
 export function flush(): void {
+  const prevFlushing = flushing
+  flushing = true
+  let firstError: unknown
+  let errored = false
   try {
     while (notifyIndex < queuedLength) {
       const e = queued[notifyIndex]!
       queued[notifyIndex++] = undefined
-      run(e)
+      try {
+        run(e)
+      } catch (error) {
+        // one effect throwing must not strand the ones queued behind it
+        if (!errored) {
+          errored = true
+          firstError = error
+        }
+      }
     }
   } finally {
-    // an effect threw: re-arm the rest so they are not lost, then rethrow
-    while (notifyIndex < queuedLength) {
-      const e = queued[notifyIndex]!
-      queued[notifyIndex++] = undefined
-      e.flags |= WATCHING | RECURSED
-    }
+    flushing = prevFlushing
     notifyIndex = 0
     queuedLength = 0
   }
+  if (errored) throw firstError
 }
 
 /** Run fn with dependency tracking suspended — the "pull, don't subscribe" escape hatch. */

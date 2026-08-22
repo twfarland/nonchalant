@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { spawn, derive } from '../src/index.ts'
-import { effect } from '../src/graph.ts'
+import { computed, effect, type ComputedHandle } from '../src/graph.ts'
 import type { Proc, Self } from '../src/index.ts'
 
 // gc({execution:'async'}) collects from a clean stack — plain gc() leaves V8's
@@ -60,6 +60,37 @@ describe.skipIf(gcNow === undefined)('leak suite (nothing retained after dispose
     }
     const ref = deriveAndDispose()
     expect(await collected([ref])).toBe(true)
+    p[Symbol.dispose]()
+  })
+
+  it('a disposed computed is unlinked from subscribers that still live', async () => {
+    const p = spawn(counter, undefined, { initial: 0 })
+    const stops: (() => void)[] = []
+    // built in its own scope: closures created in one scope share a context in
+    // V8, so the effect below must not be a sibling of the getter closure
+    const mk = (): [ComputedHandle<object>, WeakRef<object>] => {
+      const big = { blob: new Array(10_000).fill(0) }
+      return [computed(() => (void p(), big)), new WeakRef(big)]
+    }
+    // sync helper: the async test frame must not keep the handle alive
+    const subscribeAndDispose = (): WeakRef<object> => {
+      const [handle, ref] = mk()
+      // the slot is nulled after dispose so the effect's closure is not what
+      // pins the computed — only the dep link in the effect's list could
+      let c: ComputedHandle<object> | null = handle
+      stops.push(
+        effect(() => {
+          void p()
+          c?.read()
+        }),
+      )
+      c.dispose()
+      c = null
+      return ref
+    }
+    const ref = subscribeAndDispose()
+    expect(await collected([ref])).toBe(true) // the live effect must not pin the disposed computed
+    for (const stop of stops) stop()
     p[Symbol.dispose]()
   })
 
