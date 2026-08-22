@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7GUIs — Cells — nonchalant</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
+  h1 { font-size: 1.2rem; }
+  button { margin: 0 0.25rem 0.25rem 0; }
+  input, select { margin: 0.15rem; }
+  a { color: #06c; }
+
+  table { border-collapse: collapse; }
+  th { background: #eee; font-weight: normal; padding: 0 4px; position: sticky; top: 0; }
+  td { border: 1px solid #ddd; padding: 0; }
+  input.cell { border: 0; width: 90px; padding: 2px 4px; font: inherit; }
+  .cells { max-height: 80vh; max-width: 95vw; overflow: auto; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>7GUIs — Cells</h1>
+<div id="app"></div>
+<script type="module" src="./cells-app.ts"></script>
+</body>
+</html>

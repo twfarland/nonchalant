@@ -23,6 +23,23 @@ physics bug the old stack had (diamond glitch in acto's combineLatest): arrows
 are process state, only ticks step the world — see
 `mario/mario.golden.test.ts`.
 
-The examples are entry modules (`main.ts` expecting `#app`, mario expecting
-`document.body`); serve them with any TS-aware dev server (e.g. `vite`) from
-the repo root.
+## Running them
+
+```sh
+pnpm dev          # vite dev server; opens the example gallery at /examples/
+```
+
+Every page is plain HTML + a TS module; vite resolves the workspace packages
+straight from source (no build step). Notes:
+
+- **mario / mario-canvas**: arrow keys to move and jump. Sprites are vendored
+  under `examples/mario*/img/` (from the original repo).
+- **multi-tab**: open one tab at `/examples/multi-tab/#host` (it hosts), then
+  more tabs at `/examples/multi-tab/` — the counter syncs across all of them.
+- **shared-cart** (the pitch demo): `pnpm cart-server` in a second terminal
+  starts the WebSocket host on :4321; then flip the one commented line in
+  `shared-cart/main.ts` to move the cart's state from the tab to the server.
+- **typeahead / form** expect a backend at `/api/*`; without one they still
+  demonstrate pending states and validation.
+- **7guis/cells**: try `=A1+1` chains, then edit A1 — only dependents
+  recompute (the same behavior its test asserts).
