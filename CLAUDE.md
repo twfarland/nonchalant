@@ -47,5 +47,7 @@ processes, so remote reads are path-precise and reconnect-as-full-patch
 diffs against the retained value; WebSocket + BroadcastChannel transports;
 conformance vectors in packages/wire/spec run in CI; multi-tab example).
 M7 done (serve() Node host over ws; per-connection sessions; GET /schema
-whitelist; shared-cart pitch demo — local→server in one line). Next: M8
-golden (Mario).
+whitelist; shared-cart pitch demo — local→server in one line). M8 done
+(Mario golden: budgets CI-asserted — 1 view yield, ≤3 DOM writes/frame,
+0 structural ops; double-step bug fixed by construction + regression test;
+canvas retarget demo). Next: M9 docs & polish.

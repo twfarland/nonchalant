@@ -176,6 +176,13 @@ connection is a session (own expose; teardown on disconnect releases
 watches into registry refcounting); GET /schema serves the name whitelist;
 the pitch demo exists at examples/shared-cart (local→server = one line).
 End-to-end tests run over real sockets, including remote path-precision.
+M8 (golden) landed: Mario ported with verbatim physics; arrows are process
+state and only ticks step the world, so the key-repeat double-step (acto's
+diamond glitch) is impossible by construction and regression-tested. CI
+asserts the budgets: one view yield total, ≤3 DOM writes/frame, zero
+structural ops across 120 frames. Canvas retarget demo at
+examples/mario-canvas. The browser profile vs the Elm original remains a
+manual exercise.
 Open questions: DECISIONS.md bottom (epoch scoping, predict scope, npm scope
 claim).
 

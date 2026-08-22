@@ -81,10 +81,15 @@ assertions, not aspirations.
   mechanism: M3 restart policies + ownership cascade, configured per definition.
   **The pitch demo landed**: examples/shared-cart — one isomorphic cart module;
   the tab flips from local registry to server by changing one line.
-- **M8 — golden**: Mario ported from sprezzatura-acto-mario. Budget asserted in CI:
-  one view yield total, ≤ 3 DOM writes per frame. Then the canvas sink and the same
-  Mario unchanged on canvas — retargeting demonstrated, not asserted. Profile vs the
-  Elm original (the old README's invitation, finally answered).
+- **M8 — golden** ✅ Mario ported from sprezzatura-acto-mario (physics verbatim;
+  architecture not: arrows are process state, only ticks step the world — the old
+  key-repeat double-step is impossible by construction and regression-tested).
+  Budgets CI-asserted in examples/mario/mario.golden.test.ts: **one view yield
+  total** (the generator never resumes; two attribute bindings carry every frame),
+  **≤ 3 DOM writes per frame**, zero structural ops after mount, over 120 frames of
+  running + jumping. Canvas retargeting demonstrated (examples/mario-canvas: same
+  process, same input wiring, renderer = one tracked effect), not asserted.
+  Remaining manual invitation: profile vs the Elm original in a real browser.
 - **M9 — docs & polish**: site (tutorial "Thinking in processes"; concepts; recipes;
   protocol spec; React/Solid/LiveView migration guides); 7GUIs examples (cells last —
   it stresses derivations); js-framework-benchmark entry; size-limit budgets;
