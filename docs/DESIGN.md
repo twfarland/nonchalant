@@ -183,6 +183,14 @@ asserts the budgets: one view yield total, ≤3 DOM writes/frame, zero
 structural ops across 120 frames. Canvas retarget demo at
 examples/mario-canvas. The browser profile vs the Elm original remains a
 manual exercise.
+M9 (docs & polish) landed except npm: the docs set (tutorial, concepts,
+recipes, migration guides) lives in docs/; 7GUIs complete with cells as
+the derivation stress (exact re-eval counts + equality cut + #CYCLE,
+tested); the js-framework-benchmark app is implemented (submission
+external); size budgets are CI-asserted (core 6.2KB gzip measured / 8KB
+budget; full app 10.6/13; wire 7.4/9.5). Still open, all npm-adjacent:
+scope claim (Q4), first publish, Changesets, hosted site, benchmark
+submission, Elm profile.
 Open questions: DECISIONS.md bottom (epoch scoping, predict scope, npm scope
 claim).
 

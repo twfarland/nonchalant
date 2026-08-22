@@ -90,10 +90,17 @@ assertions, not aspirations.
   running + jumping. Canvas retargeting demonstrated (examples/mario-canvas: same
   process, same input wiring, renderer = one tracked effect), not asserted.
   Remaining manual invitation: profile vs the Elm original in a real browser.
-- **M9 — docs & polish**: site (tutorial "Thinking in processes"; concepts; recipes;
-  protocol spec; React/Solid/LiveView migration guides); 7GUIs examples (cells last —
-  it stresses derivations); js-framework-benchmark entry; size-limit budgets;
-  Changesets; claim npm scope; first publish.
+- **M9 — docs & polish** ✅ (except npm, deliberately deferred): docs set in-repo —
+  tutorial "Thinking in processes", concepts reference (contracts + where each is
+  tested), recipes, React/Solid/LiveView migration guides; protocol spec was M6.
+  7GUIs complete (counter, temperature, flight-booker, timer, crud, circle-drawer
+  with drag-grouped undo, and cells last — lazily-created derives resolving each
+  other, with a test asserting exact re-eval counts, the equality cut, and #CYCLE
+  safety). js-framework-benchmark app implemented (submission to the harness repo
+  is external). Size budgets CI-asserted via esbuild+gzip (core ≤ 8 KB, measured
+  6.2; core+dom+tags ≤ 13 KB, measured 10.6; wire ≤ 9.5 KB, measured 7.4).
+  **Deferred with npm**: scope claim (Q4), first publish, Changesets, the hosted
+  site (content lives in docs/), benchmark submission, browser profile vs Elm.
 
 ## Test architecture (summary)
 - **core/reconcile**: property-based (apply∘reconcile → next; input immutability),

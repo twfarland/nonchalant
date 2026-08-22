@@ -50,4 +50,8 @@ M7 done (serve() Node host over ws; per-connection sessions; GET /schema
 whitelist; shared-cart pitch demo — local→server in one line). M8 done
 (Mario golden: budgets CI-asserted — 1 view yield, ≤3 DOM writes/frame,
 0 structural ops; double-step bug fixed by construction + regression test;
-canvas retarget demo). Next: M9 docs & polish.
+canvas retarget demo). M9 done except npm (docs/tutorial|concepts|recipes|
+migration; 7GUIs incl. cells with derivation-stress test; benchmark app;
+size budgets CI-asserted in test/size.test.ts). Remaining: npm scope claim
+(Q4), first publish, Changesets, hosted site, benchmark submission,
+browser profile vs Elm.
