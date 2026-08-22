@@ -36,4 +36,14 @@ ported; per-reader gate signals give path-precise wakes; tracked-read proxy;
 `derive` as Process; microtask batching + `flush()`). M3 done (spawn/Self/channel;
 yields publish through a source so process reads are path-precise; disposal
 cascade; ask/reply; restart policies; bounded mailbox; leak suite green).
-Next: M4 dom.
+M4 done (@nonchalant/dom: tags + h(), region-based sink, keyed reconcile,
+per-slot pending/error, exit hook; sprezzatura regression suite green;
+granularity asserted by Text-write counting; counter + TodoMVC examples).
+M5 done (define/registry; lookup get-or-spawn with queryKey-stable args;
+watcher refcounting via source gates drives evict idle timers; query-cache
+recipe test; typeahead/form/router/undo-redo examples). M6 done (codec;
+memoryPair with partitions; expose/connect — remote refs are local pump
+processes, so remote reads are path-precise and reconnect-as-full-patch
+diffs against the retained value; WebSocket + BroadcastChannel transports;
+conformance vectors in packages/wire/spec run in CI; multi-tab example).
+Next: M7 host.

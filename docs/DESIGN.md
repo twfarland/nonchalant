@@ -146,6 +146,31 @@ dispose order mailbox→finally→children; ask/reply with crash rejection;
 restart-from-args with cast replay; bounded drop-oldest mailbox; leak suite
 green (WeakRef + `gc({execution:'async'})` — plain gc() false-fails under V8
 conservative stack scanning). Q3 mailbox-overflow is now implemented as decided.
+M4 (dom) landed: @nonchalant/dom with /tags + h(); the sink renders static
+structure once and drives each thunk/process hole as a marker-anchored region
+with one effect (items built `untracked` so reused items' bindings survive
+region re-runs); keyed diff per DECISIONS #14; per-slot pending/error; exit
+hook; sprezzatura regressions green; granularity CI-asserted by counting
+Text#data writes (happy-dom's MutationObserver misses characterData).
+Playwright layer deferred to pre-M8.
+M5 (registry) landed: define/registry over the verified Registry<S> type;
+lookup get-or-spawn keyed by name + stable args serialization; watcher
+refcount = the process source's gate count (an internal onWatchers hook),
+driving evict idle timers; registry spawns are unscoped (not owned by the
+looker-upper); the query-cache recipe is a passing test; regions accept
+promise values (lazy routes supersede stale loads).
+M6 (wire) landed: codec with direction filtering (bus-safe); memoryPair
+with controllable partitions; expose() hosts a registry using only the
+public Process face (a lossy iterator per watched ref — patches between
+observed snapshots always compose; first yield after any lookup is a full
+snapshot); connect() makes each remote ref a local pump process — patches
+arrive in its mailbox and every application is a yield, so remote reads
+get the whole local machinery including path-precise tracking, raise
+crashes the pump into stale reads, and the reconnect re-lookup's full
+patch diffs against the retained value (readers of unchanged paths sleep
+through reconnect — tested). WebSocket (reconnecting) and BroadcastChannel
+transports; conformance vectors (spec/README.md defines the format and the
+canonical counter process) run in CI as the cross-language contract.
 Open questions: DECISIONS.md bottom (epoch scoping, predict scope, npm scope
 claim).
 

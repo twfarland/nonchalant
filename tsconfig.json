@@ -9,8 +9,9 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "examples/**/*.ts"]
 }

@@ -1,0 +1,26 @@
+{
+  "description": "applyPatch semantics: pure, ordered, RFC 6901 paths, pollution-guarded",
+  "cases": [
+    { "name": "root set replaces everything", "prev": { "a": 1 }, "patch": [["set", "", [1, 2]]], "next": [1, 2] },
+    { "name": "nested set", "prev": { "items": [{ "done": false }], "total": 0 }, "patch": [["set", "/items/0/done", true]], "next": { "items": [{ "done": true }], "total": 0 } },
+    { "name": "set adds a missing key", "prev": { "a": 1 }, "patch": [["set", "/b", 2]], "next": { "a": 1, "b": 2 } },
+    { "name": "del removes a key", "prev": { "a": 1, "b": 2 }, "patch": [["del", "/b"]], "next": { "a": 1 } },
+    { "name": "append splice", "prev": [1, 2], "patch": [["splice", "", 2, 0, [3]]], "next": [1, 2, 3] },
+    { "name": "truncate splice", "prev": [1, 2, 3], "patch": [["splice", "", 1, 2, []]], "next": [1] },
+    { "name": "mid-array insert splice", "prev": ["a", "d"], "patch": [["splice", "", 1, 0, ["b", "c"]]], "next": ["a", "b", "c", "d"] },
+    { "name": "mid-array removal splice", "prev": ["a", "b", "c", "d"], "patch": [["splice", "", 1, 2, []]], "next": ["a", "d"] },
+    { "name": "nested array splice", "prev": { "xs": [0, 1, 2] }, "patch": [["splice", "/xs", 0, 1, []]], "next": { "xs": [1, 2] } },
+    { "name": "ops apply in order", "prev": { "a": 1 }, "patch": [["set", "/a", 2], ["set", "/a", 3]], "next": { "a": 3 } },
+    { "name": "escaped slash in key: a/b is /a~1b", "prev": { "a/b": 1 }, "patch": [["set", "/a~1b", 2]], "next": { "a/b": 2 } },
+    { "name": "escaped tilde in key: ~ is /~0", "prev": { "~": 1 }, "patch": [["set", "/~0", 2]], "next": { "~": 2 } },
+    { "name": "~01 decodes to the literal key ~1, not /", "prev": { "~1": 1, "keep": true }, "patch": [["del", "/~01"]], "next": { "keep": true } },
+    { "name": "empty-string key is a valid segment", "prev": { "": 1 }, "patch": [["set", "/", 2]], "next": { "": 2 } },
+    { "name": "unicode keys pass through", "prev": { "héllo": 1 }, "patch": [["set", "/héllo", 2]], "next": { "héllo": 2 } },
+    { "name": "__proto__ segment is rejected", "prev": {}, "patch": [["set", "/__proto__/x", 1]], "error": true },
+    { "name": "constructor segment is rejected", "prev": {}, "patch": [["set", "/constructor", 1]], "error": true },
+    { "name": "prototype segment is rejected", "prev": { "a": {} }, "patch": [["set", "/a/prototype", 1]], "error": true },
+    { "name": "malformed escape ~2 is rejected", "prev": {}, "patch": [["set", "/a~2b", 1]], "error": true },
+    { "name": "trailing ~ is rejected", "prev": {}, "patch": [["set", "/a~", 1]], "error": true },
+    { "name": "splice on a non-array is rejected", "prev": { "a": 1 }, "patch": [["splice", "/a", 0, 0, [1]]], "error": true }
+  ]
+}

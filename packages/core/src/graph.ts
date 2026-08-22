@@ -51,6 +51,7 @@ interface SignalNode<T = unknown> extends ReactiveNode {
 interface SourceState {
   snapshot: Json
   gates: Map<ReactiveNode, Gate>
+  onWatchers: ((count: number) => void) | undefined
 }
 
 interface Gate {
@@ -109,7 +110,10 @@ const { link, unlink, propagate, checkDirty, shallowPropagate } = createReactive
       }
     } else if ('currentValue' in node) {
       const gate = (node as SignalNode).gate
-      if (gate !== undefined) gate.source.gates.delete(gate.reader)
+      if (gate !== undefined) {
+        gate.source.gates.delete(gate.reader)
+        gate.source.onWatchers?.(gate.source.gates.size)
+      }
     } else if ('fn' in node) {
       disposeEffect(node as EffectNode)
     }
@@ -125,8 +129,11 @@ export interface Source<T extends Json> {
   publish(next: T): void
 }
 
-export function source<T extends Json>(initial: T): Source<T> {
-  const state: SourceState = { snapshot: initial, gates: new Map() }
+export function source<T extends Json>(
+  initial: T,
+  hooks?: { onWatchers?: (count: number) => void },
+): Source<T> {
+  const state: SourceState = { snapshot: initial, gates: new Map(), onWatchers: hooks?.onWatchers }
 
   const read = (): T => {
     const sub = activeSub
@@ -145,6 +152,7 @@ export function source<T extends Json>(initial: T): Source<T> {
       gate = { node, source: state, reader: sub, paths: null, recorder: null }
       node.gate = gate
       state.gates.set(sub, gate)
+      state.onWatchers?.(state.gates.size)
     }
     const node = gate.node
     if (node.flags & DIRTY) {

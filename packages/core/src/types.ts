@@ -64,6 +64,13 @@ export interface Registry<S extends { [K in keyof S]: Definition<unknown, unknow
   ): ProcessOf<S[K]>
 }
 
+// ---------- sinks ----------
+
+/** A render target; mount() delegates to it. @nonchalant/dom provides the DOM sink. */
+export interface Sink<Out> {
+  mount(view: ProcessBase<Out | undefined> | Out): Disposable
+}
+
 // ---------- view nodes (plain data; sinks interpret) ----------
 
 export interface VNode {

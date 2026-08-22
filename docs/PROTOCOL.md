@@ -3,8 +3,9 @@
 Transport-agnostic (WebSocket, BroadcastChannel, in-memory, anything ordered and
 reliable). Carries **state patches of plain data — never markup, never code**.
 Any language can implement the host half; this file plus the conformance vectors
-(planned: `packages/wire/spec/vectors/*.json`) are the contract. A BEAM host
-certifies against the same vectors as the Node host.
+(`packages/wire/spec/vectors/*.json`, format in `packages/wire/spec/README.md`)
+are the contract. A BEAM host certifies against the same vectors the reference
+implementation runs in CI (`packages/wire/test/vectors.test.ts`).
 
 ## Messages
 

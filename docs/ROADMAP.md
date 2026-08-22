@@ -30,18 +30,47 @@ assertions, not aspirations.
   dev warning). Leak suite passes under `gc({execution:'async'})` (plain `gc()`
   false-fails on V8 conservative stack scanning — see process.leaks.test.ts).
   types.check.ts is no longer aspirational: spawn/derive/cell are real.
-- **M4 — dom**: tag constructors (`/tags`, `var_` escapes, `h()` for SVG/custom
-  elements), the DOM sink, keyed reconciliation, per-slot pending/error, event
-  binding, exit-transition hook. **The sprezzatura bug list as a regression suite**:
-  XSS strings (`<img src=x onerror=…>`, attribute breakout), tables, SVG, `key: 0`,
-  adjacent text nodes, empty-string children. Examples: counter, TodoMVC.
-- **M5 — registry**: local ambient registry, `lookup` get-or-spawn, watcher
-  refcounting, `evict`. Recipe test: the 20-line query cache. Examples: typeahead,
-  form (+ask), router (+code splitting), undo/redo combinator.
-- **M6 — wire**: codec, in-memory transport (= reference implementation), WebSocket +
-  BroadcastChannel transports, reconnect-as-full-patch, **language-agnostic
-  conformance vectors** (JSON in/out pairs under packages/wire/spec/vectors/ — a BEAM
-  host certifies against the same files). Example: multi-tab sync.
+- **M4 — dom** ✅ tag constructors (`/tags` subpath with `var_` escape; `h()` for
+  SVG/MathML/custom, namespace inferred down the tree, foreignObject returns to
+  XHTML); the DOM sink — static structure renders once, every thunk/process hole is
+  a marker-anchored region driven by one effect; keyed reconciliation (`key: 0`
+  keyed by presence; reference-equal vnodes skipped; moves move nodes); per-slot
+  pending/error (promise slots hold only their region; throwing bindings keep
+  previous content); `on*` event binding; `exit` hook defers detach until it
+  settles; `mount` takes VNode | thunk | view process, `domSink` adapts to core's
+  `mount(sink, view)`. Sprezzatura regression suite green (XSS string + attribute
+  breakout, tables, SVG, key 0, adjacent text, empty strings). Granularity asserted
+  by counting Text writes (one label change in 50 rows = exactly one write; a /b
+  patch never touches the /a binding). Examples: counter, TodoMVC (type-checked in
+  CI). Deferred: the Playwright layer (focus/IME/event-order) and holes nested as
+  items *inside* a hole's array value (holes belong in the tree; skipped with a
+  dev warning) — revisit before M8.
+- **M5 — registry** ✅ `define(proc, opts)` + `registry(defs)` over the verified
+  `Registry<S>` type; `lookup` is get-or-spawn keyed by name + queryKey-stable args
+  serialization; watchers = subscription gates on the process's value source
+  (effects/derives/iterators count; snapshot pulls don't), refcount drives the
+  `evict` idle timer (cancelled if a watcher returns); manual `evict(name, args?)`;
+  registry processes spawn unscoped (shared state is not owned by its first
+  looker-upper — tested). Recipe test: the query cache (dedup, sharing, idle
+  eviction, refetch). Regions now accept promise *values* (lazy routes: a thunk
+  returning `import(...).then(...)`; stale loads superseded). Examples: typeahead
+  (latest() + abort), form (+ask), router (+code splitting), undo/redo (withHistory
+  over `channel`).
+- **M6 — wire** ✅ codec (encode/decode with structural validation; wrong-direction
+  and garbage → null, safe on bus transports); `memoryPair` in-memory transport with
+  controllable partitions (= reference implementation and test rig); `expose(reg,
+  transport)` reference host using only the public Process face (one lossy iterator
+  per watched ref; patches between observed snapshots; done/raise from iterator end);
+  `connect(transport)` — each remote ref is a local pump process (patches apply in
+  its mailbox, so the whole Process face incl. path-precise tracked reads is stock
+  local machinery; raise crashes the pump → stale reads; infinite restart);
+  reconnect = re-lookup + full patch, diffed against the retained value so readers
+  of unchanged paths sleep through it (tested); WebSocket (reconnecting, backoff) +
+  BroadcastChannel transports; **conformance vectors** under packages/wire/spec/
+  vectors/ (patch semantics incl. escaping/pollution errors; scripted sessions over
+  the canonical counter; format documented for non-JS hosts) run in CI. Example:
+  multi-tab sync. Deferred: the WebSocket transport is untested until M7's Node
+  host provides a server end.
 - **M7 — host**: Node host, schema serving, supervision trees, session lifecycle.
   **The pitch demo**: shared cart — move state from tab to server by changing one line.
 - **M8 — golden**: Mario ported from sprezzatura-acto-mario. Budget asserted in CI:

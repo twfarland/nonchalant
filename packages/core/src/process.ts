@@ -157,6 +157,18 @@ interface ProcessCore {
 // intervening await inside one step run unowned — spawn before awaiting.
 let currentScope: ProcessCore | null = null
 
+/** Internal (registry): run fn with ambient ownership suspended — shared
+ * processes must not be owned by whichever process happened to look them up. */
+export function unscoped<T>(fn: () => T): T {
+  const prev = currentScope
+  currentScope = null
+  try {
+    return fn()
+  } finally {
+    currentScope = prev
+  }
+}
+
 // ---------- spawn ----------
 
 type Meta = { pending: boolean; stale: boolean; errored: boolean }
@@ -165,9 +177,13 @@ export function spawnProcess<T, In, A>(
   proc: Proc<T, In, A>,
   args: A,
   opts?: SpawnOpts<T>,
+  internal?: { onWatchers?: (count: number) => void },
 ): Process<T | undefined, In> {
   const hasInitial = opts !== undefined && 'initial' in opts
-  const src = source<Json>((hasInitial ? opts.initial : undefined) as unknown as Json)
+  const src = source<Json>(
+    (hasInitial ? opts.initial : undefined) as unknown as Json,
+    internal?.onWatchers !== undefined ? { onWatchers: internal.onWatchers } : undefined,
+  )
   const meta = source<Meta>({ pending: true, stale: false, errored: false })
   let m: Meta = { pending: true, stale: false, errored: false }
   const setMeta = (patch: Partial<Meta>): void => {

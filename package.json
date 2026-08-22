@@ -2,7 +2,9 @@
   "name": "nonchalant-monorepo",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "test": "vitest run",
@@ -10,8 +12,14 @@
     "bench": "node bench/reconcile.bench.mjs && node bench/process-scale.bench.mjs"
   },
   "devDependencies": {
+    "fast-check": "^4.1.0",
+    "happy-dom": "^20.11.6",
     "typescript": "^7.0.2",
-    "vitest": "^3.2.0",
-    "fast-check": "^4.1.0"
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@nonchalant/core": "workspace:*",
+    "@nonchalant/dom": "workspace:*",
+    "@nonchalant/wire": "workspace:*"
   }
 }

@@ -3,7 +3,7 @@
 // them, the type surface has regressed. This file is the contract the runtime
 // implementation must satisfy.
 
-import { spawn, derive, cell } from '../src/index.ts'
+import { spawn, derive, cell, define, registry } from '../src/index.ts'
 import type { Call, Definition, Proc, Process, Registry, Self } from '../src/index.ts'
 
 type Item = { id: number; title: string; done: boolean }
@@ -68,6 +68,22 @@ shop.lookup('clock', {})
 // @ts-expect-error — unknown name
 shop.lookup('warehouse')
 
+// --- local registry construction: define() infers the Definition, lookup stays typed ---
+declare const clockProc: Proc<number, never, void>
+const local = registry({
+  cart: define(cartProc, { evict: 30_000 }),
+  clock: define(clockProc),
+})
+const lc = local.lookup('cart', { userId: 'u1' })
+lc.send({ type: 'remove', id: 2 })
+local.lookup('clock')
+// @ts-expect-error — clock takes no args
+local.lookup('clock', {})
+local.evict('cart', { userId: 'u1' })
+local.evict('clock')
+// @ts-expect-error — unknown name
+local.evict('warehouse')
+
 // --- middleware: processes compose as functions, types pass through ---
 declare function withHistory<T, In, A>(
   proc: Proc<T, In, A>,
@@ -77,5 +93,5 @@ hist.send({ type: 'undo' })
 hist.send({ type: 'add', item: { id: 2, title: 'y', done: false } })
 
 // silence unused locals
-void total0; void total1; void rcart; void hist; void cart
+void total0; void total1; void rcart; void hist; void cart; void lc
 export {}

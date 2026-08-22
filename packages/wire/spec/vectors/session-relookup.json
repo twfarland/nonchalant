@@ -1,0 +1,14 @@
+{
+  "description": "re-lookup on a live ref restarts from a full snapshot (reconnect is not a special case); unknown names raise",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 2 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 2 } },
+    { "recv": { "op": "send", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 3 } },
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 2 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 3 }, "full": true },
+    { "recv": { "op": "lookup", "ref": "r2", "name": "warehouse" } },
+    { "expect": "raise", "ref": "r2" },
+    { "recv": { "op": "exit", "ref": "r1" } }
+  ]
+}

@@ -1,23 +1,24 @@
 // @nonchalant/core — public surface. Types are final (draft 3, verified);
-// runtime lands per docs/ROADMAP.md. Stubs throw so nothing silently no-ops.
+// runtime implemented through M4 (reconcile, graph, processes, generic mount).
+// The registry (M5) and wire (M6) land per docs/ROADMAP.md.
 
 export type {
   Call, Plain, Requests, Res,
   Process, ProcessBase, Self, Proc,
   Definition, Schema, Registry, ProcessOf, ArgsOf,
-  VNode, Slot,
+  VNode, Slot, Sink,
 } from './types.ts'
 export { reconcile, applyPatch } from './reconcile.ts'
 export type { Json, Op, Patch } from './reconcile.ts'
-export { flush } from './graph.ts'
+export { flush, effect, untracked } from './graph.ts'
 export { channel } from './process.ts'
 export type { SpawnOpts } from './process.ts'
+export { define, registry } from './registry.ts'
+export type { DefineOpts, RegistryHandle } from './registry.ts'
 
 import { computed, effect } from './graph.ts'
 import { spawnProcess, type SpawnOpts } from './process.ts'
-import type { Proc, Process, Self } from './types.ts'
-
-const TODO = (m: string) => new Error(`@nonchalant/core: ${m} not implemented yet — see docs/ROADMAP.md`)
+import type { Proc, Process, ProcessBase, Self, Sink as SinkT } from './types.ts'
 
 /** Run an async generator as a supervised local process. `initial` decides T | undefined vs T. */
 export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A, opts: SpawnOpts<T> & { initial: T }): Process<T, In>
@@ -129,9 +130,9 @@ export function derive<T>(fn: () => T): Process<T> {
   return read as unknown as Process<T>
 }
 
-/** Attach a view process to a sink. Disposal unbinds everything beneath, in order. */
-export function mount(_sink: unknown, _view: Process<unknown>): Disposable {
-  throw TODO('mount (M4)')
+/** Attach a view (a value or a process of values) to a sink. Disposal unbinds everything beneath. */
+export function mount<Out>(sink: SinkT<Out>, view: ProcessBase<Out | undefined> | Out): Disposable {
+  return sink.mount(view)
 }
 
 /**
