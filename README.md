@@ -8,9 +8,15 @@ values over time, and does not care which side of the wire it runs on.
 - Location transparency: state is addressed by name; a name resolves identically
   in this tab, a worker, or a server, over a language-agnostic patch protocol.
 
-Status: **design complete (draft 3), implementation starting.**
+Status: **M0–M8 implemented and tested** (reconcile, the reactive graph, the
+process runtime, the DOM sink, the registry, the wire + conformance vectors, the
+Node host, and the Mario golden with CI-asserted budgets: one view yield,
+≤ 3 DOM writes/frame). M9 (site, 7GUIs, benchmark entry, first publish) is next.
 Read `docs/DESIGN.md` first — it is the canonical context. `docs/ROADMAP.md` has the
-build order. The full illustrated proposal is `docs/design-proposal.html`.
+build order and per-milestone detail. The full illustrated proposal is
+`docs/design-proposal.html`. Try it: `pnpm check && pnpm test` (125 tests);
+the pitch demo is `examples/shared-cart` — state moves from tab to server by
+changing one line.
 
 Successor to [sprezzatura](https://github.com/twfarland/sprezzatura) and
 [acto](https://github.com/twfarland/acto), which are retired as artifacts.
