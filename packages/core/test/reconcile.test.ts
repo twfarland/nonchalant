@@ -120,6 +120,15 @@ describe('reconcile / applyPatch', () => {
     expect(reconcile({ a: 1 }, [1])).toStrictEqual([['set', '', [1]]])
   })
 
+  it('keys that shadow Object.prototype diff by own-ness, not `in`', () => {
+    // found by the round-trip property (seed 1880411877): `'toString' in {}`
+    // is true via the prototype chain, which used to swallow the deletion
+    expect(reconcile({ toString: null }, {})).toStrictEqual([['del', '/toString']])
+    expect(applyPatch({ toString: null, keep: 1 }, [['del', '/toString']])).toStrictEqual({ keep: 1 })
+    expect(reconcile({}, { valueOf: 7 })).toStrictEqual([['set', '/valueOf', 7]])
+    expect(applyPatch({}, [['set', '/valueOf', 7]])).toStrictEqual({ valueOf: 7 })
+  })
+
   it('rejects prototype-polluting paths', () => {
     expect(() => applyPatch({}, [['set', '/__proto__/x', 1]])).toThrow(/illegal path/)
     expect(() => applyPatch({}, [['set', '/constructor', 1]])).toThrow(/illegal path/)

@@ -56,13 +56,19 @@ Same key → same fetch, shared by everyone. Last watcher leaves → 30 seconds 
 gone. Next lookup → fresh fetch. That's the useful core of a query library,
 and it's a passing test: `packages/core/test/registry.test.ts`.
 
+The full construct — loading and error states, retry, stale-while-refetch,
+prefix invalidation, and mutations as `ask()` — is `examples/lib/query.ts`
+(about eighty lines), running in `examples/query`.
+
 ## Routing — the URL is a process
 
 The current route is state like any other, and pages can be view processes:
 the router iterates the route, disposes the outgoing page (tearing down its
 whole scope), yields a loading state, `await import()`s the chunk, and yields
 the new page. Navigation, loading states, code splitting, and teardown in a
-dozen lines of ordinary code. `examples/router`.
+dozen lines of ordinary code. The router itself — route process, `navigate`,
+spreadable `link()` attrs that replace history by default — is a forty-line
+userland construct: `examples/lib/router.ts`, used by `examples/router`.
 
 ## Undo/redo — wrap the process
 

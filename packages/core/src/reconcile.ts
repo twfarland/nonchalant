@@ -66,10 +66,12 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
     return
   }
   if (isRecord(prev) && isRecord(next)) {
-    for (const k in prev) if (!(k in next)) ops.push(['del', `${path}/${escapeSegment(k)}`])
+    // Object.hasOwn, not `in`: `in` walks the prototype chain, so a key like
+    // "toString" would find Object.prototype's and corrupt the diff
+    for (const k in prev) if (!Object.hasOwn(next, k)) ops.push(['del', `${path}/${escapeSegment(k)}`])
     for (const k in next) {
       if (prev[k] !== next[k]) {
-        if (k in prev) walk(prev[k] as Json, next[k] as Json, `${path}/${escapeSegment(k)}`, ops)
+        if (Object.hasOwn(prev, k)) walk(prev[k] as Json, next[k] as Json, `${path}/${escapeSegment(k)}`, ops)
         else ops.push(['set', `${path}/${escapeSegment(k)}`, next[k] as Json])
       }
     }
@@ -132,7 +134,7 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
   if (isRecord(node)) {
     const copy: { [key: string]: Json } = { ...node }
     if (last && op[0] === 'del') { delete copy[k]; return copy }
-    if (!last && !(k in node)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
+    if (!last && !Object.hasOwn(node, k)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
     copy[k] = last ? applyLeaf(node[k] as Json, op) : applyAt(node[k] as Json, keys, i + 1, op)
     return copy
   }

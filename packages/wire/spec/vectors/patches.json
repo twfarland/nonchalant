@@ -16,6 +16,8 @@
     { "name": "~01 decodes to the literal key ~1, not /", "prev": { "~1": 1, "keep": true }, "patch": [["del", "/~01"]], "next": { "keep": true } },
     { "name": "empty-string key is a valid segment", "prev": { "": 1 }, "patch": [["set", "/", 2]], "next": { "": 2 } },
     { "name": "unicode keys pass through", "prev": { "héllo": 1 }, "patch": [["set", "/héllo", 2]], "next": { "héllo": 2 } },
+    { "name": "keys shadowing Object.prototype: del removes the own key", "prev": { "toString": null, "keep": 1 }, "patch": [["del", "/toString"]], "next": { "keep": 1 } },
+    { "name": "keys shadowing Object.prototype: set adds an own key", "prev": {}, "patch": [["set", "/valueOf", 7]], "next": { "valueOf": 7 } },
     { "name": "__proto__ segment is rejected", "prev": {}, "patch": [["set", "/__proto__/x", 1]], "error": true },
     { "name": "constructor segment is rejected", "prev": {}, "patch": [["set", "/constructor", 1]], "error": true },
     { "name": "prototype segment is rejected", "prev": { "a": {} }, "patch": [["set", "/a/prototype", 1]], "error": true },
