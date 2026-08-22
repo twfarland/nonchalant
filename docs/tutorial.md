@@ -83,6 +83,16 @@ asserts exact wake counts, and the Mario demo has a CI budget of at most
 The one thing to avoid: mutating your state and yielding a deep clone. It
 works, but then nothing is shared and the diff has to look at everything.
 
+## 3.5. Why immutable works here
+
+A 1-of-10k field update diffs in ~50µs. A binding on a different path sleeps
+through it. This is not magic—it falls out of three facts: unchanged objects are
+the *same references* (so diff skips them in O(1)), reads are path-tracked (so
+binding on `total` is independent of `items`), and diffs drive wakes (only
+touched paths wake their readers). The test suite asserts exact wake counts; the
+Mario demo lives in one view yield with ≤3 DOM writes per frame. This efficiency
+is a consequence of the model, not a feature bolted on.
+
 ## 4. Views run once
 
 A view is a function that returns a tree. Where the tree needs live data, you

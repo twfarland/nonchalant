@@ -33,16 +33,31 @@ mount(document.getElementById('app')!, div({},
   button({ onclick: () => counter.send(1) }, '+')))
 ```
 
+## Why this way
+
+Generators uniquely combine three pieces: local state as ordinary `let` variables,
+sequential input as `for await` messages, and an explicit lifetime (`return` or
+`dispose`). This single unit scales—a cell's state machine is the same shape as
+a cached query, which is the same shape as a process running on a server. One
+process type, three distances. `registry.lookup` is dependency injection + query
+cache + remote addressing rolled into one operation. Views run once; structure
+never rebuilds; updates flow through the graph by path; everything is plain data
+until it crosses a wire.
+
 ## What it offers
 
-- **No render loop.** A view runs once and returns a tree of bindings. Updates
-  flow through the graph to exactly the DOM they touch — CI asserts that
-  changing one label in a 50-row list is exactly one DOM write, and that a
-  60 fps game demo stays within one view yield and ≤ 3 DOM writes per frame.
-- **Fine-grained without a compiler.** You write ordinary immutable updates;
+- **Views run once.** A view returns a tree with bindings in it, and never
+  rebuilds. All the React muscle memory about defending against re-renders—
+  memoization, dependency arrays, stable identities—has nothing to attach to.
+  Structure that changes is expressed as keyed lists or swapped regions.
+
+- **Fine-grained updates come free.** You write ordinary immutable updates;
   every yield is diffed structurally, and readers wake only if a path they
-  actually read changed. No proxies on your writes, no annotations, no build
-  step.
+  actually read changed. This falls out of the model: immutable yield +
+  structural diff + read tracking = no dependency arrays, no memos, no re-render
+  tax. CI asserts that changing one label in a 50-row list is exactly one DOM
+  write, and that a 60 fps game demo stays within one view yield and ≤ 3 DOM
+  writes per frame.
 
 ```ts
 s = { ...s, total: s.total + item.price }   // an ordinary immutable update
@@ -73,27 +88,17 @@ type CartMsg =
 const res = await cart.ask({ type: 'checkout' })   // res is typed; crash = rejection
 ```
 
-- **State can have an address.** `lookup` is get-or-spawn: the first caller
-  starts a process and later callers with the same name and arguments share it.
-  This is useful for dependency lookup and the basic lifecycle of cached work.
-  Retry, invalidation policy, persistence, and other query-client features stay
-  in application code.
+- **One interface for DI, caching, and remote addressing.** `lookup(name, args)`
+  is simultaneously dependency injection (no prop drilling), query caching
+  (name + args = TanStack's queryKey, with refcounting and idle eviction), and
+  named addressing. `connect(transport)` substitutes the transport but keeps
+  the interface; the same code works locally or over a wire. Real boundaries
+  remain: arguments and values must be JSON, calls fail on network loss, and
+  a deployed host needs authentication.
 
 ```ts
-const shop = registry({ user: define(userProc, { evict: 30_000 }) })
-const u = shop.lookup('user', { id: 1 })   // deduped, shared, refcounted, idle-evicted
-u.pending; u.error; u()                    // loading and failure are the process face
-```
-
-- **One lookup interface, locally or remotely.** `connect(transport)` returns
-  the registry interface used by local code, so process and view code can often
-  stay unchanged when a definition moves to a host. Remote use still has real
-  boundaries: values and arguments must be JSON data, calls can fail or be
-  delayed, and a deployed host needs authentication and an origin policy.
-
-```ts
-const shop = registry({ cart: define(cart) })                  // state lives in this tab
-// const shop = connect<Shop>(webSocketTransport('wss://…'))   // …or on a server. Same cart.
+const shop = registry({ cart: define(cart) })                  // local
+// const shop = connect<Shop>(webSocketTransport('wss://…'))   // remote, same interface
 ```
 
 - **Processes test as transcripts.** `Self` is an interface and `channel()`

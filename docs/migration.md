@@ -59,12 +59,16 @@ and reactive expressions need an explicit thunk: `() => cart().total`.
 Some Erlang vocabulary transfers: `send` resembles a cast, `ask` resembles a
 call, `restart: 'on-crash'` restarts from the init args, and owned children
 are disposed with their parent. This remains cooperative JavaScript, not an
-OTP supervision system. The big shift: the wire carries state instead of rendered
-templates, so the client owns rendering (any sink — DOM or canvas), local-only
-interactions cost no round-trip, and the server half can be written in any
-language (`docs/PROTOCOL.md` plus the conformance vectors are the contract).
-What you give up: BEAM preemption. A hot loop in JS still blocks its thread;
-worker threads are the containment strategy.
+OTP supervision system.
+
+The key difference: the wire carries state, not rendered templates. The client
+owns rendering (any sink — DOM or canvas), local-only interactions cost no
+round-trip, and the server half can be written in any language
+(`docs/PROTOCOL.md` plus the conformance vectors are the contract).
+
+You give up BEAM preemption and hot-code reloading. A hot loop in JS still
+blocks its thread; worker threads are the isolation strategy. Nonchalant does
+not provide process isolation, escalation hierarchies, or OTP supervision trees.
 
 ## A migration path that works
 
