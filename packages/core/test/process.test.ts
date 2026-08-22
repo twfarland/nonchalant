@@ -53,6 +53,13 @@ describe('spawn basics', () => {
     expect(open()).toBe(true)
     open[Symbol.dispose]()
   })
+
+  it('rejects invalid mailbox and restart bounds', () => {
+    expect(() => spawn(counter, undefined, { initial: 0, mailbox: -1 })).toThrow(/mailbox/)
+    expect(() => spawn(counter, undefined, { initial: 0, mailbox: 1.5 })).toThrow(/mailbox/)
+    expect(() => spawn(counter, undefined, { initial: 0, maxRestarts: -1 })).toThrow(/maxRestarts/)
+    expect(() => spawn(counter, undefined, { initial: 0, maxRestarts: Number.NaN })).toThrow(/maxRestarts/)
+  })
 })
 
 describe('graph integration', () => {
@@ -94,6 +101,20 @@ describe('graph integration', () => {
     p.send(3)
     await tick()
     expect(doubled()).toBe(6)
+    p[Symbol.dispose]()
+  })
+
+  it('non-plain immutable values are tracked as atomic leaves', async () => {
+    const p = cell(new Date(0))
+    let seen = -1
+    const stop = effect(() => {
+      seen = p().getTime()
+    })
+    expect(seen).toBe(0)
+    p.send(new Date(1000))
+    await tick()
+    expect(seen).toBe(1000)
+    stop()
     p[Symbol.dispose]()
   })
 })
@@ -275,6 +296,14 @@ describe('channel', () => {
     ac.abort()
     await done
     expect(got).toEqual([1])
+  })
+
+  it('can be closed explicitly', async () => {
+    const ch = channel<number>()
+    const next = ch[Symbol.asyncIterator]().next()
+    ch[Symbol.dispose]()
+    expect(ch.signal.aborted).toBe(true)
+    expect(await next).toEqual({ value: undefined, done: true })
   })
 })
 

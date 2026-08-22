@@ -8,7 +8,7 @@ are self-contained — no backends required.
 |---|---|
 | `counter/` | widget state as a closed-over `cell`; a Process as a live slot |
 | `todomvc/` | one state process + one view; the keyed list patches one row at a time |
-| `typeahead/` | `latest()` racing, abort via `self.signal` (fake API with latency) |
+| `typeahead/` | `latest()` queue conflation, lifetime abort via `self.signal` |
 | `form/` | `ask()` — a submit that learns its own outcome (try someone@taken.com) |
 | `router/` | pages as view processes over the userland router in `lib/router.ts` |
 | `undo-redo/` | middleware as function composition over `channel` |

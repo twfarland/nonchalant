@@ -16,6 +16,12 @@ const counter: Proc<number, CounterMsg, { start: number }> = async function* (se
 }
 
 describe('registry: lookup is get-or-spawn', () => {
+  it('rejects invalid eviction delays', () => {
+    expect(() => define(counter, { evict: -1 })).toThrow(/evict/)
+    expect(() => define(counter, { evict: Number.NaN })).toThrow(/evict/)
+    expect(() => define(counter, { evict: Number.POSITIVE_INFINITY })).toThrow(/evict/)
+  })
+
   it('same name + args share one process; different args get their own', async () => {
     const reg = registry({ counter: define(counter) })
     const a1 = reg.lookup('counter', { start: 1 })
@@ -41,6 +47,34 @@ describe('registry: lookup is get-or-spawn', () => {
     const y = reg.lookup('sum', { b: 2, a: 1 })
     expect(x).toBe(y)
     reg.evict('sum')
+  })
+
+  it('non-data dependencies participate in local cache identity', () => {
+    type Args = { read(): number }
+    const proc: Proc<number, never, Args> = async function* (_self, args) {
+      yield args.read()
+    }
+    const reg = registry({ value: define(proc) })
+    const read1 = (): number => 1
+    const read2 = (): number => 2
+    expect(reg.lookup('value', { read: read1 })).toBe(reg.lookup('value', { read: read1 }))
+    expect(reg.lookup('value', { read: read2 })).not.toBe(reg.lookup('value', { read: read1 }))
+    reg.evict('value')
+  })
+
+  it('cyclic local arguments are keyed by stable identity instead of throwing', () => {
+    interface Args { id: number; self?: Args }
+    const proc: Proc<number, never, Args> = async function* (_self, args) {
+      yield args.id
+    }
+    const reg = registry({ value: define(proc) })
+    const a: Args = { id: 1 }
+    const b: Args = { id: 1 }
+    a.self = a
+    b.self = b
+    expect(reg.lookup('value', a)).toBe(reg.lookup('value', a))
+    expect(reg.lookup('value', b)).not.toBe(reg.lookup('value', a))
+    reg.evict('value')
   })
 
   it('unknown names throw', () => {
@@ -109,6 +143,46 @@ describe('registry: watcher refcounting and eviction', () => {
     await tick(50)
     expect(log).toEqual(['spawn 3', 'dispose 3'])
     reg.evict('item')
+  })
+
+  it('lifecycle metadata readers keep an entry alive', async () => {
+    const { proc, log } = makeTracked()
+    const reg = registry({ item: define(proc, { evict: 15 }) })
+    const p = reg.lookup('item', { id: 4 })
+    const stop = effect(() => void p.error)
+    await tick(50)
+    expect(reg.lookup('item', { id: 4 })).toBe(p)
+    expect(log).toEqual(['spawn 4'])
+    stop()
+    await tick(50)
+    expect(log).toEqual(['spawn 4', 'dispose 4'])
+    reg.evict('item')
+  })
+
+  it('an entry that is never watched still expires when idle', async () => {
+    const { proc, log } = makeTracked()
+    const reg = registry({ item: define(proc, { evict: 15 }) })
+    const p = reg.lookup('item', { id: 5 })
+    await tick(50)
+    expect(log).toEqual(['spawn 5', 'dispose 5'])
+    expect(reg.lookup('item', { id: 5 })).not.toBe(p)
+    reg.evict('item')
+  })
+
+  it('a naturally completed entry is removed from the cache', async () => {
+    let spawns = 0
+    const once: Proc<number, never, void> = async function* () {
+      spawns++
+      yield spawns
+    }
+    const reg = registry({ once: define(once) })
+    const first = reg.lookup('once')
+    await tick()
+    const second = reg.lookup('once')
+    expect(second).not.toBe(first)
+    await tick()
+    expect(second()).toBe(2)
+    reg.evict('once')
   })
 
   it('manual evict disposes one entry, or all entries under a name', async () => {

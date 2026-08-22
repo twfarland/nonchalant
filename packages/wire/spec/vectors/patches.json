@@ -1,5 +1,5 @@
 {
-  "description": "applyPatch semantics: pure, ordered, RFC 6901 paths, pollution-guarded",
+  "description": "applyPatch semantics: pure, ordered, RFC 6901 paths, safe own-property writes",
   "cases": [
     { "name": "root set replaces everything", "prev": { "a": 1 }, "patch": [["set", "", [1, 2]]], "next": [1, 2] },
     { "name": "nested set", "prev": { "items": [{ "done": false }], "total": 0 }, "patch": [["set", "/items/0/done", true]], "next": { "items": [{ "done": true }], "total": 0 } },
@@ -18,11 +18,14 @@
     { "name": "unicode keys pass through", "prev": { "héllo": 1 }, "patch": [["set", "/héllo", 2]], "next": { "héllo": 2 } },
     { "name": "keys shadowing Object.prototype: del removes the own key", "prev": { "toString": null, "keep": 1 }, "patch": [["del", "/toString"]], "next": { "keep": 1 } },
     { "name": "keys shadowing Object.prototype: set adds an own key", "prev": {}, "patch": [["set", "/valueOf", 7]], "next": { "valueOf": 7 } },
-    { "name": "__proto__ segment is rejected", "prev": {}, "patch": [["set", "/__proto__/x", 1]], "error": true },
-    { "name": "constructor segment is rejected", "prev": {}, "patch": [["set", "/constructor", 1]], "error": true },
-    { "name": "prototype segment is rejected", "prev": { "a": {} }, "patch": [["set", "/a/prototype", 1]], "error": true },
+    { "name": "__proto__ is created as a safe own property", "prev": {}, "patch": [["set", "/__proto__", { "x": 1 }]], "next": { "__proto__": { "x": 1 } } },
+    { "name": "constructor is an ordinary own key", "prev": {}, "patch": [["set", "/constructor", 1]], "next": { "constructor": 1 } },
+    { "name": "prototype is an ordinary nested key", "prev": { "a": {} }, "patch": [["set", "/a/prototype", 1]], "next": { "a": { "prototype": 1 } } },
     { "name": "malformed escape ~2 is rejected", "prev": {}, "patch": [["set", "/a~2b", 1]], "error": true },
     { "name": "trailing ~ is rejected", "prev": {}, "patch": [["set", "/a~", 1]], "error": true },
-    { "name": "splice on a non-array is rejected", "prev": { "a": 1 }, "patch": [["splice", "/a", 0, 0, [1]]], "error": true }
+    { "name": "splice on a non-array is rejected", "prev": { "a": 1 }, "patch": [["splice", "/a", 0, 0, [1]]], "error": true },
+    { "name": "negative splice start is rejected", "prev": [1], "patch": [["splice", "", -1, 0, []]], "error": true },
+    { "name": "splice removal beyond the array is rejected", "prev": [1], "patch": [["splice", "", 0, 2, []]], "error": true },
+    { "name": "array deletion at length is rejected", "prev": [1], "patch": [["del", "/1"]], "error": true }
   ]
 }

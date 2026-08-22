@@ -14,6 +14,10 @@ type CartMsg =
   | { type: 'remove'; id: number }
   | Call<{ type: 'checkout' }, { ok: boolean; orderId?: string }>
 
+type MultiCallMsg =
+  | Call<{ type: 'find'; id: number }, { name: string }>
+  | Call<{ type: 'count' }, number>
+
 declare const cartProc: Proc<CartState, CartMsg, { userId: string }>
 
 // --- spawn: `initial` decides whether reads are total ---
@@ -38,6 +42,14 @@ async function checkout(): Promise<void> {
 }
 void checkout
 
+declare const multi: Process<null, MultiCallMsg>
+const found: Promise<{ name: string }> = multi.ask({ type: 'find', id: 1 })
+const counted: Promise<number> = multi.ask({ type: 'count' })
+// @ts-expect-error — find requires its id
+multi.ask({ type: 'find' })
+// @ts-expect-error — count has no id
+multi.ask({ type: 'count', id: 1 })
+
 // --- derivations have no mailbox ---
 const totals = derive(() => cart().total)
 // @ts-expect-error — no send on a Process<T, never>
@@ -59,6 +71,8 @@ interface Shop {
   cart: Definition<CartState, CartMsg, { userId: string }>
   clock: Definition<number, never, void>
 }
+// @ts-expect-error — definitions are constructed by define(), not structural lookalikes
+const fakeDefinition: Definition<number, never, void> = {}
 declare const shop: Registry<Shop>
 const rcart = shop.lookup('cart', { userId: 'u1' })
 rcart.send({ type: 'remove', id: 1 })
@@ -93,5 +107,5 @@ hist.send({ type: 'undo' })
 hist.send({ type: 'add', item: { id: 2, title: 'y', done: false } })
 
 // silence unused locals
-void total0; void total1; void rcart; void hist; void cart; void lc
+void total0; void total1; void rcart; void hist; void cart; void lc; void found; void counted; void fakeDefinition
 export {}

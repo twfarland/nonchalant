@@ -4,8 +4,8 @@
 // refcount + evict idle timeout = the SWR lifecycle), and — at M6 — remote
 // addressing (connect(url) returns the same interface).
 //
-// Watchers are subscriptions: every effect/derive/iterator reading the process
-// creates a gate on its value source, and the gate count is the refcount.
+// Watchers are subscriptions: effects/derives/iterators reading either process
+// values or lifecycle metadata create gates, and their total is the refcount.
 // Plain snapshot pulls are not watching (SWR semantics: an evicted entry
 // simply respawns on the next lookup). Registry processes spawn `unscoped` —
 // shared state must not be owned by whichever process looked it up first.
@@ -17,8 +17,9 @@ const SEP = '\u0000' // separates name from serialized args in cache keys
 
 export interface DefineOpts<T> extends SpawnOpts<T> {
   /**
-   * Milliseconds to keep the process alive after its last watcher unsubscribes;
-   * the timer cancels if a watcher returns. Omit to never auto-evict.
+   * Milliseconds to keep the process alive with no reactive watchers. The timer
+   * starts at lookup and restarts when the last watcher leaves. Omit to never
+   * auto-evict.
    */
   evict?: number
 }
@@ -30,19 +31,11 @@ interface RuntimeDef {
 
 /** Declare a schema entry: the generator a name resolves to, plus its spawn/evict options. */
 export function define<T, In, A>(proc: Proc<T, In, A>, opts?: DefineOpts<T>): Definition<T, In, A> {
+  if (opts?.evict !== undefined && (!Number.isFinite(opts.evict) || opts.evict < 0))
+    throw new Error('nonchalant: evict must be a finite non-negative duration')
   const def: RuntimeDef = { proc: proc as RuntimeDef['proc'], opts: opts as DefineOpts<unknown> | undefined }
   return def as unknown as Definition<T, In, A>
 }
-
-// stable serialization: {a,b} and {b,a} are the same key (queryKey semantics)
-const canon = (v: unknown): unknown => {
-  if (typeof v !== 'object' || v === null) return v
-  if (Array.isArray(v)) return v.map(canon)
-  const out: Record<string, unknown> = {}
-  for (const k of Object.keys(v).sort()) out[k] = canon((v as Record<string, unknown>)[k])
-  return out
-}
-const argsKey = (args: unknown): string => (args === undefined ? '' : JSON.stringify(canon(args)))
 
 interface Entry {
   process: Process<unknown, unknown>
@@ -60,6 +53,68 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
   defs: S,
 ): RegistryHandle<S> {
   const entries = new Map<string, Entry>()
+  const objectIds = new WeakMap<object, number>()
+  const symbolIds = new Map<symbol, number>()
+  let nextIdentity = 0
+
+  const objectIdentity = (value: object): number => {
+    let id = objectIds.get(value)
+    if (id === undefined) {
+      id = ++nextIdentity
+      objectIds.set(value, id)
+    }
+    return id
+  }
+
+  const encodeArg = (value: unknown, ancestors: Set<object>): string => {
+    if (value === null) return 'null'
+    switch (typeof value) {
+      case 'undefined': return 'undefined'
+      case 'boolean': return value ? 'true' : 'false'
+      case 'string': return `string:${JSON.stringify(value)}`
+      case 'number':
+        if (Number.isNaN(value)) return 'number:NaN'
+        if (value === Number.POSITIVE_INFINITY) return 'number:Infinity'
+        if (value === Number.NEGATIVE_INFINITY) return 'number:-Infinity'
+        if (Object.is(value, -0)) return 'number:-0'
+        return `number:${value}`
+      case 'bigint': return `bigint:${value}`
+      case 'symbol': {
+        let id = symbolIds.get(value)
+        if (id === undefined) {
+          id = ++nextIdentity
+          symbolIds.set(value, id)
+        }
+        return `symbol:${id}`
+      }
+      case 'function': return `function:${objectIdentity(value)}`
+      case 'object': break
+    }
+
+    const object = value as object
+    if (ancestors.has(object)) return `cycle:${objectIdentity(object)}`
+    const proto = Object.getPrototypeOf(object)
+    const plain = proto === Object.prototype || proto === null
+    if (!Array.isArray(object) && (!plain || Object.getOwnPropertySymbols(object).length > 0))
+      return `object:${objectIdentity(object)}`
+
+    ancestors.add(object)
+    try {
+      if (Array.isArray(object)) {
+        const values: string[] = []
+        for (let i = 0; i < object.length; i++)
+          values.push(Object.hasOwn(object, i) ? encodeArg(object[i], ancestors) : 'hole')
+        return `array:[${values.join(',')}]`
+      }
+      const record = object as Record<string, unknown>
+      return `record:{${Object.keys(record).sort().map((key) =>
+        `${JSON.stringify(key)}:${encodeArg(record[key], ancestors)}`).join(',')}}`
+    } finally {
+      ancestors.delete(object)
+    }
+  }
+
+  const argsKey = (args: unknown): string => encodeArg(args, new Set())
 
   const drop = (key: string): void => {
     const entry = entries.get(key)
@@ -92,10 +147,18 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
               }
             }
       created.process = unscoped(() =>
-        spawnProcess(def.proc, args, def.opts, onWatchers !== undefined ? { onWatchers } : undefined),
+        spawnProcess(def.proc, args, def.opts, {
+          ...(onWatchers !== undefined ? { onWatchers } : {}),
+          onSettled: () => {
+            if (entries.get(key) !== created) return
+            if (created.timer !== undefined) clearTimeout(created.timer)
+            entries.delete(key)
+          },
+        }),
       ) as Process<unknown, unknown>
       entry = created
       entries.set(key, entry)
+      onWatchers?.(0)
     }
     return entry.process
   }

@@ -28,11 +28,12 @@ stops erroring, the types regressed.
 ## Self (from the inside)
 
 What the generator receives: `for await (msg of self)` reads the mailbox in
-order (messages queue while you're busy — backpressure by default);
+order (messages queue while you're busy — sequential handling by default);
 `self.latest()` skips to the newest message and drops the rest (what a
 typeahead wants); `self.signal` is an AbortSignal that fires on dispose or
 crash — pass it to your fetches; `self.send` posts to your own mailbox.
-`channel(signal?)` gives you a standalone mailbox for middleware and tests.
+`channel(signal?)` gives you a disposable standalone mailbox for middleware
+and tests.
 
 ## spawn
 
@@ -115,9 +116,10 @@ The headline numbers are CI budgets: one text write for one changed label in a
 
 `registry(defs)` + `define(proc, opts)` + `lookup(name, args)`. Lookup is
 get-or-spawn, keyed by name plus the arguments (order-independent — `{a, b}`
-and `{b, a}` are the same key). Subscribers count as watchers; plain reads
-don't. When the last watcher leaves, an `evict` timer (if configured) disposes
-the entry; the next lookup starts fresh. One mechanism, three jobs: dependency
+and `{b, a}` are the same key). Subscribers to values or lifecycle metadata
+count as watchers; plain reads don't. The idle timer starts at lookup and
+restarts when the last watcher leaves; after eviction the next lookup starts
+fresh. One mechanism, three jobs: dependency
 injection, query cache, and — over the wire — remote addressing.
 Tests: `registry.test.ts`.
 

@@ -14,7 +14,7 @@
 </main>
 <aside class="explain">
 <h2>How it works</h2>
-<p><code>self.latest()</code> is the entire debounce/race/cancel story: while a search is in flight the loop is not listening, and when it finishes it resumes at the <em>newest</em> query, skipping every stale keystroke in between. The abort signal cancels in-flight work if the process is disposed.</p>
+<p><code>self.latest()</code> conflates queued input: while a search is in flight the loop is not listening, and when it finishes it resumes at the <em>newest</em> query, skipping every intermediate keystroke. It does not cancel the active search; the abort signal cancels that work only if the process is disposed.</p>
 <pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> { q } <span class="k">of</span> self.latest()) {
   <span class="k">yield</span> { q, results, pending: <span class="k">true</span> }
   <span class="k">try</span> {

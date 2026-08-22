@@ -74,12 +74,22 @@ export function createRecorder(): Recorder {
     throw new Error('nonchalant: snapshots are read-only — yield a new value instead of mutating')
   }
 
+  const isTrackable = (value: object): boolean => {
+    if (Array.isArray(value)) return true
+    const proto = Object.getPrototypeOf(value)
+    return proto === Object.prototype || proto === null
+  }
+
   const wrap = (value: Json, node: RecNode): Json => {
     if (typeof value !== 'object' || value === null) {
       if (!done) node.leaf = true
       return value
     }
     if (done) return value
+    if (!isTrackable(value)) {
+      node.leaf = true
+      return value
+    }
     node.traversed = true
     if (node.proxy !== undefined) return node.proxy as Json
     const proxy = new Proxy(value as object, {
@@ -98,7 +108,25 @@ export function createRecorder(): Recorder {
           child(node, key).leaf = true // absent key observed — its appearance is a dependency
           return v
         }
-        return wrap((target as { [k: string]: Json })[key] as Json, child(node, key))
+        const value = (target as { [k: string]: Json })[key] as Json
+        const next = child(node, key)
+        const desc = Reflect.getOwnPropertyDescriptor(target, key)
+        // A Proxy must return the exact value of a frozen data property. Fall
+        // back to a coarse dependency for that subtree rather than violating
+        // the invariant by returning a nested proxy.
+        if (
+          desc !== undefined &&
+          'writable' in desc &&
+          desc.configurable === false &&
+          desc.writable === false &&
+          typeof value === 'object' &&
+          value !== null
+        ) {
+          next.traversed = true
+          next.subtree = true
+          return value
+        }
+        return wrap(value, next)
       },
       has(target, key) {
         if (!done && typeof key !== 'symbol') child(node, key).leaf = true
@@ -107,6 +135,10 @@ export function createRecorder(): Recorder {
       ownKeys(target) {
         if (!done) node.structural = true
         return Reflect.ownKeys(target)
+      },
+      getOwnPropertyDescriptor(target, key) {
+        if (!done && typeof key !== 'symbol') child(node, key).leaf = true
+        return Reflect.getOwnPropertyDescriptor(target, key)
       },
       set: readonlyTrap,
       defineProperty: readonlyTrap,

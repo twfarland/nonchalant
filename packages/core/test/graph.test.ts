@@ -44,6 +44,25 @@ describe('source reads', () => {
     stop()
   })
 
+  it('deeply frozen snapshots remain trackable', () => {
+    const initial: Readonly<{ nested: Readonly<{ n: number }>; other: number }> =
+      Object.freeze({ nested: Object.freeze({ n: 1 }), other: 0 })
+    const src = source(initial)
+    let seen = 0
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      seen = src().nested.n
+    })
+    expect(seen).toBe(1)
+
+    src.publish(Object.freeze({ nested: Object.freeze({ n: 2 }), other: 0 }))
+    flush()
+    expect(seen).toBe(2)
+    expect(runs).toBe(2)
+    stop()
+  })
+
   it('untracked() suspends subscription inside a tracked body', () => {
     const src = source<{ n: number }>({ n: 1 })
     let runs = 0
@@ -445,6 +464,51 @@ describe('derive as Process', () => {
     expect(d.error).toBeUndefined()
   })
 
+  it('error-only readers wake on failure and recovery', () => {
+    const src = source<{ n: number }>({ n: 1 })
+    const d = derive(() => {
+      const n = src().n
+      if (n < 0) throw new Error('negative')
+      return n
+    })
+    expect(d()).toBe(1)
+    let seen: unknown
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      seen = d.error
+    })
+
+    src.publish({ n: -1 })
+    expect(() => d()).toThrow('negative')
+    flush()
+    expect(seen).toBeInstanceOf(Error)
+
+    src.publish({ n: 2 })
+    expect(d()).toBe(2)
+    flush()
+    expect(seen).toBeUndefined()
+    expect(runs).toBe(3)
+    stop()
+  })
+
+  it('Object.is equality keeps stable NaN results quiet', () => {
+    const src = source<{ n: number }>({ n: 0 })
+    const d = derive(() => {
+      void src().n
+      return Number.NaN
+    })
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      void d()
+    })
+    src.publish({ n: 1 })
+    flush()
+    expect(runs).toBe(1)
+    stop()
+  })
+
   it('async iteration is a lossy latest-value stream', async () => {
     const src = source<{ n: number }>({ n: 1 })
     const d = derive(() => src().n)
@@ -474,6 +538,12 @@ describe('derive as Process', () => {
     expect(d()).toBe(1)
     expect((await it.next()).done).toBe(true)
   })
+
+  it('an unread derive throws after disposal instead of violating its value type', () => {
+    const d = derive(() => 123)
+    d[Symbol.dispose]()
+    expect(() => d()).toThrow(/disposed before its first value/)
+  })
 })
 
 describe('path intersection boundaries (affects)', () => {
@@ -500,6 +570,13 @@ describe('path intersection boundaries (affects)', () => {
   it('reads of an absent key wake when the key appears', () => {
     const tree = record((s) => void (s as { maybe?: number }).maybe)
     expect(affects(tree, [['set', '/maybe', 1]] as Patch)).toBe(true)
+    expect(affects(tree, [['set', '/total', 1]] as Patch)).toBe(false)
+  })
+
+  it('Object.hasOwn observations track the inspected key', () => {
+    const tree = record((s) => void Object.hasOwn(s.meta, 'missing'))
+    expect(affects(tree, [['set', '/meta/missing', 1]] as Patch)).toBe(true)
+    expect(affects(tree, [['set', '/meta/tag', 'changed']] as Patch)).toBe(false)
     expect(affects(tree, [['set', '/total', 1]] as Patch)).toBe(false)
   })
 

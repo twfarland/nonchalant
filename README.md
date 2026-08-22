@@ -46,12 +46,12 @@ yield s                                     // diffed → only /total readers wa
                                             // a binding on items[3].done sleeps through it
 ```
 
-- **The mailbox does what operators used to.** Backpressure is the default
-  (a double-submit queues instead of racing); `latest()` is the whole
-  debounce/race/cancel story; the abort signal threads into your fetches.
+- **The mailbox serializes work by default.** A double-submit queues instead of
+  racing; `latest()` conflates queued input to the newest value, while the abort
+  signal handles lifetime cancellation.
 
 ```ts
-for await (const { q } of self.latest()) {          // stale keystrokes never even arrive
+for await (const { q } of self.latest()) {          // queued keystrokes conflate to the newest
   results = await api.search(q, { signal: self.signal })
   yield { q, results }
 }

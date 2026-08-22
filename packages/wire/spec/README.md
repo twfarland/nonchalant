@@ -18,9 +18,12 @@ Patch-application semantics — what `applyPatch(prev, patch)` must do:
 - Ops: `["set", path, value]`, `["del", path]`,
   `["splice", path, start, remove, insert[]]`, applied in order, pure.
 - Paths are RFC 6901 JSON pointers (`~0` → `~`, `~1` → `/`; `""` is the root).
-- `error: true` cases MUST be rejected: prototype-pollution segments
-  (`__proto__`, `constructor`, `prototype`), malformed escapes, splices on
-  non-arrays. Rejecting means refusing the patch — not applying a prefix of it.
+- Every JSON key is valid, including `__proto__`, `constructor`, and
+  `prototype`; implementations MUST create own data properties without invoking
+  prototype setters.
+- `error: true` cases MUST be rejected: malformed escapes, invalid array
+  indices/ranges, and splices on non-arrays. Rejecting means refusing the patch
+  — not applying a prefix of it.
 
 ## session-*.json
 

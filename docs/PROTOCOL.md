@@ -54,9 +54,9 @@ sequenceDiagram
 - `path` is an RFC 6901 JSON pointer: `""` is the root, `"/items/3/done"`
   descends; `~` and `/` inside keys are escaped as `~0` and `~1`. Hosts MUST
   reject malformed escapes (`~` followed by anything other than `0` or `1`).
-- Hosts MUST reject path segments `__proto__`, `constructor`, `prototype`
-  (prototype pollution guard; the reference implementation is
-  packages/core/src/reconcile.ts).
+- Every JSON key is valid, including `__proto__`, `constructor`, and
+  `prototype`. Implementations MUST create own data properties without invoking
+  prototype setters (the reference implementation uses `defineProperty`).
 - The first `yield` after **any** lookup is a full snapshot: ops applied
   against an empty previous state. A lookup on a ref that is already being
   watched restarts the watch the same way. Reconnect is therefore not a

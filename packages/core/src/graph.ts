@@ -276,7 +276,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   try {
     ++cycle
     const oldValue = c.value
-    return oldValue !== (c.value = c.getter(oldValue))
+    return !Object.is(oldValue, (c.value = c.getter(oldValue)))
   } finally {
     activeSub = prevSub
     c.flags &= ~RECURSED_CHECK

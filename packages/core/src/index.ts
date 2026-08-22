@@ -17,7 +17,7 @@ export type { SpawnOpts } from './process.ts'
 export { define, registry } from './registry.ts'
 export type { DefineOpts, RegistryHandle } from './registry.ts'
 
-import { computed, effect } from './graph.ts'
+import { computed, effect, source } from './graph.ts'
 import { spawnProcess, type SpawnOpts } from './process.ts'
 import type { Proc, Process, ProcessBase, Self, Sink as SinkT } from './types.ts'
 
@@ -31,13 +31,25 @@ export function spawn<T, In, A>(proc: Proc<T, In, A>, args: A, opts?: SpawnOpts<
 /** A pure memoised computation over other processes. No mailbox. */
 export function derive<T>(fn: () => T): Process<T> {
   let error: unknown
+  let errored = false
+  let hasValue = false
+  const errorState = source<boolean>(false)
   const wrapped = (): T => {
     try {
       const v = fn()
+      hasValue = true
       error = undefined
+      if (errored) {
+        errored = false
+        errorState.publish(false)
+      }
       return v
     } catch (e) {
       error = e
+      if (!errored) {
+        errored = true
+        errorState.publish(true)
+      }
       throw e
     }
   }
@@ -46,7 +58,10 @@ export function derive<T>(fn: () => T): Process<T> {
   const closers = new Set<() => void>()
 
   const read = (): T => {
-    if (disposed) return c.peek() as T
+    if (disposed) {
+      if (!hasValue) throw new Error('nonchalant: derive disposed before its first value')
+      return c.peek() as T
+    }
     const v = c.read()
     // a failed update leaves the graph clean with the stale value; keep throwing
     // until a recompute succeeds and clears `error`
@@ -87,7 +102,7 @@ export function derive<T>(fn: () => T): Process<T> {
         signalWake()
       }
     }
-    closers.add(finish)
+    if (!done) closers.add(finish)
     return {
       async next(): Promise<IteratorResult<T>> {
         while (!buffered && !failed && !done) {
@@ -118,7 +133,12 @@ export function derive<T>(fn: () => T): Process<T> {
   Object.defineProperties(read, {
     pending: { get: () => false },
     stale: { get: () => disposed },
-    error: { get: () => error },
+    error: {
+      get: () => {
+        void errorState()
+        return error
+      },
+    },
   })
   const withSymbols = read as unknown as Record<symbol, unknown>
   withSymbols[Symbol.asyncIterator] = asyncIterator

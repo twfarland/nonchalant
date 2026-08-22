@@ -7,6 +7,17 @@ export type Call<Req, Res> = Req & { readonly reply: (res: Res) => void }
 export type Requests<In> = Extract<In, { reply: (res: never) => void }>
 export type Plain<In> = Exclude<In, { reply: (res: never) => void }>
 export type Res<M> = M extends { reply: (res: infer R) => void } ? R : never
+type Request<M> = M extends unknown ? Omit<M, 'reply'> : never
+type MatchingRequest<In, Req> = Request<Requests<In>> extends infer R
+  ? R extends object
+    ? Req extends R ? R : never
+    : never
+  : never
+type ReplyFor<In, Req> = Requests<In> extends infer R
+  ? R extends { reply: (res: never) => void }
+    ? Req extends Omit<R, 'reply'> ? Res<R> : never
+    : never
+  : never
 
 export interface ProcessBase<T> {
   /** Synchronous read of the latest yield. Tracked inside derive/bindings/effects; a plain pull elsewhere. */
@@ -28,16 +39,16 @@ export type Process<T, In = never> = ProcessBase<T> &
   ([Requests<In>] extends [never]
     ? {}
     : {
-        ask<M extends Omit<Requests<In>, 'reply'>>(
-          msg: M,
-        ): Promise<Res<Extract<Requests<In>, M & object>>>
+        ask<Req extends Request<Requests<In>>>(
+          msg: Req & Record<Exclude<keyof Req, keyof MatchingRequest<In, Req>>, never>,
+        ): Promise<ReplyFor<In, Req>>
       })
 
-/** The inside face: what the generator receives. FIFO mailbox, backpressured. */
+/** The inside face: what the generator receives. FIFO mailbox, handled sequentially. */
 export interface Self<In> extends AsyncIterable<In> {
   /** Aborts on dispose — thread it into every fetch. */
   readonly signal: AbortSignal
-  /** Skip to the newest message, dropping the queue — flatMapLatest as an iteration mode. */
+  /** Skip to the newest queued message, dropping intermediate queued values. */
   latest(): AsyncIterable<In>
   /** Post to own inbox — the actor self-send, for tasks reporting back. */
   send(msg: In): void
@@ -49,7 +60,7 @@ export type Proc<T, In, Args> = (self: Self<In>, args: Args) => AsyncGenerator<T
 
 declare const DEF: unique symbol
 /** Phantom-typed schema entry: what a name resolves to. */
-export interface Definition<T, In, Args> { readonly [DEF]?: [T, In, Args] }
+export interface Definition<T, In, Args> { readonly [DEF]: [T, In, Args] }
 
 export type Schema = { [name: string]: Definition<unknown, unknown, unknown> }
 

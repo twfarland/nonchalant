@@ -16,7 +16,7 @@ function cell<T>(initial: T): Process<T, T> {
 Five lines, shipped as sugar because everyone needs it. A cell created inside
 a view belongs to that view and disappears with it. `examples/counter`.
 
-## Typeahead — cancel the stale, keep the latest
+## Typeahead — conflate queued input to the latest
 
 `self.latest()` reads the mailbox in "skip to newest" mode: while a search is
 in flight the loop isn't listening, and when it comes back it picks up the
@@ -33,7 +33,8 @@ for await (const { q } of self.latest()) {
 }
 ```
 
-That's the entire debounce/race/cancel story. `examples/typeahead`.
+This prevents a backlog, but it does not cancel the request already in flight;
+that request completes before the newest queued query begins. `examples/typeahead`.
 
 ## Forms — ask for the outcome
 
@@ -134,7 +135,7 @@ operator zoo here, because the classics dissolve into the primitives —
 | `map` / `filter` / `scan` over values | `derive(() => f(p()))` — or just code in the loop |
 | `combineLatest` | one derive reading several processes |
 | `fold` / reducers | the `for await` loop *is* the fold |
-| `flatMapLatest` / `switchMap` | `self.latest()` |
+| queued-input conflation | `self.latest()` |
 | `startWith` | `initial` |
 | retry / error channels | `restart` policies, `stale`, `error` |
 

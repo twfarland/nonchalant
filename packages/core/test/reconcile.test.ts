@@ -2,11 +2,10 @@ import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { reconcile, applyPatch, type Json } from '../src/reconcile.ts'
 
-// Any string key is wire-safe now (RFC 6901 escaping), except the prototype-
-// pollution guard set, which reconcile paths may name but applyPatch must reject.
+// Every JSON object key is wire-safe; patch application defines own properties
+// without invoking Object.prototype setters.
 const key = fc
   .oneof(fc.string({ maxLength: 8 }), fc.constantFrom('a/b', '~', '~0', '~1', 'a~/b', '/', ''))
-  .filter((k) => !['__proto__', 'constructor', 'prototype'].includes(k))
 
 const { json } = fc.letrec<{ json: Json }>((tie) => ({
   json: fc.oneof(
@@ -129,10 +128,20 @@ describe('reconcile / applyPatch', () => {
     expect(applyPatch({}, [['set', '/valueOf', 7]])).toStrictEqual({ valueOf: 7 })
   })
 
-  it('rejects prototype-polluting paths', () => {
-    expect(() => applyPatch({}, [['set', '/__proto__/x', 1]])).toThrow(/illegal path/)
-    expect(() => applyPatch({}, [['set', '/constructor', 1]])).toThrow(/illegal path/)
+  it('round-trips reserved-looking keys without prototype pollution', () => {
+    const next = JSON.parse('{"__proto__":{"x":1},"constructor":2,"prototype":3}') as Json
+    const applied = applyPatch({}, reconcile({}, next)) as Record<string, Json>
+    expect(applied).toStrictEqual(next)
+    expect(Object.hasOwn(applied, '__proto__')).toBe(true)
     expect(({} as Record<string, unknown>)['x']).toBeUndefined()
+  })
+
+  it('rejects malformed array indices and splice ranges', () => {
+    expect(() => applyPatch([1], [['del', '/1']])).toThrow(/bad array index/)
+    expect(() => applyPatch([1], [['set', '/1', 2]])).toThrow(/bad array index/)
+    expect(() => applyPatch([1], [['splice', '', -1, 0, []]])).toThrow(/bad splice/)
+    expect(() => applyPatch([1], [['splice', '', 0.5, 0, []]])).toThrow(/bad splice/)
+    expect(() => applyPatch([1], [['splice', '', 0, 2, []]])).toThrow(/bad splice/)
   })
 
   it('escapes RFC 6901 special characters in keys', () => {

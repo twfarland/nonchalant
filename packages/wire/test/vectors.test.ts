@@ -3,16 +3,19 @@
 // certifies with. See spec/README.md for the format.
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { applyPatch, define, registry } from '@nonchalant/core'
 import type { Call, Json, Patch, Proc } from '@nonchalant/core'
 import { expose } from '../src/host.ts'
 import { decodeHost, type ClientMsg, type HostMsg } from '../src/protocol.ts'
 import { memoryPair } from '../src/transport.ts'
-import patchVectors from '../spec/vectors/patches.json'
 import sessionBasic from '../spec/vectors/session-basic.json'
 import sessionRelookup from '../spec/vectors/session-relookup.json'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+const patchVectors = JSON.parse(
+  readFileSync(new URL('../spec/vectors/patches.json', import.meta.url), 'utf8'),
+) as { cases: { name: string }[] }
 
 describe('patch vectors', () => {
   for (const c of patchVectors.cases) {

@@ -4,7 +4,7 @@
 // codec.
 //
 // Lifecycle:
-//   - Self: FIFO backpressured mailbox; `latest()` drops the queue and skips to
+//   - Self: FIFO sequential mailbox; `latest()` drops the queue and skips to
 //     the newest message; `signal` aborts per instance; `send` is self-send.
 //   - Ownership: spawns during the synchronous window of a process resumption
 //     attach to that process and die with it. Dispose order: mailbox closes,
@@ -133,16 +133,23 @@ const selfFor = <In>(mailbox: Mailbox<In>, signal: AbortSignal, send: (msg: In) 
 
 /**
  * A standalone Self — a private mailbox for wrapping or testing processes
- * (middleware hands one to an inner proc). Iteration ends when `signal` aborts.
+ * (middleware hands one to an inner proc). Iteration ends when `signal` aborts
+ * or the channel is disposed.
  */
-export function channel<In>(signal?: AbortSignal): Self<In> {
+export function channel<In>(signal?: AbortSignal): Self<In> & Disposable {
   const mailbox = new Mailbox<In>({})
-  const sig = signal ?? new AbortController().signal
+  const controller = signal === undefined ? new AbortController() : undefined
+  const sig = signal ?? controller!.signal
   if (signal !== undefined) {
     if (signal.aborted) mailbox.close()
     else signal.addEventListener('abort', () => mailbox.close(), { once: true })
   }
-  return selfFor(mailbox, sig, (msg) => mailbox.push(msg))
+  return Object.assign(selfFor(mailbox, sig, (msg) => mailbox.push(msg)), {
+    [Symbol.dispose]: (): void => {
+      controller?.abort()
+      mailbox.close()
+    },
+  })
 }
 
 // ---------- ownership scope ----------
@@ -177,14 +184,34 @@ export function spawnProcess<T, In, A>(
   proc: Proc<T, In, A>,
   args: A,
   opts?: SpawnOpts<T>,
-  internal?: { onWatchers?: (count: number) => void },
+  internal?: { onWatchers?: (count: number) => void; onSettled?: () => void },
 ): Process<T | undefined, In> {
+  const mailboxBound = opts?.mailbox
+  if (mailboxBound !== undefined && (!Number.isInteger(mailboxBound) || mailboxBound < 0))
+    throw new Error('nonchalant: mailbox must be a non-negative integer')
+  const maxRestarts = opts?.maxRestarts
+  if (
+    maxRestarts !== undefined &&
+    maxRestarts !== Number.POSITIVE_INFINITY &&
+    (!Number.isInteger(maxRestarts) || maxRestarts < 0)
+  ) throw new Error('nonchalant: maxRestarts must be a non-negative integer or Infinity')
+
   const hasInitial = opts !== undefined && 'initial' in opts
+  let valueWatchers = 0
+  let metaWatchers = 0
+  const reportWatchers = (): void => internal?.onWatchers?.(valueWatchers + metaWatchers)
   const src = source<Json>(
     (hasInitial ? opts.initial : undefined) as unknown as Json,
-    internal?.onWatchers !== undefined ? { onWatchers: internal.onWatchers } : undefined,
+    internal?.onWatchers !== undefined
+      ? { onWatchers: (count) => { valueWatchers = count; reportWatchers() } }
+      : undefined,
   )
-  const meta = source<Meta>({ pending: true, stale: false, errored: false })
+  const meta = source<Meta>(
+    { pending: true, stale: false, errored: false },
+    internal?.onWatchers !== undefined
+      ? { onWatchers: (count) => { metaWatchers = count; reportWatchers() } }
+      : undefined,
+  )
   let m: Meta = { pending: true, stale: false, errored: false }
   const setMeta = (patch: Partial<Meta>): void => {
     const next = { ...m, ...patch }
@@ -287,6 +314,7 @@ export function spawnProcess<T, In, A>(
     )
     disposeChildren() // owned children die last (dispose order per DESIGN)
     if (parent !== null) parent.children.delete(core)
+    internal?.onSettled?.()
   }
 
   const disposeProcess = (): void => {
@@ -333,7 +361,7 @@ export function spawnProcess<T, In, A>(
       void src() // subtree dep: wakes on every yield
       if (hasValue) {
         const v = untracked(() => src()) as unknown as T
-        if (!emitted || v !== latest) {
+        if (!emitted || !Object.is(v, latest)) {
           latest = v
           emitted = true
           buffered = true

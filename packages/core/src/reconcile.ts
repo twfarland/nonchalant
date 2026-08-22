@@ -13,8 +13,11 @@ export type Op =
 
 export type Patch = Op[]
 
-const isRecord = (v: Json): v is { [key: string]: Json } =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isRecord = (v: unknown): v is { [key: string]: Json } => {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  const proto = Object.getPrototypeOf(v)
+  return proto === Object.prototype || proto === null
+}
 
 const escapeSegment = (k: string): string =>
   k.includes('~') || k.includes('/') ? k.replaceAll('~', '~0').replaceAll('/', '~1') : k
@@ -41,16 +44,16 @@ export function reconcile(prev: Json, next: Json): Patch {
 }
 
 function walk(prev: Json, next: Json, path: string, ops: Patch): void {
-  if (prev === next) return
+  if (Object.is(prev, next)) return
   if (Array.isArray(prev) && Array.isArray(next)) {
     // Trim the identity-shared prefix and suffix so a contiguous mid-array
     // insert or removal collapses to a single splice instead of per-index sets.
     const pLen = prev.length, nLen = next.length
     const minLen = Math.min(pLen, nLen)
     let start = 0
-    while (start < minLen && prev[start] === next[start]) start++
+    while (start < minLen && Object.is(prev[start], next[start])) start++
     let suffix = 0
-    while (suffix < minLen - start && prev[pLen - 1 - suffix] === next[nLen - 1 - suffix]) suffix++
+    while (suffix < minLen - start && Object.is(prev[pLen - 1 - suffix], next[nLen - 1 - suffix])) suffix++
     const pEnd = pLen - suffix, nEnd = nLen - suffix
     if (start === pEnd && start === nEnd) return
     if (start === pEnd) { ops.push(['splice', path, start, 0, next.slice(start, nEnd)]); return }
@@ -59,7 +62,7 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
     // and next coordinates here), then one splice for the length delta.
     const common = Math.min(pEnd, nEnd)
     for (let i = start; i < common; i++) {
-      if (prev[i] !== next[i]) walk(prev[i] as Json, next[i] as Json, `${path}/${i}`, ops)
+      if (!Object.is(prev[i], next[i])) walk(prev[i] as Json, next[i] as Json, `${path}/${i}`, ops)
     }
     if (nEnd > pEnd) ops.push(['splice', path, common, 0, next.slice(common, nEnd)])
     else if (pEnd > nEnd) ops.push(['splice', path, common, pEnd - common, []])
@@ -68,9 +71,9 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
   if (isRecord(prev) && isRecord(next)) {
     // Object.hasOwn, not `in`: `in` walks the prototype chain, so a key like
     // "toString" would find Object.prototype's and corrupt the diff
-    for (const k in prev) if (!Object.hasOwn(next, k)) ops.push(['del', `${path}/${escapeSegment(k)}`])
-    for (const k in next) {
-      if (prev[k] !== next[k]) {
+    for (const k of Object.keys(prev)) if (!Object.hasOwn(next, k)) ops.push(['del', `${path}/${escapeSegment(k)}`])
+    for (const k of Object.keys(next)) {
+      if (!Object.is(prev[k], next[k])) {
         if (Object.hasOwn(prev, k)) walk(prev[k] as Json, next[k] as Json, `${path}/${escapeSegment(k)}`, ops)
         else ops.push(['set', `${path}/${escapeSegment(k)}`, next[k] as Json])
       }
@@ -82,16 +85,13 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
 
 // ---------- apply ----------
 
-const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype'])
-
-/** Internal (used by track.ts): decode a pointer into segments, rejecting forbidden keys. */
+/** Internal (used by track.ts): decode an RFC 6901 pointer into segments. */
 export function parsePath(path: string): string[] {
   if (path === '') return []
   if (path[0] !== '/') throw new Error(`applyPatch: path must start with "/" (${JSON.stringify(path)})`)
   const keys = path.slice(1).split('/')
   for (let i = 0; i < keys.length; i++) {
     const k = unescapeSegment(keys[i] as string)
-    if (FORBIDDEN.has(k)) throw new Error(`applyPatch: illegal path segment ${JSON.stringify(k)}`)
     keys[i] = k
   }
   return keys
@@ -106,6 +106,7 @@ export function applyPatch(doc: Json, patch: Patch): Json {
       if (op[0] === 'set') { root = op[2]; continue }
       if (op[0] === 'splice') {
         if (!Array.isArray(root)) throw new Error('applyPatch: splice target is not an array')
+        assertSplice(root, op)
         const copy = root.slice()
         copy.splice(op[2], op[3], ...op[4])
         root = copy
@@ -124,7 +125,7 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
 
   if (Array.isArray(node)) {
     const idx = Number(k)
-    if (!Number.isInteger(idx) || idx < 0 || idx > node.length)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= node.length)
       throw new Error(`applyPatch: bad array index ${JSON.stringify(k)}`)
     const copy = node.slice()
     copy[idx] = last ? applyLeaf(node[idx] as Json, op) : applyAt(node[idx] as Json, keys, i + 1, op)
@@ -133,9 +134,13 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
   }
   if (isRecord(node)) {
     const copy: { [key: string]: Json } = { ...node }
-    if (last && op[0] === 'del') { delete copy[k]; return copy }
+    if (last && op[0] === 'del') {
+      if (!Object.hasOwn(node, k)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
+      delete copy[k]
+      return copy
+    }
     if (!last && !Object.hasOwn(node, k)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
-    copy[k] = last ? applyLeaf(node[k] as Json, op) : applyAt(node[k] as Json, keys, i + 1, op)
+    setOwn(copy, k, last ? applyLeaf(node[k] as Json, op) : applyAt(node[k] as Json, keys, i + 1, op))
     return copy
   }
   throw new Error('applyPatch: path descends into a non-container')
@@ -146,10 +151,33 @@ function applyLeaf(current: Json, op: Op): Json {
     case 'set': return op[2]
     case 'splice': {
       if (!Array.isArray(current)) throw new Error('applyPatch: splice target is not an array')
+      assertSplice(current, op)
       const copy = current.slice()
       copy.splice(op[2], op[3], ...op[4])
       return copy
     }
     case 'del': return current // handled by the container; unreachable for valid patches
   }
+}
+
+function assertSplice(target: Json[], op: Extract<Op, ['splice', ...unknown[]]>): void {
+  const start = op[2]
+  const remove = op[3]
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(remove) ||
+    start < 0 ||
+    remove < 0 ||
+    start > target.length ||
+    remove > target.length - start
+  ) throw new Error(`applyPatch: bad splice range (${start}, ${remove}) for length ${target.length}`)
+}
+
+function setOwn(target: { [key: string]: Json }, key: string, value: Json): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  })
 }
