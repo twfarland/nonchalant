@@ -15,6 +15,7 @@ are self-contained — no backends required.
 | `drag/` | a gesture with a lifetime: born on pointerdown, dead on pointerup |
 | `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
+| `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
 | `shared-cart/` | **the pitch demo** — state moves tab → server by changing one line |
 | `mario/` | ⏱ the golden demo: 1 view yield, ≤ 3 DOM writes/frame, CI-asserted |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
@@ -35,6 +36,10 @@ Notes:
   they stay in lockstep.
 - **multi-tab** — open several tabs of the same page; one automatically
   becomes the host. Close it and the job moves to another tab.
+- **chat** — run `pnpm chat-server`, then open the page in several tabs (or
+  browsers). Kill the server mid-conversation to watch stale reads and the
+  reconnect; note the room process in `chat/shared.ts` has no idea it's a
+  chat server.
 - **shared-cart** — works standalone. For the server version: run
   `pnpm cart-server` in another terminal, then swap the one commented line at
   the top of `shared-cart/main.ts`.

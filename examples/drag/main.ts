@@ -41,13 +41,12 @@ const startDrag = (down: PointerEvent): void => {
 function App(): VNode {
   return div({ class: 'card' },
     p({ class: 'muted' }, 'Drag the box. Each drag is a process: born on pointerdown, dead on pointerup.'),
-    div({
-      class: 'drag-box',
-      style: () =>
-        `transform: translate(${pos().x}px, ${pos().y}px);` +
-        (dragging() ? ' box-shadow: 0 6px 18px rgba(0,0,0,0.25);' : ''),
-      onpointerdown: startDrag,
-    }, () => (dragging() ? 'wheee' : 'drag me')))
+    div({ class: 'drag-stage' },
+      div({
+        class: () => `drag-box${dragging() ? ' dragging' : ''}`,
+        style: () => `transform: translate(${pos().x}px, ${pos().y}px)`,
+        onpointerdown: startDrag,
+      }, () => (dragging() ? 'wheee' : 'drag me'))))
 }
 
 mount(document.getElementById('app')!, App())

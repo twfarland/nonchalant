@@ -114,6 +114,14 @@ tab connects as a client. Close the hosting tab and the lock — and the hosting
 job — moves to another. The protocol never assumed a server, just a transport.
 `examples/multi-tab`.
 
+## A chat room — the wire doing what it's for
+
+A room is a process that reduces posts into a capped history. Host it with
+`serve`, look it up by name from every tab, and the whole client-server chat
+is the same code you'd write for local state — posts are casts, history
+arrives as patches, a dead server shows as `stale: true` until the
+reconnecting transport finds it again. `examples/chat`.
+
 ## The one-line move
 
 Local registry → `connect(webSocketTransport(url))`. Nothing else changes.

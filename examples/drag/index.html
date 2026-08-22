@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Drag (a gesture with a lifetime) — nonchalant</title>
 <link rel="stylesheet" href="../shared.css">
+<style>
+  .drag-stage { position: relative; height: 320px; }
+  .drag-box { position: absolute; top: 0; left: 0; width: 96px; height: 96px;
+    border-radius: 10px; background: var(--accent); color: #fff;
+    display: grid; place-items: center; cursor: grab;
+    user-select: none; touch-action: none; z-index: 2; }
+  .drag-box.dragging { cursor: grabbing; box-shadow: 0 8px 22px rgba(0,0,0,0.3); }
+</style>
 </head>
 <body>
 <h1>Drag (a gesture with a lifetime)</h1>

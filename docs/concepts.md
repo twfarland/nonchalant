@@ -49,6 +49,12 @@ attachment happens during the synchronous part of each step — spawn before
 you `await`, or the child ends up unowned. Registry processes are deliberately
 unowned: shared state shouldn't die with whichever caller happened to start it.
 
+One consequence worth internalizing: **a process that returns is over**, and
+its children are disposed with it. A view process that spawns page-local state
+must therefore stay alive after its yield — idle on the mailbox
+(`for await (const _ of self) void _`) and let whoever disposes you end the
+wait. `examples/router/about.ts` shows the pattern.
+
 ## derive
 
 `derive(fn)` — a memoised computation with the full Process face (readable,

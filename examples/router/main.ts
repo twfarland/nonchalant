@@ -11,8 +11,9 @@ import { a, div, h2, nav, p, span } from '@nonchalant/dom/tags'
 type Route = 'home' | 'about'
 const parse = (): Route => (location.hash === '#/about' ? 'about' : 'home')
 
-const HomeView: Proc<VNode, never, void> = async function* () {
+const HomeView: Proc<VNode, never, void> = async function* (self) {
   yield div({}, h2({}, 'Home'), p({}, 'Eagerly loaded.'))
+  for await (const _ of self) void _ // stay alive until the router disposes us
 }
 
 const Spinner = (): VNode => p({ class: 'muted' }, 'loading…')

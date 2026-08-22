@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat (client-server over the wire) — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .chat-log { list-style: none; margin: 0 0 0.75rem; padding: 0.5rem;
+    height: 280px; overflow-y: auto; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--paper); }
+  .chat-log li { padding: 0.15rem 0; }
+  .chat-log .from { font-weight: 600; color: var(--accent); margin-right: 0.4rem; }
+  .chat-form { display: flex; }
+  .chat-form input[name='text'] { flex: 1; }
+</style>
+</head>
+<body>
+<h1>Chat (client-server over the wire)</h1>
+<div id="app"></div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>
