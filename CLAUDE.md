@@ -45,7 +45,53 @@ the model; `README.md` is the front page.
   over "at least" where the mechanism promises exactness (wake counts, DOM
   writes, re-eval counts).
 - Docs are plain and concrete; claims about performance or granularity must
-  point at the test that enforces them.
+  point at the test that enforces them. Every code sample anywhere — docs,
+  READMEs, demo-page explainers — is TypeScript, never untyped JS.
+- Don't reference a concept before it's introduced (docs and READMEs read top
+  to bottom).
+
+## Writing nonchalant code (the style guide)
+
+State:
+- One process owns one piece of state. Its message type is a discriminated
+  union (casts, plus `Call<Req, Res>` where the sender needs an answer); the
+  generator body is the reducer; one yield per state change.
+- Immutable updates, always: `let` + spread, sharing everything that didn't
+  change. That sharing is what makes diffs O(changed).
+- Keep computation out of the loop: pure helpers (`step`, `visible`) in their
+  own exports, testable as plain functions.
+- Time and dependencies arrive from outside: ticks and clocks as messages,
+  APIs as args, `self.signal` threaded into every fetch. This is what makes
+  tests deterministic.
+- Spawn before awaiting (ambient ownership only covers the synchronous window)
+  and remember a process that returns is over — a view process that owns state
+  idles on its mailbox until disposed.
+
+Views:
+- Break substantial views into small named sub-view functions — one component,
+  one concern — composed in an `App()` at the bottom. Components take their
+  process(es) as parameters.
+- Blank lines between substantial blocks; `// ---------- section ----------`
+  dividers between a file's regions (state / components / the app).
+- Values flow through bindings (thunks and processes in the tree); the view
+  function runs once. Re-yield only for structural change. Keyed lists get
+  stable keys.
+- Reads outside tracked contexts are snapshots — subscribe deliberately
+  (bindings, `derive`, `effect`, or iteration), never by accident.
+
+Structure:
+- Separate the schema/state module from the view module when either is
+  substantial (`todos.ts` + `main.ts`, `shop.ts` + `main.ts`) — the state
+  module is where the headless tests attach.
+- Shared or cached state goes through a registry by name; widget state is a
+  closed-over spawn. Per-row processes in big lists are the documented
+  anti-pattern.
+- New abstractions must dissolve at least two existing problems; otherwise
+  write a recipe (`docs/recipes.md`). Operators, routers, and query caches
+  are userland — keep them looking like it.
+- Example pages carry a "How it works" aside: short prose plus the
+  load-bearing code, generated with the plain highlighter (keywords, strings,
+  comments — nothing fancier).
 
 ## Map
 - `packages/core` — types (`types.ts`), reconcile/patches, the reactive graph

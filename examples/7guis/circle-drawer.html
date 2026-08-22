@@ -7,19 +7,23 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>7GUIs — Circle drawer</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>SVG through <code>h()</code> — the namespace is inferred down the tree. Undo/redo works on snapshots, and a whole radius drag collapses into one undo step: the first resize remembers the pre-drag state, and releasing the slider commits it.</p>
-<pre><code>} else if (msg.type === 'resize') {
-  if (dragBase === null) dragBase = circles          // remember where the drag began
-  circles = circles.map((c) =&gt; c.id === msg.id ? { ...c, r: msg.r } : c)
-} else if (msg.type === 'commit') {
-  if (dragBase !== null &amp;&amp; dragBase !== circles) snapshot(dragBase)
-  dragBase = null                                     // the drag is one undo step
+<pre><code>} <span class="k">else</span> <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'resize'</span>) {
+  <span class="k">if</span> (dragBase === <span class="k">null</span>) dragBase = circles   <span class="c">// remember where the drag began</span>
+  circles = circles.map((c) =&gt; (c.id === msg.id ? { ...c, r: msg.r } : c))
+} <span class="k">else</span> <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'commit'</span>) {
+  <span class="k">if</span> (dragBase !== <span class="k">null</span> &amp;&amp; dragBase !== circles) snapshot(dragBase)
+  dragBase = <span class="k">null</span>                             <span class="c">// the whole drag is one undo step</span>
 }</code></pre>
-</section>
+</aside>
+</div>
 <script type="module" src="./circle-drawer.ts"></script>
 </body>
 </html>

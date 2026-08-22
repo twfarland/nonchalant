@@ -7,12 +7,16 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>7GUIs — Temperature converter</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>Two cells, synced both ways by their input handlers; an unparseable value updates its own field and leaves the other alone. No derived-state framework needed for a two-way constraint — it's two sends.</p>
-</section>
+</aside>
+</div>
 <script type="module" src="./temperature.ts"></script>
 </body>
 </html>

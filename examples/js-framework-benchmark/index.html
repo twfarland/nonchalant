@@ -7,16 +7,22 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>js-framework-benchmark</h1>
 <div id="main"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>The standard krausest benchmark table: one state process, one keyed thunk hole. Selection is its own process, so selecting a row wakes exactly two rows — the old and the new — not the table.</p>
-<pre><code>tr({ key: row.id, class: () =&gt; selected() === row.id ? 'danger' : '' },
-  td({ class: 'col-md-1' }, String(row.id)),
-  td({ class: 'col-md-4' }, a({ onclick: () =&gt; selected.send(row.id) }, row.label)),
-  ...)</code></pre>
-</section>
+<pre><code>tr({ key: row.id, class: () =&gt; (selected() === row.id ? <span class="s">'danger'</span> : <span class="s">''</span>) },
+  td({ class: <span class="s">'col-md-1'</span> }, String(row.id)),
+  td({ class: <span class="s">'col-md-4'</span> },
+    a({ onclick: () =&gt; selected.send(row.id) }, row.label)),
+  <span class="c">// ...</span>
+)</code></pre>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

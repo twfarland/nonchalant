@@ -7,15 +7,19 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Shared cart (the pitch demo)</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>The pitch. The cart process never knew which side of the wire it runs on, so moving its state to a server is choosing a different registry — one line:</p>
-<pre><code>const shop = registry({ cart: define(cart) })                             // this tab
-// const shop = connect&lt;Shop&gt;(webSocketTransport('ws://127.0.0.1:4321/'))  // the server</code></pre>
+<pre><code><span class="k">const</span> shop = registry({ cart: define(cart) })                             <span class="c">// this tab</span>
+<span class="c">// const shop = connect&lt;Shop&gt;(webSocketTransport('ws://127.0.0.1:4321/'))  // the server</span></code></pre>
 <p>Same messages, same <code>ask()</code>, same fine-grained updates either way. Run <code>pnpm cart-server</code>, flip the line, and a disconnect leaves readers on the last value with <code>stale</code> set until the transport finds the server again.</p>
-</section>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

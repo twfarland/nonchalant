@@ -15,19 +15,23 @@
 </style>
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Drag (a gesture with a lifetime)</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>Each drag is a process: spawned on pointerdown, yielding offsets, disposed on pointerup. The gesture's whole footprint — its subscription included — ends when it does; nothing about it is global.</p>
-<pre><code>const gesture = spawn(async function* (self) {
-  for await (const move of self)
-    yield { dx: move.clientX - down.clientX, dy: move.clientY - down.clientY }
-}, undefined)
+<pre><code><span class="k">const</span> gesture = spawn(<span class="k">async</span> <span class="k">function</span>* (self: Self&lt;PointerEvent&gt;) {
+  <span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> move <span class="k">of</span> self)
+    <span class="k">yield</span> { dx: move.clientX - down.clientX, dy: move.clientY - down.clientY }
+}, <span class="k">undefined</span>)
 
-// pointermove: gesture.send(e)
-// pointerup:   gesture[Symbol.dispose]()   — the gesture is over</code></pre>
-</section>
+<span class="c">// pointermove: gesture.send(e)</span>
+<span class="c">// pointerup:   gesture[Symbol.dispose]()   — the gesture is over</span></code></pre>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

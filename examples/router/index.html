@@ -7,24 +7,28 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Router (+code splitting)</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>Built on <code>examples/lib/router.ts</code> (~40 lines of userland): the route is a process, <code>link()</code> returns spreadable anchor attrs, and navigation uses <code>location.replace</code> by default — browsing around doesn't pile up back-button history.</p>
 <p>Pages are view processes. Navigating disposes the outgoing page — its whole scope, page-local state included — yields a loading state, awaits the <code>import()</code> (that's the code splitting), and yields the new page.</p>
-<pre><code>for await (const route of router.route) {
-  current?.[Symbol.dispose]()          // the outgoing page's scope ends here
-  if (route === 'about') {
-    yield Shell(Spinner())             // interim yield: the loading state
-    const { AboutView } = await import('./about.ts')
-    current = spawn(AboutView, undefined)
-  } else {
-    current = spawn(HomeView, undefined)
+<pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> route <span class="k">of</span> router.route) {
+  current?.[Symbol.dispose]()          <span class="c">// the outgoing page's scope ends here</span>
+  <span class="k">if</span> (route === <span class="s">'about'</span>) {
+    <span class="k">yield</span> Shell(Spinner())             <span class="c">// interim yield: the loading state</span>
+    <span class="k">const</span> { AboutView } = <span class="k">await</span> <span class="k">import</span>(<span class="s">'./about.ts'</span>)
+    current = spawn(AboutView, <span class="k">undefined</span>)
+  } <span class="k">else</span> {
+    current = spawn(HomeView, <span class="k">undefined</span>)
   }
-  yield Shell(current)                 // a view process is a valid slot
+  <span class="k">yield</span> Shell(current)                 <span class="c">// a view process is a valid slot</span>
 }</code></pre>
-</section>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

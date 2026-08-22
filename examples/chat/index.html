@@ -18,24 +18,28 @@
 </style>
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Chat (client-server over the wire)</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>Each room is one process on the server, spawned the first time anyone looks its name up and evicted after an hour idle. A suspended generator is kilobytes, so one node process holds thousands of rooms — the registry, not your code, is the room lifecycle.</p>
-<pre><code>export const room = async function* (self) {
-  let lines = []
-  yield { lines }
-  for await (const msg of self) {
-    lines = [...lines.slice(-49), { id: nextId++, from: msg.from, text: msg.text }]
-    yield { lines }
+<pre><code><span class="k">export</span> <span class="k">const</span> room: Proc&lt;RoomState, RoomMsg, { name: string }&gt; = <span class="k">async</span> <span class="k">function</span>* (self) {
+  <span class="k">let</span> lines: ChatLine[] = []
+  <span class="k">yield</span> { lines }
+  <span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+    lines = [...lines.slice(-49), { id: nextId++, <span class="k">from</span>: msg.<span class="k">from</span>, text: msg.text }]
+    <span class="k">yield</span> { lines }
   }
 }
 
-// every tab, any room:
-conn.lookup('room', { name })   // same name, same process, at any distance</code></pre>
+<span class="c">// every tab, any room:</span>
+conn.lookup(<span class="s">'room'</span>, { name })   <span class="c">// same name, same process, at any distance</span></code></pre>
 <p>Posts are casts; history arrives as patches. Kill the server mid-conversation: readers keep the last history with <code>stale</code> set, and the reconnecting transport re-looks-up when it returns.</p>
-</section>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

@@ -7,14 +7,19 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>7GUIs — Flight booker</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>The constraints are derives; the button's <code>disabled</code> is a binding on the final one. Invalid dates tint their own field via a style binding.</p>
-<pre><code>const bookable = derive(() =&gt;
-  departOk() &amp;&amp; backOk() &amp;&amp; (mode() === 'one-way flight' || parse(back()) &gt;= parse(depart())))</code></pre>
-</section>
+<pre><code><span class="k">const</span> bookable = derive(() =&gt;
+  departOk() &amp;&amp; backOk() &amp;&amp;
+  (mode() === <span class="s">'one-way flight'</span> || parse(back()) &gt;= parse(depart())))</code></pre>
+</aside>
+</div>
 <script type="module" src="./flight-booker.ts"></script>
 </body>
 </html>

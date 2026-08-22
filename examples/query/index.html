@@ -13,9 +13,12 @@
 </style>
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Query (server state the process way)</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>TanStack Query's client — a cache object, keyed fetchers, an invalidation graph — exists because caches are dumb stores that must be told what went stale. A process owns its data, so the feature list falls out of the primitives:</p>
 <ul>
@@ -26,20 +29,22 @@
 <li><strong>invalidation</strong> — an ordinary typed message, sent to the one place that actually depends on the change</li>
 </ul>
 <p>And mutations are an <code>ask()</code> on the query itself — write-through. It performs the write, replies, and yields the new state: no refetch round-trip, no cache-key dependency graph.</p>
-<pre><code>user: define(async function* (self, { id }) {
-  yield await getUser(id)
-  for await (const msg of self) {
-    if (msg.type === 'refresh') yield await getUser(id)
-    else {
-      const updated = await renameUser(id, msg.name)  // a throw rejects the ask
+<pre><code>user: define&lt;User, UserMsg, { id: number }&gt;(<span class="k">async</span> <span class="k">function</span>* (self, { id }) {
+  <span class="k">yield</span> <span class="k">await</span> getUser(id)
+  <span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+    <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'refresh'</span>) {
+      <span class="k">yield</span> <span class="k">await</span> getUser(id)
+    } <span class="k">else</span> {
+      <span class="k">const</span> updated = <span class="k">await</span> renameUser(id, msg.name)  <span class="c">// a throw rejects the ask</span>
       msg.reply(updated)
-      yield updated                                   // write-through
-      shop.lookup('users').send({ type: 'refresh' })  // the one explicit ripple
+      <span class="k">yield</span> updated                                   <span class="c">// write-through</span>
+      shop.lookup(<span class="s">'users'</span>).send({ <span class="k">type</span>: <span class="s">'refresh'</span> })  <span class="c">// the one explicit ripple</span>
     }
   }
-}, { evict: 60_000, restart: 'on-crash' })</code></pre>
+}, { evict: 60_000, restart: <span class="s">'on-crash'</span> })</code></pre>
 <p>A failed write rejects the <code>ask</code> and the restart policy re-syncs from the server automatically — try the empty name. The schema lives in <code>shop.ts</code> and is tested headlessly in <code>shop.test.ts</code>.</p>
-</section>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

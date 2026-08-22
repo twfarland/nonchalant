@@ -7,21 +7,29 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>TodoMVC</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>One process owns the state: messages in, one immutable yield per message. The generator body is the reducer — no actions, no dispatch table, just a loop.</p>
-<pre><code>for await (const msg of self) {
-  switch (msg.type) {
-    case 'add':    todos = [...todos, { id: nextId++, title: msg.title, done: false }]; break
-    case 'toggle': todos = todos.map((t) =&gt; t.id === msg.id ? { ...t, done: !t.done } : t); break
-    // destroy / toggle-all / clear-completed / filter ...
+<pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+  <span class="k">switch</span> (msg.<span class="k">type</span>) {
+    <span class="k">case</span> <span class="s">'add'</span>:
+      todos = [...todos, { id: nextId++, title: msg.title, done: <span class="k">false</span> }]
+      <span class="k">break</span>
+    <span class="k">case</span> <span class="s">'toggle'</span>:
+      todos = todos.map((t) =&gt; (t.id === msg.id ? { ...t, done: !t.done } : t))
+      <span class="k">break</span>
+    <span class="c">// destroy / toggle-all / clear-completed / filter ...</span>
   }
-  yield { todos, filter }
+  <span class="k">yield</span> { todos, filter }
 }</code></pre>
-<p>The list is a keyed thunk hole: toggling a todo patches exactly one row; every other node sleeps. The process lives in <code>todos.ts</code>, where its tests drive the generator directly — message in, yield out — with no runtime or DOM (see <code>docs/testing.md</code>).</p>
-</section>
+<p>The list is a keyed thunk hole: toggling a todo patches exactly one row; every other node sleeps. The process lives in <code>todos.ts</code>, where its tests drive the generator directly — message in, yield out — with no runtime and no DOM (see <code>docs/testing.md</code>).</p>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

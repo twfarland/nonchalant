@@ -39,14 +39,67 @@ mount(document.getElementById('app')!, div({},
   every yield is diffed structurally, and readers wake only if a path they
   actually read changed. No proxies on your writes, no annotations, no build
   step.
-- **State has an address.** `lookup('session', { userId })` is get-or-spawn: the
-  first caller starts the process, everyone else shares it. The same operation
-  is dependency injection, a query cache (with refcounting and idle eviction),
-  and remote addressing.
+
+```ts
+s = { ...s, total: s.total + item.price }   // an ordinary immutable update
+yield s                                     // diffed → only /total readers wake;
+                                            // a binding on items[3].done sleeps through it
+```
+
+- **The mailbox does what operators used to.** Backpressure is the default
+  (a double-submit queues instead of racing); `latest()` is the whole
+  debounce/race/cancel story; the abort signal threads into your fetches.
+
+```ts
+for await (const { q } of self.latest()) {          // stale keystrokes never even arrive
+  results = await api.search(q, { signal: self.signal })
+  yield { q, results }
+}
+```
+
+- **Request/response is typed end to end.** A message that expects an answer
+  is a `Call`; `ask()` returns the reply as a promise and rejects if the
+  process crashed. The compiler refuses to `send` a call or `ask` a cast.
+
+```ts
+type CartMsg =
+  | { type: 'add'; item: Item }                                   // a cast
+  | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>  // a call
+
+const res = await cart.ask({ type: 'checkout' })   // res is typed; crash = rejection
+```
+
+- **State has an address.** `lookup` is get-or-spawn: the first caller starts
+  the process, everyone else shares it. One operation is dependency injection,
+  a query cache, and remote addressing — TanStack's core is a definition with
+  an evict time.
+
+```ts
+const shop = registry({ user: define(userProc, { evict: 30_000 }) })
+const u = shop.lookup('user', { id: 1 })   // deduped, shared, refcounted, idle-evicted
+u.pending; u.error; u()                    // loading and failure are the process face
+```
+
 - **Location transparency, for real.** `connect(url)` returns the same
   registry interface. The pitch demo (`examples/shared-cart`) moves state from
   the tab to a server by changing one line — the process code doesn't change,
   because it never knew which side of the wire it was on.
+
+```ts
+const shop = registry({ cart: define(cart) })                  // state lives in this tab
+// const shop = connect<Shop>(webSocketTransport('wss://…'))   // …or on a server. Same cart.
+```
+
+- **Processes test as transcripts.** `Self` is an interface and `channel()`
+  implements it, so a process tests as the plain generator it is — no
+  runtime, no fake timers, no DOM ([docs/testing.md](docs/testing.md)).
+
+```ts
+const self = channel<Msg>()                  // a scripted mailbox
+self.send({ type: 'add', title: 'milk' })
+const it = todosProc(self, undefined)
+expect((await it.next()).value.todos).toHaveLength(1)
+```
 
 ```mermaid
 flowchart LR
@@ -75,6 +128,7 @@ flowchart LR
 | **React** | functions, re-run every update | hooks | re-render + vdom diff | no |
 | **Solid** | functions, run once | signals / stores | fine-grained graph | no |
 | **Svelte 5** | compiled components | `$state` runes | compiler-injected updates | no |
+| **Crank** | generator components + JSX | plain locals | re-render + vdom diff | no |
 | **LiveView** | server templates | server assigns | HTML diffs over the wire | server-only |
 | **nonchalant** | generator processes | plain `let` locals | yield → diff → wake by path | yes — a name resolves at any distance |
 
@@ -118,6 +172,10 @@ pnpm check     # strict TypeScript across packages and examples
 - [alien-signals](https://github.com/stackblitz/alien-signals) (Johnson Chu,
   MIT) — the push–pull propagation core is a faithful port; the path-precision
   layer sits on top of it, untouched.
+- [Crank.js](https://crank.js.org) — a major influence: the proof that
+  generator components with plain-local state feel right. Nonchalant keeps the
+  generator and swaps the vdom re-render for fine-grained bindings, a mailbox,
+  and the wire.
 - **Erlang/OTP** — mailboxes, casts vs calls, restart-from-init-args,
   supervision by ownership, and the registry-of-named-processes idea.
 - **The Elm architecture** — the model/update/view lineage several of the

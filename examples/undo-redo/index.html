@@ -7,27 +7,42 @@
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Undo/redo</h1>
 <div id="app"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>A process is a function, so middleware is function composition — no store enhancers, no plugin API. The wrapper hands the inner process a private mailbox (<code>channel</code>) and owns the history itself. The same shape gives logging, persistence, and replay.</p>
-<pre><code>function withHistory(proc, depth = 100) {
-  return async function* (self, args) {
-    const inner = channel(self.signal)   // a private Self for the wrapped proc
-    const it = proc(inner, args)
-    let current = (await it.next()).value
-    const past = [], future = []
-    yield current
-    for await (const msg of self) {
-      if (msg.type === 'undo' &amp;&amp; past.length) { future.push(current); current = past.pop() }
-      else if (msg.type === 'redo' &amp;&amp; future.length) { past.push(current); current = future.pop() }
-      else { past.push(current); inner.send(msg); current = (await it.next()).value }
-      yield current
+<pre><code><span class="k">type</span> Hist = { <span class="k">type</span>: <span class="s">'undo'</span> } | { <span class="k">type</span>: <span class="s">'redo'</span> }
+
+<span class="k">function</span> withHistory&lt;T, In, A&gt;(proc: Proc&lt;T, In, A&gt;, depth = 100): Proc&lt;T, In | Hist, A&gt; {
+  <span class="k">return</span> <span class="k">async</span> <span class="k">function</span>* (self, args) {
+    <span class="k">const</span> inner = channel&lt;In&gt;(self.signal)   <span class="c">// a private Self for the wrapped proc</span>
+    <span class="k">const</span> it = proc(inner, args)
+    <span class="k">let</span> current = (<span class="k">await</span> it.next()).value <span class="k">as</span> T
+    <span class="k">const</span> past: T[] = []
+    <span class="k">const</span> future: T[] = []
+    <span class="k">yield</span> current
+    <span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+      <span class="k">if</span> ((msg <span class="k">as</span> Hist).<span class="k">type</span> === <span class="s">'undo'</span> &amp;&amp; past.length &gt; 0) {
+        future.push(current)
+        current = past.pop() <span class="k">as</span> T
+      } <span class="k">else</span> <span class="k">if</span> ((msg <span class="k">as</span> Hist).<span class="k">type</span> === <span class="s">'redo'</span> &amp;&amp; future.length &gt; 0) {
+        past.push(current)
+        current = future.pop() <span class="k">as</span> T
+      } <span class="k">else</span> {
+        past.push(current)
+        inner.send(msg <span class="k">as</span> In)
+        current = (<span class="k">await</span> it.next()).value <span class="k">as</span> T
+      }
+      <span class="k">yield</span> current
     }
   }
 }</code></pre>
-</section>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

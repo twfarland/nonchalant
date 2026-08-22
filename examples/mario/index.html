@@ -11,21 +11,25 @@
 </style>
 </head>
 <body>
+<div class="split">
+<main class="demo">
 <h1>Mario <span class="muted">— arrow keys to walk, up to jump</span></h1>
 <div id="stage"></div>
-<section class="explain">
+</main>
+<aside class="explain">
 <h2>How it works</h2>
 <p>The physics is verbatim from the classic Elm-architecture demo. The input handling is the point: arrows are <em>state</em> inside the process and only ticks step the world — holding a key down re-sends the same arrows and moves nothing, so the classic key-repeat double-step cannot happen (it's regression-tested).</p>
-<pre><code>for await (const msg of self) {
-  if (msg.type === 'arrows') {
-    arrows = { x: msg.x, y: msg.y }     // input is state, not a step
-  } else {
-    m = step(msg.delta, arrows, m)      // only ticks move the world
-    yield m
+<pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+  <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'arrows'</span>) {
+    arrows = { x: msg.x, y: msg.y }     <span class="c">// input is state, not a step</span>
+  } <span class="k">else</span> {
+    m = step(msg.delta, arrows, m)      <span class="c">// only ticks move the world</span>
+    <span class="k">yield</span> m
   }
 }</code></pre>
 <p>The view yields <strong>once</strong>; two attribute bindings (position style, sprite src) carry every frame. CI asserts the budgets: one view yield total, at most 3 DOM writes per frame, zero node churn — <code>mario.golden.test.ts</code>.</p>
-</section>
+</aside>
+</div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>
