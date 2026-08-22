@@ -1,15 +1,14 @@
-// Mario — ported from ../sprezzatura-acto-mario (the golden demo, M8).
-// Physics is verbatim from the original. The architecture is not: in the old
-// stack, the input signal fired on BOTH animation frames and arrow events
-// (acto's map was combineLatest with holes), so key-repeat double-stepped the
-// physics. Here arrows are plain state inside the process and only `tick`
-// steps the world — the bug is impossible by construction, and the golden
-// test asserts it.
+// Mario — the golden demo, ported from the classic Elm-architecture example.
+// The physics is verbatim. The architecture matters: in signal libraries where
+// input events and animation frames merge into one stream, holding a key down
+// steps the physics twice per frame. Here arrows are plain state inside the
+// process and only `tick` steps the world — that bug is impossible by
+// construction, and the golden test asserts it.
 //
 // The view is a process that yields ONCE: a tree whose holes are bindings.
 // Movement flows through two attribute bindings (style, and src on
 // walk/jump/stand transitions); the generator never resumes. Frame-rate
-// yields, frame-sized state (five numbers) — per docs/DESIGN.md guidance.
+// yields want frame-sized state — Mario is five numbers.
 
 import type { Proc, Process, VNode } from '@nonchalant/core'
 import { div, img } from '@nonchalant/dom/tags'

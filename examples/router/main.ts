@@ -22,10 +22,10 @@ const router: Proc<Route, Route, void> = async function* (self) {
 
 function App(): VNode {
   const route = spawn(router, undefined, { initial: parse() })
-  return div({},
+  return div({ class: 'card' },
     nav({},
       a({ href: '#/' }, 'Home'),
-      ' ',
+      ' · ',
       a({ href: '#/about' }, 'About')),
     // the code-split point: About's module loads on first navigation
     div({ class: 'page' }, () =>

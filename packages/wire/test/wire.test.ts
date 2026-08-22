@@ -176,6 +176,31 @@ describe('connect / expose end to end', () => {
 
 describe('broadcast channel transport', () => {
   it.skipIf(typeof globalThis.BroadcastChannel === 'undefined')(
+    'a late host announces and earlier clients re-look-up',
+    async () => {
+      const name = `nc-test-${Math.random().toString(36).slice(2)}`
+      const clientT = broadcastChannelTransport(name)
+      const conn = connect<Shop>(clientT)
+      const rcart = conn.lookup('cart') // nobody is hosting yet
+      await tick()
+      expect(rcart()).toBeUndefined()
+
+      const hostT = broadcastChannelTransport(name)
+      const reg = registry({ cart: define(cart) })
+      const stop = expose(reg, hostT)
+      hostT.announce() // the fresh host tells the bus it is serving
+      await until(() => rcart() !== undefined)
+      expect(rcart()?.total).toBe(0)
+
+      conn.close()
+      stop()
+      hostT.close()
+      clientT.close()
+      reg.evict('cart')
+    },
+  )
+
+  it.skipIf(typeof globalThis.BroadcastChannel === 'undefined')(
     'host and client sync over a bus',
     async () => {
       const name = `nc-test-${Math.random().toString(36).slice(2)}`

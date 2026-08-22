@@ -1,6 +1,6 @@
-// Counter — transient state as a closed-over process (docs/DESIGN.md §07).
-// `cell` is an anonymous spawn owned by the enclosing scope; a Process is
-// already a valid slot, so `span({}, count)` is a live binding.
+// Counter — the smallest possible example. `cell` holds transient state as a
+// closed-over process, and a Process is already a valid slot, so
+// `span({}, count)` is a live binding.
 
 import { cell } from '@nonchalant/core'
 import type { VNode } from '@nonchalant/core'
@@ -10,9 +10,9 @@ import { button, div, span } from '@nonchalant/dom/tags'
 function Counter(): VNode {
   const count = cell(0)
   return div(
-    { class: 'counter' },
+    { class: 'card' },
     button({ onclick: () => count.send(count() - 1) }, '−'),
-    span({}, count),
+    span({ class: 'value' }, count),
     button({ onclick: () => count.send(count() + 1) }, '+'),
   )
 }

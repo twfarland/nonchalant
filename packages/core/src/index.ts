@@ -1,6 +1,7 @@
-// @nonchalant/core — public surface. Types are final (draft 3, verified);
-// runtime implemented through M4 (reconcile, graph, processes, generic mount).
-// The registry (M5) and wire (M6) land per docs/ROADMAP.md.
+// @nonchalant/core — the public surface: the Process type and its runtime
+// (spawn/derive/cell/channel), reconcile, the registry, and the generic mount.
+// The type surface is verified by test/types.check.ts, compiled under strict
+// TypeScript with load-bearing @ts-expect-error negative cases.
 
 export type {
   Call, Plain, Requests, Res,

@@ -79,18 +79,29 @@ interface BroadcastChannelLike {
   addEventListener(type: string, fn: (ev: { data?: unknown }) => void): void
 }
 
+// A host that (re)starts on a bus posts this so peers treat it as a fresh
+// connection and re-issue their lookups (answered with full snapshots).
+const ANNOUNCE = 'nonchalant:announce'
+
 /**
  * A BroadcastChannel bus transport (multi-tab). Every peer hears every
  * message; the codec's direction filtering and per-session refs make that
- * safe. One tab plays host (expose), the rest connect.
+ * safe. One tab plays host (expose), the rest connect. A host should call
+ * `announce()` once it is serving — subscribers see it as an `open`, so
+ * clients that started first (or lost a previous host) look their processes
+ * up again.
  */
-export function broadcastChannelTransport(name: string): Transport & { close(): void } {
+export function broadcastChannelTransport(
+  name: string,
+): Transport & { close(): void; announce(): void } {
   const BC = (globalThis as { BroadcastChannel?: new (name: string) => BroadcastChannelLike }).BroadcastChannel
   if (BC === undefined) throw new Error('nonchalant/wire: no BroadcastChannel global in this environment')
   const ch = new BC(name)
   let handlers: TransportHandlers | null = null
   ch.addEventListener('message', (ev) => {
-    if (typeof ev.data === 'string') handlers?.message(ev.data)
+    if (typeof ev.data !== 'string') return
+    if (ev.data === ANNOUNCE) handlers?.open?.()
+    else handlers?.message(ev.data)
   })
   return {
     send: (data) => ch.postMessage(data),
@@ -101,6 +112,7 @@ export function broadcastChannelTransport(name: string): Transport & { close(): 
         if (handlers === h) handlers = null
       }
     },
+    announce: () => ch.postMessage(ANNOUNCE),
     close: () => ch.close(),
   }
 }

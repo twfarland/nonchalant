@@ -1,0 +1,113 @@
+/* Shared styles for every example — no libraries, same classes throughout.
+   Pages add at most a few lines of their own (mario clears margins, cells
+   sizes its grid). */
+
+:root {
+  --ink: #1f2430;
+  --muted: #6b7280;
+  --line: #d9dde3;
+  --paper: #f6f7f9;
+  --card: #ffffff;
+  --accent: #2563eb;
+  --danger: #b91c1c;
+  --ok: #15803d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  margin: 0;
+  padding: 2rem 1.25rem;
+  line-height: 1.5;
+}
+
+h1 { font-size: 1.15rem; margin: 0 0 1rem; font-weight: 600; }
+h2 { font-size: 1rem; margin: 0 0 0.75rem; font-weight: 600; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* the standard panel most examples render into */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  max-width: 34rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  margin: 0 0.35rem 0.35rem 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+
+input, select, textarea {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  margin: 0 0.35rem 0.35rem 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input[type='range'] { padding: 0; vertical-align: middle; }
+input[readonly] { background: var(--paper); }
+
+label { margin-right: 0.35rem; }
+
+/* recurring bits of vocabulary across the examples */
+.value { font-variant-numeric: tabular-nums; font-weight: 600; padding: 0 0.5rem; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.status { color: var(--ok); min-height: 1.2em; margin: 0.5rem 0; }
+.total { font-weight: 600; }
+
+.list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.list li { padding: 0.3rem 0.2rem; border-bottom: 1px solid var(--line); }
+.list li:last-child { border-bottom: 0; }
+
+/* plain tables (crud, benchmark, cells override what they need) */
+table { border-collapse: collapse; }
+th, td { text-align: left; padding: 0.25rem 0.5rem; }
+thead th, tr th { color: var(--muted); font-weight: 500; }
+
+/* todomvc essentials */
+.todoapp { background: var(--card); border: 1px solid var(--line); border-radius: 8px; max-width: 34rem; padding: 1rem 1.25rem; }
+.todoapp h1 { color: var(--accent); font-size: 1.6rem; }
+.new-todo { width: 100%; margin: 0 0 0.75rem; }
+.todo-list { list-style: none; margin: 0.5rem 0; padding: 0; }
+.todo-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid var(--line); }
+.todo-list li .view { display: flex; align-items: center; gap: 0.5rem; width: 100%; }
+.todo-list li label { flex: 1; }
+.todo-list li.completed label { color: var(--muted); text-decoration: line-through; }
+.todo-list .destroy { border: 0; background: none; color: var(--danger); }
+.todo-list .destroy::after { content: '×'; }
+.footer { display: flex; gap: 1rem; align-items: center; margin-top: 0.75rem; }
+.filters { list-style: none; display: flex; gap: 0.5rem; margin: 0; padding: 0; }
+.filters a.selected { font-weight: 600; }
+
+/* shared-cart */
+.cart { background: var(--card); border: 1px solid var(--line); border-radius: 8px; max-width: 34rem; padding: 1rem 1.25rem; }
+.cart ul { list-style: none; margin: 0.5rem 0; padding: 0; }
+.cart li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
+
+/* js-framework-benchmark: enough of the expected classes to look sane */
+.jumbotron { margin-bottom: 1rem; }
+.btn { font: inherit; }
+.table { width: 100%; max-width: 48rem; background: var(--card); border: 1px solid var(--line); }
+.table td { border-top: 1px solid var(--line); }
+tr.danger td { background: #fde8e8; }
+.col-sm-6 { display: inline-block; }
+.glyphicon-remove::after { content: '×'; color: var(--danger); }
+.preloadicon { display: none; }

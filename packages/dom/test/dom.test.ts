@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 //
-// The sprezzatura bug list is the regression suite (docs/DESIGN.md origin
-// flaw #4): XSS strings, attribute breakout, tables, SVG, key: 0, adjacent
-// text nodes, empty-string children. Plus the M4 mechanisms: keyed
-// reconciliation, per-slot pending/error, event binding, exit transitions,
-// and DOM-write counting for granularity.
+// The classic string-built-DOM bug list is the regression suite: XSS strings,
+// attribute breakout, tables, SVG, key: 0, adjacent text nodes, empty-string
+// children. Plus the sink's own mechanisms: keyed reconciliation, per-slot
+// pending/error, event binding, exit transitions, and DOM-write counting for
+// granularity.
 
 import { describe, it, expect } from 'vitest'
 import { cell, spawn, flush } from '@nonchalant/core'
@@ -66,7 +66,7 @@ describe('rendering basics', () => {
   })
 })
 
-describe('XSS regressions (sprezzatura built DOM from strings; we never do)', () => {
+describe('XSS regressions (we never build DOM from strings)', () => {
   it('a script-bearing string child is inert text', () => {
     const root = container()
     const hostile = '<img src=x onerror="window.__pwned = true">'

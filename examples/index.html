@@ -1,26 +1,26 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>nonchalant — examples</title><style>
-  body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
-  h1 { font-size: 1.2rem; }
-  button { margin: 0 0.25rem 0.25rem 0; }
-  input, select { margin: 0.15rem; }
-  a { color: #06c; }
- li { margin: 0.3rem 0; }</style></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nonchalant — examples</title>
+<link rel="stylesheet" href="./shared.css">
+<style>li { margin: 0.3rem 0; } ul { padding-left: 1.2rem; }</style>
+</head>
 <body>
 <h1>nonchalant examples</h1>
-<p>The teaching ladder, in order. See <a href="./README.md">README</a> for what each shows.</p>
+<p class="muted">The teaching ladder, in order. All self-contained — no backends needed.</p>
 <ul>
 <li><a href="./counter/">counter</a></li>
 <li><a href="./todomvc/">todomvc</a></li>
-<li><a href="./typeahead/">typeahead</a> — needs a backend at /api/search; the UI still shows pending states</li>
-<li><a href="./form/">form</a> — needs a backend at /api/signup; validation errors work offline</li>
-<li><a href="./router/">router</a></li>
+<li><a href="./typeahead/">typeahead</a> <span class="muted">— fake API with latency; try typing fast</span></li>
+<li><a href="./form/">form</a> <span class="muted">— ask(): try someone@taken.com for the failure path</span></li>
+<li><a href="./router/">router</a> <span class="muted">— the About page loads over a dynamic import</span></li>
 <li><a href="./undo-redo/">undo-redo</a></li>
-<li><a href="./multi-tab/">multi-tab</a> — open one tab with #host, then more without</li>
-<li><a href="./shared-cart/">shared-cart</a> — the pitch demo — run <code>pnpm cart-server</code>, then flip the one line in main.ts</li>
-<li><a href="./mario/">mario</a> — arrow keys; the golden budgets are CI-asserted</li>
-<li><a href="./mario-canvas/">mario-canvas</a> — the same process on a canvas</li>
+<li><a href="./multi-tab/">multi-tab</a> <span class="muted">— open several tabs; one automatically hosts</span></li>
+<li><a href="./shared-cart/">shared-cart</a> <span class="muted">— the pitch demo — see the note on its page</span></li>
+<li><a href="./mario/">mario</a> <span class="muted">— arrow keys to walk and jump</span></li>
+<li><a href="./mario-canvas/">mario-canvas</a> <span class="muted">— the same process on a canvas</span></li>
 <li><a href="./js-framework-benchmark/">js-framework-benchmark</a></li>
 </ul>
 <h2>7GUIs</h2>
@@ -31,7 +31,7 @@
 <li><a href="./7guis/timer.html">Timer</a></li>
 <li><a href="./7guis/crud.html">CRUD</a></li>
 <li><a href="./7guis/circle-drawer.html">Circle drawer</a></li>
-<li><a href="./7guis/cells.html">Cells</a> — the derivation stress — try =A1+1 chains</li>
+<li><a href="./7guis/cells.html">Cells</a> <span class="muted">— try =A1+1 chains, then edit A1</span></li>
 </ul>
 </body>
 </html>

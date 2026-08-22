@@ -1,5 +1,5 @@
 // Faithful port of the alien-signals reactive system — the push–pull
-// propagation core this library standardises on (docs/DECISIONS.md #6).
+// propagation core this library standardises on.
 // Upstream: stackblitz/alien-signals src/system.ts, MIT,
 // Copyright (c) 2024-present Johnson Chu. Restyled to house conventions;
 // the logic is 1:1 with upstream. Constraints preserved: no Array/Set/Map in

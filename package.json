@@ -9,7 +9,6 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bench": "node bench/reconcile.bench.mjs && node bench/process-scale.bench.mjs",
     "dev": "vite --open /examples/",
     "cart-server": "vite-node examples/shared-cart/server.ts"
   },
@@ -29,5 +28,6 @@
     "@nonchalant/dom": "workspace:*",
     "@nonchalant/host": "workspace:*",
     "@nonchalant/wire": "workspace:*"
-  }
+  },
+  "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319"
 }

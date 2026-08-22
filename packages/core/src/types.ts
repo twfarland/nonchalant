@@ -1,4 +1,4 @@
-// The Process type surface — draft 3, verified under tsc --strict (TS 7.0.2).
+// The Process type surface, verified under tsc --strict (TS 7.0.2).
 // One noun, two faces: Process (outside) and Self (inside the generator).
 
 /** A message that expects an answer. Inside the generator it arrives with `reply`. */

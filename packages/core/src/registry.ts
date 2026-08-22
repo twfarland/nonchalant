@@ -1,4 +1,4 @@
-// The registry (docs/DECISIONS.md #10): lookup(name, args) is get-or-spawn.
+// The registry: lookup(name, args) is get-or-spawn.
 // One operation is simultaneously dependency injection (no prop drilling),
 // query caching (name + stable-serialized args = TanStack's queryKey; watcher
 // refcount + evict idle timeout = the SWR lifecycle), and — at M6 — remote

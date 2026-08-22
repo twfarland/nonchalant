@@ -1,11 +1,9 @@
 # Recipes
 
-Userland patterns with no privileged access — each is a few lines over the
-primitives, and most exist as runnable code in `examples/`. When a recipe
-covers a problem, it stays a recipe; new core concepts must dissolve at least
-two existing problems to earn a place (the registry test).
+Common patterns, each a few lines over the primitives — no special APIs, no
+privileged access. Most exist as runnable code in `examples/`.
 
-## Transient widget state — `cell`
+## Widget state — `cell`
 
 ```ts
 function cell<T>(initial: T): Process<T, T> {
@@ -15,14 +13,15 @@ function cell<T>(initial: T): Process<T, T> {
 }
 ```
 
-Shipped as sugar because everyone needs it; owned by the enclosing scope, dead
-with the widget. `examples/counter`.
+Five lines, shipped as sugar because everyone needs it. A cell created inside
+a view belongs to that view and disappears with it. `examples/counter`.
 
-## Typeahead — cancellation and racing
+## Typeahead — cancel the stale, keep the latest
 
-`self.latest()` is flatMapLatest as an iteration mode: while the fetch is in
-flight the loop is not listening; on completion it resumes at the newest
-pending query. `self.signal` aborts in-flight work on dispose.
+`self.latest()` reads the mailbox in "skip to newest" mode: while a search is
+in flight the loop isn't listening, and when it comes back it picks up the
+most recent query, ignoring everything in between. `self.signal` cancels the
+in-flight request if the process is disposed.
 
 ```ts
 for await (const { q } of self.latest()) {
@@ -30,50 +29,52 @@ for await (const { q } of self.latest()) {
   try {
     results = await api.search(q, { signal: self.signal })
     yield { q, results, pending: false }
-  } catch { /* aborted or failed; continue */ }
+  } catch { /* aborted or failed; keep going */ }
 }
 ```
 
-`examples/typeahead`.
+That's the entire debounce/race/cancel story. `examples/typeahead`.
 
-## Forms — ask for the answer
+## Forms — ask for the outcome
 
-The submit is a `Call`; the form learns whether its own submission succeeded
-as a typed promise instead of grovelling through yielded status fields.
-`examples/form`.
+Make the submit a `Call` message. The form gets a typed promise for its own
+result instead of watching status fields go by. `examples/form`.
 
-## The query cache — twenty lines of registry
+## A query cache — twenty lines of registry
 
 ```ts
 const users = registry({
   user: define(async function* (self, { id }: { id: number }) {
     yield await fetchUser(id)
-    for await (const _ of self) void _      // stay alive for watchers
+    for await (const _ of self) void _      // stay alive while anyone watches
   }, { evict: 30_000 }),
 })
-users.lookup('user', { id: 1 })             // dedup by key, shared, refcounted, idle-evicted
+users.lookup('user', { id: 1 })   // deduped by key, shared, evicted when idle
 ```
 
-That is queryKey + SWR + cache lifecycle. The recipe's test:
-`packages/core/test/registry.test.ts` ("the query-cache recipe").
+Same key → same fetch, shared by everyone. Last watcher leaves → 30 seconds →
+gone. Next lookup → fresh fetch. That's the useful core of a query library,
+and it's a passing test: `packages/core/test/registry.test.ts`.
 
-## Routing — a process of the current path
+## Routing — the URL is a process
 
-The route is state like any other; a lazy route is a thunk resolving through
-`import()` — the sink keeps the previous page until the chunk lands and a
-newer navigation supersedes a stale load. `examples/router`.
+The current route is state like any other. A lazy route is a thunk that
+returns `import(...)`: the sink keeps the old page up until the new chunk
+lands, and a quicker second navigation wins over a slow first one.
+`examples/router`.
 
-## Undo/redo — middleware is function composition
+## Undo/redo — wrap the process
 
-Wrap a proc, hand the inner one a private `channel`, own the history in the
-wrapper. Same shape gives logging, persistence, time-travel, replay.
-`examples/undo-redo`; a snapshot-grouping variant (radius drags collapse to
-one step) in `examples/7guis/circle-drawer.ts`.
+A process is a function, so middleware is function composition: wrap a proc,
+give the inner one a private `channel`, keep the history in the wrapper. The
+same shape gives you logging, persistence, and replay. `examples/undo-redo`;
+a variant that groups a whole slider drag into one undo step is in
+`examples/7guis/circle-drawer.ts`.
 
-## Drag — an interaction with a lifetime
+## Drag — a gesture with a lifetime
 
-Spawn a process on pointerdown that yields offsets and dies on pointerup:
-gesture state with a scope instead of a tangle of listeners.
+Spawn a process on pointerdown; it yields offsets; dispose it on pointerup.
+The gesture's whole footprint — subscriptions included — ends when it does.
 
 ```ts
 el.addEventListener('pointerdown', (down: PointerEvent) => {
@@ -85,29 +86,32 @@ el.addEventListener('pointerdown', (down: PointerEvent) => {
   const onUp = (): void => {
     removeEventListener('pointermove', onMove)
     removeEventListener('pointerup', onUp)
-    gesture[Symbol.dispose]()          // the gesture's lifetime ends here — and
-  }                                    // everything reading it goes quiet with it
+    stop()
+    gesture[Symbol.dispose]()
+  }
   addEventListener('pointermove', onMove)
   addEventListener('pointerup', onUp)
   const stop = effect(() => { const o = gesture(); if (o) applyOffset(o) })
-  void stop // disposed with the gesture's readers, or keep and call on onUp
 })
 ```
 
-(Sketch — adapt to taste; the point is the lifetime, not the listener wiring.)
+## A spreadsheet — derives reading derives
 
-## A spreadsheet — derivations all the way down
-
-Cell values as lazily-created derives that resolve references by reading each
-other: dependency tracking is automatic and exact, the equality cut stops
-propagation where values don't change, and an evaluation stack turns cycles
-into `#CYCLE` instead of hangs. `examples/7guis/cells.ts` + its test.
+Give every cell a derive that parses its formula and reads the cells it
+references. Dependency tracking falls out automatically: edit A1 and only
+formulas that (indirectly) mention A1 recompute; a formula whose result didn't
+change wakes nobody downstream; a reference cycle comes back as `#CYCLE`
+instead of a hang. `examples/7guis/cells.ts`, with the test to prove each of
+those claims.
 
 ## Multi-tab — the wire without a server
 
-One tab hosts over a `BroadcastChannel` transport, the rest connect; the
-protocol never assumed a server, only a transport. `examples/multi-tab`.
+One tab wins a Web Lock and hosts over a `BroadcastChannel` transport; every
+tab connects as a client. Close the hosting tab and the lock — and the hosting
+job — moves to another. The protocol never assumed a server, just a transport.
+`examples/multi-tab`.
 
 ## The one-line move
 
-Local registry → `connect(webSocketTransport(url))`. `examples/shared-cart`.
+Local registry → `connect(webSocketTransport(url))`. Nothing else changes.
+`examples/shared-cart`.

@@ -1,7 +1,10 @@
-// The pitch demo: shared cart. State moves from this tab to the server by
-// changing ONE line — the registry the view looks the cart up in. Everything
-// below the fold is identical either way: same process definition, same
-// messages, same path-precise granularity, same ask().
+// The pitch demo: a shared cart. Its state moves from this tab to the server
+// by changing ONE line — which registry the view looks the cart up in.
+// Everything else is identical either way: same process definition, same
+// messages, same fine-grained updates, same ask().
+//
+// Server mode: run `pnpm cart-server` in another terminal first, then swap
+// the commented line below.
 
 import { define, registry } from '@nonchalant/core'
 import type { Process, VNode } from '@nonchalant/core'
@@ -11,7 +14,7 @@ import { button, div, li, span, ul } from '@nonchalant/dom/tags'
 import { cart, type CartMsg, type CartState, type Shop } from './shared.ts'
 
 // ——— the one line ———
-const shop = registry({ cart: define(cart) })                       // state lives in this tab
+const shop = registry({ cart: define(cart) })                            // state lives in this tab
 // const shop = connect<Shop>(webSocketTransport('ws://127.0.0.1:4321/')) // state lives on the server
 // ————————————————————
 void connect
@@ -29,7 +32,7 @@ function App(): VNode {
     div({},
       'Total: ',
       span({ class: 'total' }, () => String(c()?.total ?? 0)),
-      span({}, () => (c.stale ? ' (stale)' : null))),
+      span({ class: 'muted' }, () => (c.stale ? ' (stale)' : null))),
     button({
       onclick: () => {
         void c.ask({ type: 'checkout' }).then(

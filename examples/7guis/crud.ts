@@ -38,7 +38,7 @@ const surname = cell('')
 const visible = (): Person[] =>
   store().filter((p) => p.surname.toLowerCase().startsWith(prefix().toLowerCase()))
 
-mount(document.getElementById('app')!, div({},
+mount(document.getElementById('app')!, div({ class: 'card' },
   div({},
     label({}, 'Filter prefix: '),
     input({ value: prefix, oninput: (e: Event) => prefix.send((e.target as HTMLInputElement).value) })),

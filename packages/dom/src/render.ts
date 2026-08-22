@@ -1,12 +1,12 @@
 // The DOM sink. Interprets VNode trees (plain data) into real nodes:
-// createElement / createTextNode / setAttribute only — no string is ever parsed
-// as markup (the structural fix for sprezzatura's XSS-by-construction).
+// createElement / createTextNode / setAttribute only — no string is ever
+// parsed as markup, so markup injection is impossible by construction.
 //
 // Granularity: static structure renders once; every dynamic slot (a thunk or a
 // process placed in the tree) becomes a marker-anchored *region* driven by one
 // effect. The effect's tracked read decides when the region wakes; the region
 // then reconciles its rendered children against the new value — the one honest
-// localized keyed diff (docs/DECISIONS.md #14): reference-equal vnodes are
+// localized keyed diff: reference-equal vnodes are
 // skipped, matched keys patch in place (`key: 0` is a key — presence, not
 // truthiness), moved keys move DOM nodes, absent keys dispose (deferred through
 // the `exit` hook when present).

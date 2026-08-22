@@ -1,6 +1,7 @@
-// Function-call view constructors (docs/DECISIONS.md #3). A call returns typed
-// plain data ({ tag, attrs, children }) that any sink can walk — no strings are
-// ever parsed as markup, which is what retires sprezzatura's XSS/table/SVG bugs.
+// Function-call view constructors. A call returns typed plain data
+// ({ tag, attrs, children }) that any sink can walk — no strings are ever
+// parsed as markup, which retires the whole build-DOM-from-strings bug class
+// (XSS by construction, broken tables and SVG).
 
 import type { Slot, VNode } from '@nonchalant/core'
 

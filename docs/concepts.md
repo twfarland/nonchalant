@@ -1,109 +1,126 @@
 # Concepts
 
-The reference. One noun, two faces, a handful of operations — each entry names
-its contract and where the tests that enforce it live.
+The reference. For each concept: what it promises, and where the test lives
+that holds it to the promise.
 
-## Process (the outside face)
+## Process (from the outside)
 
-`Process<T, In>` — what a holder of a process can do:
+`Process<T, In>` is what you hold after `spawn` or `lookup`:
 
-| member | contract |
+| member | what it does |
 |---|---|
-| `p()` | Synchronous read of the latest yield. Tracked (path-recording) inside derive/bindings/effects; a plain snapshot pull anywhere else. |
-| `p.send(msg)` | Cast: fire-and-forget. Present only when `In` has plain messages. |
-| `p.ask(msg)` | Call: typed request/response. Present only when `In` has `Call` messages. Rejects on crash, completion, overflow-drop, dispose. |
-| `p.pending` | Working towards its next yield (mailbox-driven). |
-| `p.stale` | Value survives a crash or a partition; cleared by the next good yield. |
-| `p.error` | Last failure, if any. |
-| `for await (v of p)` | Lossy latest-value stream; each iterator is an independent subscription. |
-| `p[Symbol.dispose]()` | Ends the process: mailbox closes, `finally` runs, owned children die — in that order. |
+| `p()` | Read the latest value, synchronously. Inside a derive, effect, or view binding this also subscribes (by path); anywhere else it's just a read. |
+| `p.send(msg)` | Fire-and-forget message. Only exists if `In` has plain messages. |
+| `p.ask(msg)` | Request/response, typed. Only exists if `In` has `Call` messages. Rejects if the process crashes, finishes, or is disposed. |
+| `p.pending` | True while the process is working toward its next yield. |
+| `p.stale` | True when the value survived a crash or a lost connection; clears on the next good yield. |
+| `p.error` | The last failure, if any. |
+| `for await (v of p)` | A live stream of values. Lossy on purpose: you always get the latest, never a backlog. |
+| `p[Symbol.dispose]()` | Ends the process. The mailbox closes, `finally` blocks run, then anything it spawned dies too — in that order. |
 
-Tests: `packages/core/test/process.test.ts`, `types.check.ts` (the compile-time
-contract, `@ts-expect-error` lines load-bearing).
+Tests: `packages/core/test/process.test.ts`; the type rules are in
+`types.check.ts`, where the `@ts-expect-error` lines are the point — if one
+stops erroring, the types regressed.
 
-## Self (the inside face)
+## Self (from the inside)
 
-What the generator receives: `for await (msg of self)` (FIFO, backpressured),
-`self.latest()` (skip to newest, dropping the queue — flatMapLatest as an
-iteration mode), `self.signal` (aborts on dispose/crash — thread it into every
-fetch), `self.send` (self-send). `channel(signal?)` is a standalone Self for
-middleware and tests.
+What the generator receives: `for await (msg of self)` reads the mailbox in
+order (messages queue while you're busy — backpressure by default);
+`self.latest()` skips to the newest message and drops the rest (what a
+typeahead wants); `self.signal` is an AbortSignal that fires on dispose or
+crash — pass it to your fetches; `self.send` posts to your own mailbox.
+`channel(signal?)` gives you a standalone mailbox for middleware and tests.
 
 ## spawn
 
-`spawn(proc, args, opts?)`. `opts.initial` decides `Process<T>` vs
-`Process<T | undefined>`. `opts.restart: 'on-crash'` re-runs from `args` (the
-recovery state) up to `maxRestarts`; queued casts replay; pending asks reject.
-`opts.mailbox: n` bounds the queue, drop-oldest, with a dev warning.
+`spawn(proc, args, opts?)`. Options:
 
-Ownership is ambient: a spawn during the synchronous window of a process
-resumption attaches to that process and dies with it, recursively. Spawn
-before awaiting — a spawn after an intervening `await` in the same step runs
-unowned. Registry processes are deliberately unowned (shared state belongs to
-its watchers, not its first caller).
+- `initial` — the first readable value. With it, `p()` is `T`; without,
+  `T | undefined` until the first yield.
+- `restart: 'on-crash'` — rerun the generator from `args` after a throw, up to
+  `maxRestarts` times. Queued messages replay; pending asks reject.
+- `mailbox: n` — cap the queue; overflow drops the oldest (and warns).
+
+Ownership: whatever a process spawns belongs to it and dies with it. The
+attachment happens during the synchronous part of each step — spawn before
+you `await`, or the child ends up unowned. Registry processes are deliberately
+unowned: shared state shouldn't die with whichever caller happened to start it.
 
 ## derive
 
-`derive(fn)` — pure, memoised, no mailbox; a full `Process<T>` (readable,
-iterable, disposable, error-carrying). Recomputes when tracked dependencies
-change; propagates only when its value changes (the equality cut).
+`derive(fn)` — a memoised computation with the full Process face (readable,
+iterable, disposable, `error`). It recomputes when something it read changes,
+and tells its own readers only if its *result* changed. That last part — the
+equality cut — is what keeps chains of derivations quiet.
 
-## The graph (why granularity is exact)
+## The graph (why updates are exact)
 
-Every yield: `patch = reconcile(prev, next)` → snapshot ← next → wake only
-readers whose recorded paths intersect the patch. The propagation core is a
-faithful port of alien-signals (`core/src/system.ts`); path precision rides on
-it untouched via per-reader *gate* signals. The read proxy is ephemeral and
-get-only: a primitive read depends on its exact path; a container traversed
-into is not itself a dependency; a container obtained but never read into is a
-subtree dependency; keys/length/`in` are structural. Effects flush once per
-microtask; `flush()` drains synchronously; derives are pull-consistent either
-way (no glitches — diamond-tested).
+Every yield goes through the same pipeline: diff the new value against the old
+(`reconcile`), keep the new snapshot, wake only the readers whose recorded
+paths the diff touched. The propagation engine is a faithful port of
+alien-signals (`core/src/system.ts`). The path tracking sits on top: reads
+inside a tracked context go through a short-lived read-only proxy that records
+what was looked at — a number read here, a list iterated there — and the diff
+is matched against that record.
 
-Tests: `graph.test.ts` (exact wake counts, glitch freedom),
-`reconcile.test.ts` (property-based round-trip, splice minimality),
-`reconcile.perf.test.ts` (1-of-10k ≤ 100 µs, CI-asserted).
+Effects run in a batch once per microtask; `flush()` runs them now. Derives
+don't need either — reading one always gives a consistent answer (the diamond
+test proves no half-updated values are ever visible).
+
+Tests: `graph.test.ts` (exact wake counts, glitch freedom), `reconcile.test.ts`
+(property-based round-trips, minimal splices), `reconcile.perf.test.ts`
+(1 change in 10k items diffs in ≤ 100 µs — a CI assertion).
 
 ## Views and sinks
 
-Views are function calls returning plain typed data (`VNode`); sinks
-interpret. A view process yields once — a tree whose holes (thunks/processes)
-are marker-anchored regions, each driven by one effect. The keyed diff is
-localized and honest: reference-equal vnodes skip, `key: 0` keys by presence,
-moves move DOM nodes, removals defer through the `exit` hook. Promise slots
-hold only their own region (pending = empty, rejection = contained); throwing
-bindings keep previous content. No string is ever parsed as markup — the
-sprezzatura XSS/table/SVG bug class is structurally gone.
+A view is a function call producing plain data (`VNode`); a sink turns it into
+something real. The DOM sink renders static structure once; each thunk or
+process in the tree becomes a small live region with its own effect. Lists
+reconcile by key — that's the one diff this library keeps, it's local to the
+list, and it's honest about it: same key patches in place, `key: 0` counts,
+identical vnodes are skipped entirely, removals can wait for an `exit`
+transition. A promise in a slot occupies only its own slot while pending;
+a binding that throws keeps its previous content and logs.
 
-Budgets are CI-asserted: one view yield and ≤ 3 DOM writes/frame for Mario
-(`examples/mario/mario.golden.test.ts`); one text write for one label change
-in a 50-row list (`packages/dom/test/dom.test.ts`).
+Strings are never parsed as markup, so injected HTML in your data is inert
+text — asserted, along with tables, SVG, and the other classic string-renderer
+failure modes, in `packages/dom/test/dom.test.ts`.
+
+The headline numbers are CI budgets: one text write for one changed label in a
+50-row list; one view yield and ≤ 3 DOM writes per frame for Mario
+(`examples/mario/mario.golden.test.ts`).
 
 ## Registry
 
-`registry(defs)` / `define(proc, opts)` / `lookup(name, args)` — get-or-spawn,
-keyed by name + order-insensitive args serialization. Watchers (subscriptions,
-not pulls) refcount the entry; `evict` (opts) idles it out after the last
-watcher leaves; `evict(name, args?)` is manual. One concept = DI + query cache
-+ remote addressing. Tests: `registry.test.ts` (including the query-cache
-recipe).
+`registry(defs)` + `define(proc, opts)` + `lookup(name, args)`. Lookup is
+get-or-spawn, keyed by name plus the arguments (order-independent — `{a, b}`
+and `{b, a}` are the same key). Subscribers count as watchers; plain reads
+don't. When the last watcher leaves, an `evict` timer (if configured) disposes
+the entry; the next lookup starts fresh. One mechanism, three jobs: dependency
+injection, query cache, and — over the wire — remote addressing.
+Tests: `registry.test.ts`.
 
 ## Wire
 
-Eight ops (`lookup/send/call/exit` | `yield/reply/done/raise`), JSON, patches
-of plain data — never markup, never code. `expose(reg, transport)` hosts;
-`connect(transport)` returns a Registry whose processes are local pumps —
-patches arrive in a mailbox, every application is a yield, so remote reads get
-the entire local machinery including path precision. Reconnect = re-lookup +
-full snapshot, diffed against the retained value. Conformance vectors under
-`packages/wire/spec/` are the cross-language contract. `@nonchalant/host`
-serves it over real WebSockets; each connection is a session.
+Eight JSON ops (`lookup/send/call/exit` from the client, `yield/reply/done/
+raise` from the host), carrying state patches — never markup, never code.
+`expose(reg, transport)` serves a registry; `connect(transport)` gives you the
+same registry interface backed by the other side. Under the hood each remote
+process is a local process that applies incoming patches, which is why remote
+reads are just as fine-grained as local ones, a crash on the host shows up as
+`stale: true` here, and reconnecting is nothing special: look the name up
+again, get the full state, diff it against what you kept.
 
-## Budgets (all CI-asserted)
+The format is documented for other languages in `packages/wire/spec/` — the
+JSON vectors there are the contract, and this repo's CI runs them too.
+`@nonchalant/host` puts it on real WebSockets; each connection is its own
+session and cleans up after itself.
 
-| budget | where |
+## The budgets, in one place
+
+| budget | enforced in |
 |---|---|
-| reconcile 1-of-10k ≤ 100 µs (median) | `reconcile.perf.test.ts` |
-| Mario: 1 view yield, ≤ 3 DOM writes/frame, 0 structural ops | `mario.golden.test.ts` |
-| core ≤ 8 KB gzip; core+dom+tags ≤ 13 KB; wire ≤ 9.5 KB | `test/size.test.ts` |
+| reconcile: 1 change in 10k ≤ 100 µs | `reconcile.perf.test.ts` |
+| Mario: 1 view yield, ≤ 3 DOM writes/frame, 0 node churn | `mario.golden.test.ts` |
+| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB | `test/size.test.ts` |
 | nothing retained after dispose | `process.leaks.test.ts` |

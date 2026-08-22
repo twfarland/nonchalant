@@ -1,6 +1,6 @@
-// Undo/redo — processes compose as functions, so middleware is function
-// composition (docs/design-proposal §07): no store enhancers, no plugin API.
-// `channel` hands the wrapped proc a private Self; the wrapper owns history.
+// Undo/redo — processes compose as functions, so middleware is just function
+// composition: no store enhancers, no plugin API. `channel` hands the wrapped
+// proc a private Self; the wrapper owns the history.
 
 import { channel, spawn } from '@nonchalant/core'
 import type { Proc, VNode } from '@nonchalant/core'
@@ -50,7 +50,7 @@ const counter: Proc<number, CounterMsg, void> = async function* (self) {
 
 function App(): VNode {
   const count = spawn(withHistory(counter), undefined, { initial: 0 })
-  return div({},
+  return div({ class: 'card' },
     button({ onclick: () => count.send({ type: 'add', n: 1 }) }, '+1'),
     span({ class: 'value' }, count),
     button({ onclick: () => count.send({ type: 'undo' }) }, 'undo'),

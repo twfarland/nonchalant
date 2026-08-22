@@ -21,7 +21,7 @@ const onFahrenheit = (e: Event): void => {
   if (Number.isFinite(f)) celsius.send(String(Math.round((f - 32) * (5 / 9))))
 }
 
-mount(document.getElementById('app')!, div({},
+mount(document.getElementById('app')!, div({ class: 'card' },
   input({ value: celsius, oninput: onCelsius }),
   label({}, ' Celsius = '),
   input({ value: fahrenheit, oninput: onFahrenheit }),

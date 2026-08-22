@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { reconcile, type Json } from '../src/reconcile.ts'
 
-// CI perf budget (ROADMAP M1): reconcile of 1 changed item in 10k ≤ 100µs.
+// CI perf budget: reconcile of 1 changed item in 10k ≤ 100µs.
 // Measured 46µs on the design machine (Node v22.12) — the budget is ~2x headroom.
 // Median over many iterations so a GC pause or scheduler hiccup can't flake CI.
 // Override via RECONCILE_BUDGET_US for unusually slow runners.

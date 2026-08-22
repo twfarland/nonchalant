@@ -34,7 +34,8 @@ Host → client:
   descends; `~` and `/` inside keys are escaped as `~0` and `~1`. Hosts MUST
   reject malformed escapes (`~` followed by anything other than `0` or `1`).
 - Hosts MUST reject path segments `__proto__`, `constructor`, `prototype`
-  (prototype pollution guard; see core/src/reconcile.ts).
+  (prototype pollution guard; the reference implementation is
+  packages/core/src/reconcile.ts).
 - The first `yield` after lookup or reconnect is a full snapshot: ops from root
   against an empty previous state. Reconnect is therefore not a special case.
 
@@ -46,6 +47,6 @@ Host → client:
 - One `reply` per `call` id; a crashed process rejects its pending calls
   (`raise` with the id-bearing error) rather than silently retrying.
 - Casts arriving while a process is restarting are retained in a bounded
-  mailbox and replayed; overflow policy is drop-oldest (open question Q3,
-  docs/DESIGN.md).
+  mailbox and replayed; the overflow policy is drop-oldest (a dropped call
+  is rejected).
 - Ordering: per-ref FIFO both directions. No cross-ref ordering guarantees.

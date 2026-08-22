@@ -1,9 +1,9 @@
-// The process runtime (M3): spawn drives an async generator, publishing every
+// The process runtime: spawn drives an async generator, publishing every
 // yield through a graph `source` — so process reads inside derives/effects get
 // path-precise wakes for free, and the local update path is literally the wire
-// codec (docs/DESIGN.md "write plain, read tracked").
+// codec.
 //
-// Lifecycle (docs/DESIGN.md, docs/DECISIONS.md #7, Q1–Q3):
+// Lifecycle:
 //   - Self: FIFO backpressured mailbox; `latest()` drops the queue and skips to
 //     the newest message; `signal` aborts per instance; `send` is self-send.
 //   - Ownership: spawns during the synchronous window of a process resumption

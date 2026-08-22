@@ -1,63 +1,62 @@
 # Thinking in processes
 
-The tutorial. You will build a working cart, learn the one primitive by using
-it, and end by moving your state to a server without touching the view.
-Everything here is runnable code from `examples/`.
+This tutorial builds a working cart, step by step. By the end, you'll move its
+state from the browser tab to a server without touching the view. All the code
+here is runnable — most of it comes straight from `examples/`.
 
-## 1. A process is an async generator
+## 1. State is a process
 
-State in nonchalant is not a store, a hook, or a signal graph you assemble.
-It is a **process**: an async generator whose local `let` variables are the
-state, whose mailbox is the input, and whose `yield`s are the published values.
+In nonchalant, state isn't a store you configure or a hook you call. It's a
+**process**: an async generator. Its local variables are the state, its
+mailbox is the input, and everything it `yield`s gets published.
 
 ```ts
 import { spawn } from '@nonchalant/core'
-import type { Proc, Self } from '@nonchalant/core'
+import type { Proc } from '@nonchalant/core'
 
 type CounterMsg = { type: 'add'; n: number }
 
 const counter: Proc<number, CounterMsg, void> = async function* (self) {
-  let n = 0                       // this IS the state — a plain local
-  yield n                         // publish
-  for await (const msg of self) { // the mailbox — FIFO, backpressured
+  let n = 0                       // this is the state — an ordinary variable
+  yield n                         // publish it
+  for await (const msg of self) { // wait for messages
     n += msg.n
-    yield n                       // every yield is published
+    yield n                       // publish again
   }
 }
 
 const p = spawn(counter, undefined, { initial: 0 })
-p()                // 0 — synchronous read of the latest yield
+p()                    // 0 — read the latest value, synchronously
 p.send({ type: 'add', n: 5 })
-// …a tick later: p() === 5
+// a moment later: p() === 5
 ```
 
-There is no `setState`, no reducer registry, no reactivity annotation. `let`
-is real state because the generator frame is suspended, and `yield` is the
-only ceremony. The compiler knows `p` from `spawn`'s types: `initial` decides
-whether reads can be `undefined`; the message union decides whether `send`
-and `ask` exist and what they accept.
+There's no `setState` and no reducer boilerplate. `let` works as state because
+the generator is suspended between messages, and `yield` is the only ceremony.
+The types come along for free: `initial` decides whether reads can be
+`undefined`, and the message union decides what `send` accepts.
 
-## 2. Reads are pulls; subscription is explicit
+## 2. Reading doesn't subscribe
 
-Inside ordinary code, `p()` is a snapshot — no subscription happens:
+In ordinary code, `p()` is just a snapshot:
 
 ```ts
-if (p() > 10) confetti()   // reads now, forgets immediately
+if (p() > 10) celebrate()   // reads the value now, remembers nothing
 ```
 
-Only three contexts auto-track: `derive`, effects, and view bindings. This is
-the rule that lets a process close over ten other processes without accreting
-a dependency web (docs/DESIGN.md "pull vs subscribe").
+Only three places subscribe automatically: `derive`, effects, and view
+bindings. Everywhere else, a read is a read. This means a process can freely
+look at ten other processes without quietly wiring itself to all of them.
 
 ```ts
 import { derive } from '@nonchalant/core'
-const doubled = derive(() => p() * 2)   // memoised; recomputes when p yields
-for await (const v of p) { ... }        // lossy latest-value stream, explicit
+const doubled = derive(() => p() * 2)   // recomputes when p yields
+for await (const v of p) { ... }        // an explicit subscription, if you want one
 ```
 
-## 3. Write plain, read tracked
+## 3. Update immutably, and updates get cheap
 
-Yield **immutable updates** — `let` + spread:
+Yield new objects that reuse the parts that didn't change — `let` plus spread:
 
 ```ts
 type Cart = { items: Item[]; total: number }
@@ -72,22 +71,20 @@ const cart: Proc<Cart, CartMsg, void> = async function* (self) {
 }
 ```
 
-Every yield is diffed against the previous one (`reconcile` — identity checks
-make shared structure free), and only readers whose recorded paths intersect
-the patch wake. A binding that read `cart().total` sleeps through a change to
-`items[3].done`. This is measured behavior, not aspiration: the test suite
-asserts exact wake counts, and Mario ships with a CI budget of ≤ 3 DOM writes
-per frame.
+Every yield is diffed against the previous one. Because unchanged parts are
+the *same objects*, the diff skips them instantly. And the diff is what drives
+updates: a binding that read `cart().total` won't wake when `items[3].done`
+flips, because no path it read changed. This isn't a vibe — the test suite
+asserts exact wake counts, and the Mario demo has a CI budget of at most
+3 DOM writes per frame.
 
-The anti-pattern is mutating and yielding a clone: it works, but every yield
-then shares no structure and the diff walks everything. The dev guidance is
-simple — spread what changed, reuse the rest.
+The one thing to avoid: mutating your state and yielding a deep clone. It
+works, but then nothing is shared and the diff has to look at everything.
 
-## 4. Views are processes that yield once
+## 4. Views run once
 
-A view yields a **tree of bindings**. Holes — thunks and processes placed in
-the tree — carry all value changes; the generator only resumes for structural
-change (a route swap). Re-yielding per value is a performance bug.
+A view is a function that returns a tree. Where the tree needs live data, you
+put a **binding** — a thunk or a process — and the tree itself never rebuilds:
 
 ```ts
 import { mount } from '@nonchalant/dom'
@@ -96,86 +93,90 @@ import { button, div, li, span, ul } from '@nonchalant/dom/tags'
 function CartView(cart: Process<Cart, CartMsg>): VNode {
   return div({},
     ul({}, () => cart().items.map((it) =>
-      li({ key: it.name }, it.name))),          // one honest keyed diff
-    span({}, () => String(cart().total)),        // a binding: wakes on /total only
+      li({ key: it.name }, it.name))),          // a keyed list — one honest diff
+    span({}, () => String(cart().total)),        // wakes only when total changes
     button({ onclick: () => cart.send({ type: 'add', item: pick() }) }, 'Add'))
 }
 
 mount(document.getElementById('app')!, CartView(cart))
 ```
 
-Component-local state is a closed-over process — see `examples/counter`:
-`cell(0)` is five lines of userland sugar over `spawn`, owned by the enclosing
-scope, dead when the widget goes.
+There's no re-render. The function runs once; after that, changes flow through
+the bindings to exactly the DOM they affect. Widget-local state is just a
+process you close over — see `examples/counter`, where `cell(0)` (five lines
+of sugar over `spawn`) lives and dies with its widget.
 
-## 5. Ask when you need an answer
+## 5. When you need an answer, ask
 
-`send` is a cast — fire and forget. When the caller needs a reply, the message
-is a `Call` and the method is `ask`; the compiler refuses to `send` a call or
-`ask` a cast:
+`send` is fire-and-forget. When the caller needs a reply — a form that wants
+to know if its own submit worked — the message is a `Call` and the method is
+`ask`. The compiler keeps the two apart: you can't `send` a call or `ask` a
+cast.
 
 ```ts
 type CartMsg =
   | { type: 'add'; item: Item }
   | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>
 
-// inside the generator, a call is an ordinary message carrying reply:
+// inside the generator, a call is just a message with a reply function:
 if (msg.type === 'checkout') msg.reply({ ok: true, charged: total })
 
 // outside:
-const res = await cart.ask({ type: 'checkout' })   // typed reply
+const res = await cart.ask({ type: 'checkout' })   // the reply, typed
 ```
 
-Crashed processes reject their pending asks; readers keep the last value with
-`stale: true`; `restart: 'on-crash'` re-runs the generator from its init args
-with queued casts replayed. See `examples/form` and the M3 tests.
+If a process crashes, its pending asks reject, readers keep the last value
+with `stale: true`, and — if you spawned it with `restart: 'on-crash'` — it
+restarts from its original arguments with queued messages replayed. See
+`examples/form`.
 
-## 6. Share by name: the registry
+## 6. Share by name
 
-`lookup` is get-or-spawn. The same operation is dependency injection, query
-caching, and — next section — remote addressing:
+`lookup` means "give me the process with this name — start it if nobody has":
 
 ```ts
 import { define, registry } from '@nonchalant/core'
 
 const shop = registry({
   cart: define(cartProc),
-  user: define(userQuery, { evict: 30_000 }),   // SWR: idle 30s after last watcher → evicted
+  user: define(userQuery, { evict: 30_000 }),   // idle 30s after its last watcher → cleaned up
 })
-const cart = shop.lookup('cart', { userId })     // first caller spawns; the rest share
+const cart = shop.lookup('cart', { userId })
 ```
 
-Watchers are subscriptions (bindings, derives, iterations) — snapshot pulls
-don't count. The query cache from TanStack is twenty lines of this; the test
-at `packages/core/test/registry.test.ts` is the recipe.
+That one operation covers a lot of ground. It's dependency injection (any part
+of the app can look up the session — no prop drilling). It's a query cache
+(same name + args = same process; watchers are refcounted; idle entries get
+evicted, and the next lookup refetches). The twenty-line query cache is a real
+test: `packages/core/test/registry.test.ts`.
 
 ## 7. The one line
 
-`connect(transport)` returns the same `Registry` interface. The pitch demo
-(`examples/shared-cart`) is a cart whose state moves from the tab to a server
-by changing which registry the view looks it up in:
+`connect(transport)` returns the same registry interface, backed by a server.
+That's the whole trick behind the pitch demo (`examples/shared-cart`):
 
 ```ts
-const shop = registry({ cart: define(cart) })                        // local
-// const shop = connect<Shop>(webSocketTransport('ws://…:4321/'))    // shared
+const shop = registry({ cart: define(cart) })                        // in this tab
+// const shop = connect<Shop>(webSocketTransport('ws://…:4321/'))    // on the server
 ```
 
-The process does not know which side of the wire it runs on. Yields cross as
-patches (the same codec as local updates), remote reads stay path-precise,
-a partition leaves readers on the last value with `stale: true`, and reconnect
-is just a re-lookup answered with a full snapshot — diffed against what you
-already have, so unchanged bindings sleep through it.
+The cart's code doesn't change, because it never knew where it was running.
+Updates cross the wire as small patches (the same format used locally), remote
+reads stay fine-grained, losing the connection leaves readers on the last
+value with `stale: true`, and reconnecting just re-fetches the state and diffs
+it against what you already had — bindings for unchanged data sleep through
+the whole thing.
 
-The server (`examples/shared-cart/server.ts`) is three lines:
+The server side is three lines (`examples/shared-cart/server.ts`):
 
 ```ts
 import { serve } from '@nonchalant/host'
 const host = await serve({ cart: define(cart) }, { port: 4321 })
 ```
 
-## Where next
+## Where to next
 
-- `docs/concepts.md` — the reference: every concept, its contract, its tests.
-- `docs/recipes.md` — typeahead, undo/redo, routing, forms, drag, middleware.
-- `docs/migration.md` — coming from React, Solid, or LiveView.
-- `docs/PROTOCOL.md` — the wire, for non-JS hosts.
+- [Concepts](concepts.md) — the reference, with pointers to the tests.
+- [Recipes](recipes.md) — typeahead, undo/redo, routing, forms, drag.
+- [Migration](migration.md) — coming from React, Solid, or LiveView.
+- [Protocol](PROTOCOL.md) — the wire format, for any language.

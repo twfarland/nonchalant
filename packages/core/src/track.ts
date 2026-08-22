@@ -1,5 +1,5 @@
 // Path-recording read proxies + patch intersection — the "read tracked" half
-// of the granularity mechanism (docs/DESIGN.md). A Recorder wraps one snapshot
+// of the granularity mechanism. A Recorder wraps one snapshot
 // for one reader run; finalize() distils what was touched into a PathTree that
 // the source tests each patch against with affects().
 //

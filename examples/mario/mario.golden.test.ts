@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 //
-// The golden budgets (ROADMAP M8), asserted in CI:
+// The golden budgets, asserted in CI:
 //   - ONE view yield total: the view generator yields its binding tree once
 //     and never resumes; every frame flows through attribute bindings.
 //   - ≤ 3 DOM writes per frame, zero structural ops after mount.
-// Plus the regression the old stack could not pass: key-repeat does not step
-// physics (acto's combineLatest-with-holes double-stepped Mario on repeat).
+// Plus the classic regression: holding a key down must not double-step the
+// physics (merged input/frame streams in signal libraries did exactly that).
 
 import { describe, it, expect } from 'vitest'
 import { cell, spawn } from '@nonchalant/core'

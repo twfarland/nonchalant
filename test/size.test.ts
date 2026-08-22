@@ -1,4 +1,4 @@
-// Size budgets, CI-asserted (ROADMAP M9). Each bundle is what an application
+// Size budgets, CI-asserted. Each bundle is what an application
 // actually pays: entry + everything it pulls in, minified, gzipped. Budgets
 // carry ~25% headroom over measured size — tighten them, never loosen them
 // silently (a regression should hurt).

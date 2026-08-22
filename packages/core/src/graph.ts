@@ -2,8 +2,8 @@
 // queue; upstream src/index.ts, MIT © Johnson Chu) adapted to nonchalant, plus
 // the piece alien-signals does not have — `source`, a state root that wakes
 // readers per *path*: every publish reconciles prev → next and only dirties
-// the readers whose recorded read-paths intersect the patch
-// (docs/DESIGN.md "write plain, read tracked").
+// the readers whose recorded read-paths intersect the patch ("write plain,
+// read tracked" — see docs/concepts.md).
 //
 // Mechanism: each (source, reader) pair gets a hidden *gate* — an ordinary
 // signal node whose value is a change epoch. publish() bumps only the gates

@@ -27,11 +27,11 @@ const timer: Proc<TimerState, TimerMsg, void> = async function* (self) {
 
 const t = spawn(timer, undefined, { initial: { duration: 10, elapsed: 0 } })
 
-mount(document.getElementById('app')!, div({},
+mount(document.getElementById('app')!, div({ class: 'card' },
   div({},
     label({}, 'Elapsed time: '),
     meter({ min: 0, max: () => t().duration, value: () => t().elapsed }),
-    span({}, () => ` ${t().elapsed.toFixed(1)}s`)),
+    span({ class: 'value' }, () => ` ${t().elapsed.toFixed(1)}s`)),
   div({},
     label({}, 'Duration: '),
     input({

@@ -4,18 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>7GUIs — Cells — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
 <style>
-  body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
-  h1 { font-size: 1.2rem; }
-  button { margin: 0 0.25rem 0.25rem 0; }
-  input, select { margin: 0.15rem; }
-  a { color: #06c; }
-
-  table { border-collapse: collapse; }
-  th { background: #eee; font-weight: normal; padding: 0 4px; position: sticky; top: 0; }
-  td { border: 1px solid #ddd; padding: 0; }
-  input.cell { border: 0; width: 90px; padding: 2px 4px; font: inherit; }
-  .cells { max-height: 80vh; max-width: 95vw; overflow: auto; display: inline-block; }
+  th { background: var(--paper); position: sticky; top: 0; }
+  td { border: 1px solid var(--line); padding: 0; }
+  input.cell { border: 0; border-radius: 0; width: 90px; margin: 0; padding: 2px 6px; }
+  .cells { max-height: 80vh; max-width: 95vw; overflow: auto; display: inline-block;
+           background: var(--card); border: 1px solid var(--line); }
 </style>
 </head>
 <body>

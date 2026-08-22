@@ -21,7 +21,7 @@ const bookable = derive(
   () => departOk() && backOk() && (mode() === 'one-way flight' || parse(back()) >= parse(depart())),
 )
 
-mount(document.getElementById('app')!, div({},
+mount(document.getElementById('app')!, div({ class: 'card' },
   select({ onchange: (e: Event) => mode.send((e.target as HTMLSelectElement).value as Mode) },
     option({}, 'one-way flight'),
     option({}, 'return flight')),

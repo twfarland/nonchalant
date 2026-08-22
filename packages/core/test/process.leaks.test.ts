@@ -1,6 +1,8 @@
-// The acto lesson (docs/DESIGN.md origin flaw #1): subscriptions and process
-// state must actually be released — "nothing retained after dispose".
-// Runs under --expose-gc (vitest.config.ts); skipped if gc is unavailable.
+// The leak suite: subscriptions and process state must actually be released —
+// "nothing retained after dispose". The classic reactive-library failure mode
+// is a disposed subscriber kept alive forever by its source; every test here
+// pins that door shut. Runs under --expose-gc (vitest.config.ts); skipped if
+// gc is unavailable.
 
 import { describe, it, expect } from 'vitest'
 import { spawn, derive } from '../src/index.ts'
@@ -30,7 +32,7 @@ const counter: Proc<number, number, void> = async function* (self) {
 }
 
 describe.skipIf(gcNow === undefined)('leak suite (nothing retained after dispose)', () => {
-  it('a disposed subscriber is released while the process lives — the acto bug', async () => {
+  it('a disposed subscriber is released while the process lives', async () => {
     const p = spawn(counter, undefined, { initial: 0 })
     // construct inside a helper so no test-frame local keeps the target alive
     const subscribeAndStop = (): WeakRef<object> => {
