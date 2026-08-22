@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
-  "exports": { ".": "./src/index.ts" },
-  "license": "MIT"
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@nonchalant/core": "workspace:*",
+    "@nonchalant/wire": "workspace:*",
+    "ws": "^8.21.3"
+  }
 }

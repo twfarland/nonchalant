@@ -66,8 +66,9 @@ export function webSocketTransport(url: string, opts?: WebSocketTransportOpts): 
     },
     close: () => {
       closed = true
+      // do not null ws here: the socket's own close event must still reach
+      // the handlers (it clears ws and notifies subscribers)
       ws?.close()
-      ws = null
     },
   }
 }

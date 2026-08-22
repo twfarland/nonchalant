@@ -46,4 +46,6 @@ memoryPair with partitions; expose/connect — remote refs are local pump
 processes, so remote reads are path-precise and reconnect-as-full-patch
 diffs against the retained value; WebSocket + BroadcastChannel transports;
 conformance vectors in packages/wire/spec run in CI; multi-tab example).
-Next: M7 host.
+M7 done (serve() Node host over ws; per-connection sessions; GET /schema
+whitelist; shared-cart pitch demo — local→server in one line). Next: M8
+golden (Mario).

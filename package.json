@@ -12,6 +12,8 @@
     "bench": "node bench/reconcile.bench.mjs && node bench/process-scale.bench.mjs"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.1",
     "fast-check": "^4.1.0",
     "happy-dom": "^20.11.6",
     "typescript": "^7.0.2",
@@ -20,6 +22,7 @@
   "dependencies": {
     "@nonchalant/core": "workspace:*",
     "@nonchalant/dom": "workspace:*",
+    "@nonchalant/host": "workspace:*",
     "@nonchalant/wire": "workspace:*"
   }
 }

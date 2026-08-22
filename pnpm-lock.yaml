@@ -14,10 +14,19 @@ importers:
       '@nonchalant/dom':
         specifier: workspace:*
         version: link:packages/dom
+      '@nonchalant/host':
+        specifier: workspace:*
+        version: link:packages/host
       '@nonchalant/wire':
         specifier: workspace:*
         version: link:packages/wire
     devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       fast-check:
         specifier: ^4.1.0
         version: 4.9.0
@@ -39,7 +48,17 @@ importers:
         specifier: workspace:*
         version: link:../core
 
-  packages/host: {}
+  packages/host:
+    dependencies:
+      '@nonchalant/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nonchalant/wire':
+        specifier: workspace:*
+        version: link:../wire
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
 
   packages/wire:
     dependencies:

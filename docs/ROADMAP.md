@@ -71,8 +71,16 @@ assertions, not aspirations.
   the canonical counter; format documented for non-JS hosts) run in CI. Example:
   multi-tab sync. Deferred: the WebSocket transport is untested until M7's Node
   host provides a server end.
-- **M7 — host**: Node host, schema serving, supervision trees, session lifecycle.
-  **The pitch demo**: shared cart — move state from tab to server by changing one line.
+- **M7 — host** ✅ `serve(defs, opts)` — Node host over real WebSockets (`ws`);
+  each connection is a session: its own expose() over the shared registry, torn
+  down on disconnect so registry refcounting/evict reclaims idle processes
+  (session count observable, tested over real sockets — which is also where
+  `webSocketTransport` earned its coverage and a close-notification bug fix).
+  Schema serving: GET /schema returns the `{ protocol, names }` whitelist; the
+  typed contract is the shared TS schema module. Supervision trees are not a new
+  mechanism: M3 restart policies + ownership cascade, configured per definition.
+  **The pitch demo landed**: examples/shared-cart — one isomorphic cart module;
+  the tab flips from local registry to server by changing one line.
 - **M8 — golden**: Mario ported from sprezzatura-acto-mario. Budget asserted in CI:
   one view yield total, ≤ 3 DOM writes per frame. Then the canvas sink and the same
   Mario unchanged on canvas — retargeting demonstrated, not asserted. Profile vs the

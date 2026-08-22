@@ -171,6 +171,11 @@ patch diffs against the retained value (readers of unchanged paths sleep
 through reconnect — tested). WebSocket (reconnecting) and BroadcastChannel
 transports; conformance vectors (spec/README.md defines the format and the
 canonical counter process) run in CI as the cross-language contract.
+M7 (host) landed: serve(defs) hosts over real WebSockets (dep: ws); a
+connection is a session (own expose; teardown on disconnect releases
+watches into registry refcounting); GET /schema serves the name whitelist;
+the pitch demo exists at examples/shared-cart (local→server = one line).
+End-to-end tests run over real sockets, including remote path-precision.
 Open questions: DECISIONS.md bottom (epoch scoping, predict scope, npm scope
 claim).
 
