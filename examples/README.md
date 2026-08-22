@@ -10,12 +10,13 @@ are self-contained — no backends required.
 | `todomvc/` | one state process + one view; the keyed list patches one row at a time |
 | `typeahead/` | `latest()` racing, abort via `self.signal` (fake API with latency) |
 | `form/` | `ask()` — a submit that learns its own outcome (try someone@taken.com) |
-| `router/` | the route as a process; lazy pages over `import()` |
+| `router/` | pages as view processes: interim loading yield, `import()` code splitting, dispose cascade |
 | `undo-redo/` | middleware as function composition over `channel` |
+| `drag/` | a gesture with a lifetime: born on pointerdown, dead on pointerup |
+| `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
 | `shared-cart/` | **the pitch demo** — state moves tab → server by changing one line |
 | `mario/` | ⏱ the golden demo: 1 view yield, ≤ 3 DOM writes/frame, CI-asserted |
-| `mario-canvas/` | the same Mario process rendered by a canvas effect |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | the standard krausest benchmark app, keyed |
 
@@ -27,9 +28,11 @@ pnpm dev          # vite; opens the gallery at /examples/
 
 Notes:
 
-- **mario / mario-canvas** — arrow keys to walk, up to jump. The golden test
+- **mario** — arrow keys to walk, up to jump. The golden test
   (`mario/mario.golden.test.ts`) also pins the classic input bug: holding a
   key down must never double-step the physics.
+- **bounce** — click either panel; both renderers read the same process, so
+  they stay in lockstep.
 - **multi-tab** — open several tabs of the same page; one automatically
   becomes the host. Close it and the job moves to another tab.
 - **shared-cart** — works standalone. For the server version: run

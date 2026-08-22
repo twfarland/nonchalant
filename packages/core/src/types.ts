@@ -80,7 +80,7 @@ export interface VNode {
   readonly children: readonly Slot[]
 }
 
-/** Everything a dynamic slot accepts; toProcess() lifts them all. */
+/** Everything a dynamic slot accepts; the sink normalises them all. */
 export type Slot =
   | null
   | undefined

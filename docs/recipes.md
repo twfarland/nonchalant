@@ -58,10 +58,11 @@ and it's a passing test: `packages/core/test/registry.test.ts`.
 
 ## Routing — the URL is a process
 
-The current route is state like any other. A lazy route is a thunk that
-returns `import(...)`: the sink keeps the old page up until the new chunk
-lands, and a quicker second navigation wins over a slow first one.
-`examples/router`.
+The current route is state like any other, and pages can be view processes:
+the router iterates the route, disposes the outgoing page (tearing down its
+whole scope), yields a loading state, `await import()`s the chunk, and yields
+the new page. Navigation, loading states, code splitting, and teardown in a
+dozen lines of ordinary code. `examples/router`.
 
 ## Undo/redo — wrap the process
 
@@ -82,6 +83,7 @@ el.addEventListener('pointerdown', (down: PointerEvent) => {
     for await (const move of self)
       yield { dx: move.clientX - down.clientX, dy: move.clientY - down.clientY }
   }, undefined)
+  const stop = effect(() => { const o = gesture(); if (o) applyOffset(o) })
   const onMove = (e: PointerEvent): void => gesture.send(e)
   const onUp = (): void => {
     removeEventListener('pointermove', onMove)
@@ -91,9 +93,10 @@ el.addEventListener('pointerdown', (down: PointerEvent) => {
   }
   addEventListener('pointermove', onMove)
   addEventListener('pointerup', onUp)
-  const stop = effect(() => { const o = gesture(); if (o) applyOffset(o) })
 })
 ```
+
+Runnable version, with a draggable box: `examples/drag`.
 
 ## A spreadsheet — derives reading derives
 

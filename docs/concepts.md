@@ -147,6 +147,24 @@ JSON vectors there are the contract, and this repo's CI runs them too.
 `@nonchalant/host` puts it on real WebSockets; each connection is its own
 session and cleans up after itself.
 
+## What updates cost, measured
+
+The structural diff is the heart of the write path, so its costs are worth
+knowing (measured on Node v22.12, a 10k-item list of small objects; the
+1-of-10k case is also the CI budget):
+
+| situation | cost per yield | verdict |
+|---|---|---|
+| immutable update, 1 of 10,000 items changed | ~46 µs | free at interaction rate; fine at 60 fps |
+| immutable append to 10,000 | ~38 µs | same |
+| immutable update, 1 of 100,000 | ~760 µs | fine per keystroke; not per frame |
+| zero structural sharing, 10,000 items (mutate-and-clone) | ~4,900 µs | the pathology — spread what changed, reuse the rest |
+| small state (a form, a game HUD), even with zero sharing | ~4 µs | never matters |
+
+The guidance that falls out: yields at interaction rate are always fine;
+yields at frame rate want frame-sized state — which is what per-frame state
+looks like anyway (the golden demo's world is five numbers).
+
 ## The budgets, in one place
 
 | budget | enforced in |
