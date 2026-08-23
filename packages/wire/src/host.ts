@@ -24,13 +24,22 @@ export interface Exposable {
   lookup(name: string, ...args: unknown[]): unknown
 }
 
+export interface ExposeOpts {
+  /**
+   * Cap on concurrently watched refs for this session. A lookup past the cap
+   * answers with a raise instead of retaining another process; a re-lookup on
+   * an existing ref replaces its watch and is always allowed. Omit for no cap.
+   */
+  maxWatches?: number
+}
+
 interface Watch {
   proc: HostProcess
   stop(): void
 }
 
 /** Serve a registry over a transport; returns a disposer that releases every watch. */
-export function expose(reg: Exposable, transport: Transport): () => void {
+export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts): () => void {
   const watches = new Map<string, Watch>()
   const out = (msg: HostMsg): void => transport.send(encode(msg))
 
@@ -49,6 +58,10 @@ export function expose(reg: Exposable, transport: Transport): () => void {
 
   const startWatch = (ref: string, name: string, args: unknown): void => {
     stopWatch(ref) // re-lookup on an existing ref restarts from a full snapshot
+    if (opts?.maxWatches !== undefined && watches.size >= opts.maxWatches) {
+      out({ op: 'raise', ref, error: errorJson(new Error('watch limit reached')) })
+      return
+    }
     let proc: HostProcess
     try {
       proc = (args === undefined ? reg.lookup(name) : reg.lookup(name, args)) as HostProcess

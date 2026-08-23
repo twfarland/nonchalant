@@ -1,5 +1,6 @@
 // The Node host serves a registry over WebSockets. Each connection gets its
-// own expose() session over the shared registry and is torn down on disconnect.
+// own expose() session — over the shared registry, or over the Exposable the
+// `scope` option builds for that connection — and is torn down on disconnect.
 // Watches release, then registry reference counts and eviction timers reclaim
 // idle processes.
 //
@@ -12,9 +13,9 @@ import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { registry, type Definition, type RegistryHandle } from '@nonchalant/core'
-import { expose, type Transport } from '@nonchalant/wire'
+import { expose, type Exposable, type Transport } from '@nonchalant/wire'
 
-export interface ServeOpts {
+export interface ServeOpts<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }> {
   /** TCP port; 0 (default) picks an ephemeral one. */
   port?: number
   /** WebSocket path. Default '/'. */
@@ -25,6 +26,21 @@ export interface ServeOpts {
   allowedOrigins?: readonly string[] | OriginPolicy
   /** Authenticate the schema request and WebSocket upgrade. Omit only for trusted/local use. */
   authorize?: (request: IncomingMessage) => boolean | Promise<boolean>
+  /**
+   * Build the Exposable this connection's lookups go through. Runs once per
+   * accepted connection, after `authorize`, before any message is served —
+   * closing over the request is how a session scopes, quotas, or audits
+   * lookups without the host knowing what a session is. Throwing rejects the
+   * upgrade (500). Default: every connection shares the registry unscoped.
+   */
+  scope?: (request: IncomingMessage, reg: RegistryHandle<S>) => Exposable | Promise<Exposable>
+  /** Cap on concurrently watched refs per connection; a lookup past it raises to that client. Omit for no cap. */
+  maxWatchesPerConnection?: number
+  /**
+   * Ping each socket at this interval (ms) and terminate it after a missed
+   * pong, so half-open connections release their watches. Omit to disable.
+   */
+  heartbeatMs?: number
 }
 
 export type OriginPolicy = (
@@ -62,13 +78,23 @@ const wsTransport = (ws: WebSocket): Transport => ({
 /** Start hosting `defs` over WebSockets. Resolves once listening. */
 export async function serve<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }>(
   defs: S,
-  opts?: ServeOpts,
+  opts?: ServeOpts<S>,
 ): Promise<HostHandle<S>> {
+  const heartbeatMs = opts?.heartbeatMs
+  if (heartbeatMs !== undefined && (!Number.isFinite(heartbeatMs) || heartbeatMs <= 0))
+    throw new Error('nonchalant/host: heartbeatMs must be a positive duration')
+  const maxWatches = opts?.maxWatchesPerConnection
+  if (maxWatches !== undefined && (!Number.isInteger(maxWatches) || maxWatches < 0))
+    throw new Error('nonchalant/host: maxWatchesPerConnection must be a non-negative integer')
+
   const reg = registry(defs)
   const names = Object.keys(defs)
   const path = opts?.path ?? '/'
   const authorize = async (request: IncomingMessage): Promise<boolean> =>
     opts?.authorize === undefined || await opts.authorize(request)
+  // resolved during the upgrade (before any frame can arrive) so an async
+  // scope factory can never lose a client's first lookup
+  const scopes = new WeakMap<IncomingMessage, Exposable>()
 
   const http = createServer((req, res) => {
     void (async () => {
@@ -128,17 +154,38 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
         rejectUpgrade(socket, 401)
         return
       }
+      if (opts?.scope !== undefined) scopes.set(request, await opts.scope(request, reg))
       wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request))
     })().catch(() => rejectUpgrade(socket, 500))
   })
 
   const sessions = new Set<() => void>()
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, request) => {
     // a client protocol violation (oversize payload, bad frame) must drop that
     // connection, not crash the host via an unhandled 'error' event
     ws.on('error', () => ws.terminate())
-    const stop = expose(reg, wsTransport(ws))
+    const stop = expose(
+      scopes.get(request) ?? reg,
+      wsTransport(ws),
+      maxWatches === undefined ? undefined : { maxWatches },
+    )
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    if (heartbeatMs !== undefined) {
+      let alive = true
+      ws.on('pong', () => {
+        alive = true
+      })
+      heartbeat = setInterval(() => {
+        if (!alive) {
+          ws.terminate() // fires 'close', which runs cleanup
+          return
+        }
+        alive = false
+        ws.ping()
+      }, heartbeatMs)
+    }
     const cleanup = (): void => {
+      if (heartbeat !== undefined) clearInterval(heartbeat)
       sessions.delete(cleanup)
       stop()
     }

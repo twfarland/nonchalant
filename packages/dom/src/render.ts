@@ -46,9 +46,22 @@ const isAsyncIterable = (v: unknown): v is AsyncIterable<unknown> =>
 const isPromise = (v: unknown): v is Promise<unknown> =>
   typeof v === 'object' && v !== null && typeof (v as { then?: unknown }).then === 'function'
 
-const warn = (what: string, e?: unknown): void => {
-  console.error(`nonchalant/dom: ${what}`, e)
+export type RenderErrorHandler = (what: string, error: unknown) => void
+
+// render-time failures (a throwing binding, a rejected slot promise) are
+// contained to their region; this hook only decides where the report goes
+let report: RenderErrorHandler = (what, e) => console.error(`nonchalant/dom: ${what}`, e)
+
+/** Route render failure reports somewhere other than console.error. Returns a restore function. */
+export function onRenderError(handler: RenderErrorHandler): () => void {
+  const prev = report
+  report = handler
+  return () => {
+    report = prev
+  }
 }
+
+const warn = (what: string, e?: unknown): void => report(what, e)
 
 // ---------- elements ----------
 

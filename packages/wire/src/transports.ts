@@ -12,7 +12,7 @@ interface WebSocketLike {
 }
 
 export interface WebSocketTransportOpts {
-  /** Base delay between reconnect attempts in ms (doubles up to 8x). Default 500. */
+  /** Base delay between reconnect attempts in ms (doubles up to 8x, jittered to 50–100%). Default 500. */
   retryDelay?: number
 }
 
@@ -46,7 +46,9 @@ export function webSocketTransport(url: string, opts?: WebSocketTransportOpts): 
       ws = null
       handlers?.close?.()
       if (!closed) {
-        const delay = baseDelay * Math.min(8, 2 ** attempts++)
+        // jitter (50–100% of the backoff step) keeps a fleet of clients from
+        // redialing in lockstep when a host restarts
+        const delay = baseDelay * Math.min(8, 2 ** attempts++) * (0.5 + Math.random() / 2)
         setTimeout(dial, delay)
       }
     })

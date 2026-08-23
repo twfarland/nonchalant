@@ -194,8 +194,9 @@ const host = await serve({ cart: define(cart) }, {
 
 The open default is convenient for the local example, not a production
 security policy. Origin checks protect browser handshakes; authorization
-decides who may connect. Your process must still enforce which records and
-operations that authenticated caller may use. See [Hosting safely](hosting.md).
+decides who may connect; the `scope` option decides which processes each
+connection's lookups may reach — or your processes enforce record and
+operation access themselves. See [Hosting safely](hosting.md).
 
 ## Where to next
 

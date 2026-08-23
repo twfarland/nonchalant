@@ -172,6 +172,92 @@ describe('node host over real websockets', () => {
     await host.close()
   }, 15000)
 
+  it('scope gives each connection its own lookup gateway closed over the request', async () => {
+    const host = await serve<Shop>(
+      { cart: define(cart) },
+      {
+        scope: (request, reg) => {
+          // identity comes from the handshake — a client cannot name another
+          // user's cart, whatever arguments it sends
+          const userId = new URL(request.url ?? '/', 'http://localhost').searchParams.get('user') ?? 'anonymous'
+          return {
+            lookup: (name) => {
+              if (name !== 'cart') throw new Error(`not exposed: ${name}`)
+              return reg.lookup('cart', { userId })
+            },
+          }
+        },
+      },
+    )
+
+    const t1 = webSocketTransport(`${host.url}?user=alice`)
+    const t2 = webSocketTransport(`${host.url}?user=bob`)
+    const t3 = webSocketTransport(`${host.url}?user=alice`)
+    const c1 = connect<Shop>(t1)
+    const c2 = connect<Shop>(t2)
+    const c3 = connect<Shop>(t3)
+    // all three send the same args; the server-side scope decides what they reach
+    const cartA = c1.lookup('cart', { userId: 'ignored' })
+    const cartB = c2.lookup('cart', { userId: 'ignored' })
+    const cartA2 = c3.lookup('cart', { userId: 'ignored' })
+    await until(() => cartA() !== undefined && cartB() !== undefined && cartA2() !== undefined)
+
+    cartA.send({ type: 'add', item: 'boots', price: 120 })
+    await until(() => cartA2()?.total === 120) // same identity, same process
+    expect(cartB()?.items).toEqual([]) // another identity never sees it
+
+    // a name outside the gateway raises to that client only
+    const bad = (c1 as unknown as { lookup(name: string): { error: unknown } }).lookup('other')
+    await until(() => bad.error !== undefined)
+
+    c1.close()
+    c2.close()
+    c3.close()
+    t1.close()
+    t2.close()
+    t3.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  }, 15000)
+
+  it('maxWatchesPerConnection raises past the cap without touching existing watches', async () => {
+    const host = await serve<Shop>({ cart: define(cart) }, { maxWatchesPerConnection: 1 })
+    const t = webSocketTransport(host.url)
+    const conn = connect<Shop>(t)
+    const first = conn.lookup('cart', { userId: 'w1' })
+    await until(() => first() !== undefined)
+    const second = conn.lookup('cart', { userId: 'w2' })
+    await until(() => second.error !== undefined)
+    expect(first()).toBeDefined()
+    conn.close()
+    t.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  }, 15000)
+
+  it('heartbeat leaves responsive connections alone and reclaims half-open ones', async () => {
+    const host = await serve<Shop>({ cart: define(cart) }, { heartbeatMs: 40 })
+    const t = webSocketTransport(host.url)
+    const conn = connect<Shop>(t)
+    const rcart = conn.lookup('cart', { userId: 'hb' })
+    await until(() => rcart() !== undefined)
+    await new Promise((resolve) => setTimeout(resolve, 200)) // several ping rounds
+    expect(host.sessions()).toBe(1) // pongs keep a live connection open
+
+    // a peer that stops reading never sees pings, so it never pongs
+    const halfOpen = new WebSocket(host.url)
+    await new Promise<void>((resolve) => halfOpen.on('open', () => resolve()))
+    await until(() => host.sessions() === 2)
+    ;(halfOpen as unknown as { _socket: { pause(): void } })._socket.pause()
+    await until(() => host.sessions() === 1)
+    halfOpen.terminate()
+
+    conn.close()
+    t.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  }, 15000)
+
   it('a message over maxPayloadBytes closes the connection with 1009', async () => {
     const host = await serve<Shop>({ cart: define(cart) }, { maxPayloadBytes: 1024 })
     const ws = new WebSocket(host.url)

@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest'
 import { cell, spawn, flush } from '@nonchalant/core'
 import type { Proc, Self, VNode } from '@nonchalant/core'
-import { h, mount } from '@nonchalant/dom'
+import { h, mount, onRenderError } from '@nonchalant/dom'
 import { button, div, li, span, table, tbody, td, tr, ul } from '@nonchalant/dom/tags'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -369,6 +369,29 @@ describe('view processes and unmount', () => {
     n.send(9)
     await tick()
     expect(root.textContent).toBe('')
+    n[Symbol.dispose]()
+  })
+})
+
+describe('error reporting', () => {
+  it('onRenderError routes a binding failure to the handler; content is kept', async () => {
+    const root = container()
+    const reports: string[] = []
+    const restore = onRenderError((what) => reports.push(what))
+    const n = cell(0)
+    const handle = mount(root, div({}, () => {
+      const v = n()
+      if (v === 1) throw new Error('boom')
+      return String(v)
+    }))
+    expect(root.textContent).toBe('0')
+    n.send(1)
+    await tick()
+    flush()
+    expect(root.textContent).toBe('0') // the failing binding kept its previous content
+    expect(reports).toEqual(['slot binding threw; keeping previous content'])
+    restore()
+    handle[Symbol.dispose]()
     n[Symbol.dispose]()
   })
 })

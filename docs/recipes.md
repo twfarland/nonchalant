@@ -197,3 +197,71 @@ callers only depend on the registry interface. The process and view can stay
 the same, but deployment adds JSON boundaries, latency, disconnection,
 authentication, and authorization. `examples/shared-cart` shows the code
 change; [Hosting safely](hosting.md) covers the operational boundary.
+
+## Durable processes — load, checkpoint, evict
+
+Process state lives in generator locals, so durability is a contract you
+write, not a feature you enable: load before the first yield, checkpoint at
+transition boundaries, let eviction deactivate.
+
+```ts
+const accounts = registry({
+  account: define(async function* (self: Self<AccountMsg>, { id }: { id: string }) {
+    let s = (await store.load(id)) ?? initialAccount   // hydrate on activation
+    yield s
+    for await (const msg of self) {
+      s = step(s, msg)                                 // pure reducer
+      yield s
+      await store.save(id, s)                          // checkpoint at the boundary
+    }
+  }, { evict: 60_000 }),                               // deactivate when idle
+})
+```
+
+That is the virtual-actor lifecycle in userland: `lookup('account', { id })`
+is activation, the load is hydration, and `evict` is deactivation — the next
+lookup reactivates and rehydrates. Because the mailbox is the single writer,
+checkpoints are ordered with no application-level locking; the same shape
+gives event sourcing (append the message instead of saving the snapshot,
+replay to hydrate). To keep persistence out of the domain code, wrap the proc,
+the same shape as [undo/redo](#undoredo--wrap-the-process).
+
+The honest limit: a mailbox is only a single writer while one node owns the
+name. Several hosts activating the same id need leases or fencing in the
+store — deliberately outside the framework. [Hosting safely](hosting.md)
+covers the boundary.
+
+## A deadline on `ask`
+
+A pending remote call already rejects on crash, completion, disconnect, and
+dispose — the one way it can hang is a host handler that never replies. A
+deadline is a race, not a protocol feature:
+
+```ts
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no reply within ${ms}ms`)), ms)
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+const receipt = await withDeadline(cart.ask({ type: 'checkout' }), 5_000)
+```
+
+## Connection status — read the facade
+
+Disconnection is not a separate channel to subscribe to: when the transport
+drops, every remote facade goes `stale` (keeping its last value) and carries
+the error, and the reconnect re-lookup clears both. `stale` and `error` are
+reactive metadata, so an indicator is one derive:
+
+```ts
+const status = derive(() => (cart.stale ? 'reconnecting…' : 'live'))
+```
+
+Readers of unchanged paths sleep straight through the reconnect — the full
+snapshot diffs against the retained value (`packages/wire/test/wire.test.ts`,
+"reconnect is a re-lookup").

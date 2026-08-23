@@ -7,5 +7,5 @@
 
 export { h, tagFn } from './h.ts'
 export type { Attrs, TagFn } from './h.ts'
-export { mount, domSink } from './render.ts'
-export type { View } from './render.ts'
+export { mount, domSink, onRenderError } from './render.ts'
+export type { View, RenderErrorHandler } from './render.ts'

@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { define, effect, registry } from '@nonchalant/core'
 import type { Call, Definition, Proc } from '@nonchalant/core'
 import { connect, WireError } from '../src/client.ts'
 import { expose } from '../src/host.ts'
 import { decodeClient, decodeHost, encode, type ClientMsg, type HostMsg } from '../src/protocol.ts'
 import { memoryPair } from '../src/transport.ts'
-import { broadcastChannelTransport } from '../src/transports.ts'
+import { broadcastChannelTransport, webSocketTransport } from '../src/transports.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 const until = async (cond: () => boolean): Promise<void> => {
@@ -188,6 +188,97 @@ describe('connect / expose end to end', () => {
     expect(totalRuns).toBeGreaterThan(1)
     for (const stop of stops) stop()
     teardown()
+  })
+})
+
+describe('watch limits', () => {
+  it('a lookup past maxWatches raises; re-lookup and exit do not consume slots', async () => {
+    const link = memoryPair()
+    const reg = registry({ cart: define(cart) })
+    const stop = expose(reg, link.host, { maxWatches: 1 })
+    const received: HostMsg[] = []
+    const unsubscribe = link.client.subscribe({
+      message: (data) => {
+        const m = decodeHost(data)
+        if (m !== null) received.push(m)
+      },
+    })
+
+    link.client.send(encode({ op: 'lookup', ref: 'r1', name: 'cart' }))
+    await until(() => received.some((m) => m.op === 'yield' && m.ref === 'r1'))
+
+    link.client.send(encode({ op: 'lookup', ref: 'r2', name: 'cart' }))
+    await until(() => received.some((m) => m.op === 'raise' && m.ref === 'r2'))
+
+    // re-lookup on an existing ref replaces its watch — allowed at the cap
+    link.client.send(encode({ op: 'lookup', ref: 'r1', name: 'cart' }))
+    await link.settle()
+    expect(received.filter((m) => m.op === 'raise')).toHaveLength(1)
+
+    // exit frees the slot for a new ref
+    link.client.send(encode({ op: 'exit', ref: 'r1' }))
+    await link.settle()
+    link.client.send(encode({ op: 'lookup', ref: 'r3', name: 'cart' }))
+    await until(() => received.some((m) => m.op === 'yield' && m.ref === 'r3'))
+    expect(received.filter((m) => m.op === 'raise')).toHaveLength(1)
+
+    unsubscribe()
+    stop()
+    reg.evict('cart')
+  })
+})
+
+describe('websocket transport backoff', () => {
+  it('redials with jittered exponential backoff and stops after close', () => {
+    class FakeWS {
+      static created: FakeWS[] = []
+      readyState = 0
+      listeners = new Map<string, ((ev: { data?: unknown }) => void)[]>()
+      constructor(public url: string) {
+        FakeWS.created.push(this)
+      }
+      addEventListener(type: string, fn: (ev: { data?: unknown }) => void): void {
+        const fns = this.listeners.get(type) ?? []
+        fns.push(fn)
+        this.listeners.set(type, fns)
+      }
+      send(_data: string): void {}
+      close(): void {}
+      emit(type: string): void {
+        for (const fn of this.listeners.get(type) ?? []) fn({})
+      }
+    }
+    const g = globalThis as { WebSocket?: unknown }
+    const prevWS = g.WebSocket
+    g.WebSocket = FakeWS
+    const rand = vi.spyOn(Math, 'random').mockReturnValue(0.5) // jitter factor 0.75
+    vi.useFakeTimers()
+    try {
+      const t = webSocketTransport('ws://backoff.test', { retryDelay: 100 })
+      expect(FakeWS.created).toHaveLength(1)
+
+      FakeWS.created[0]!.emit('close') // attempt 0 → 100 · 1 · 0.75 = 75ms
+      vi.advanceTimersByTime(74)
+      expect(FakeWS.created).toHaveLength(1)
+      vi.advanceTimersByTime(1)
+      expect(FakeWS.created).toHaveLength(2)
+
+      FakeWS.created[1]!.emit('close') // attempt 1 → 100 · 2 · 0.75 = 150ms
+      vi.advanceTimersByTime(149)
+      expect(FakeWS.created).toHaveLength(2)
+      vi.advanceTimersByTime(1)
+      expect(FakeWS.created).toHaveLength(3)
+
+      t.close()
+      FakeWS.created[2]!.emit('close') // closed for good: no redial
+      vi.advanceTimersByTime(60_000)
+      expect(FakeWS.created).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+      rand.mockRestore()
+      if (prevWS === undefined) delete g.WebSocket
+      else g.WebSocket = prevWS
+    }
   })
 })
 
