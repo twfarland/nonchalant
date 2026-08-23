@@ -16,16 +16,17 @@ are self-contained — no backends required.
 | `drag/` | a gesture with a lifetime: born on pointerdown, dead on pointerup |
 | `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
+| `worker/` | ⏱ the wire over a Web Worker port — heavy state off the UI thread |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
 | `shared-cart/` | the same cart and view using either a local or remote registry |
 | `mario/` | ⏱ the golden demo: 1 view yield, ≤ 3 DOM writes/frame, CI-asserted |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | the standard krausest benchmark app, keyed |
 
-`lib/` holds constructs written as if they were libraries — currently the
-router (hash and History-API flavors, replace-by-default navigation) — to
-show what defining your own costs here: no plugin API, no framework hooks,
-just processes. Every demo page explains its own mechanism inline, with the
+`lib/` holds constructs written as if they were libraries — the router (hash
+and History-API flavors, replace-by-default navigation) and a `postMessage`
+transport — to show what defining your own costs here: no plugin API, no
+framework hooks, just processes. Every demo page explains its own mechanism inline, with the
 load-bearing code readable next to the running thing.
 
 ## Running them
@@ -43,6 +44,11 @@ Notes:
   they stay in lockstep.
 - **multi-tab** — open several tabs of the same page; one automatically
   becomes the host. Close it and the job moves to another tab.
+- **worker** — press Start, then move the grinder between the worker and this
+  thread. The numbers are identical; the frame meter is not. Its tests run
+  both halves of the wire over a `MessageChannel`
+  (`worker/primes.test.ts`) and assert that the bindings follow the grinder
+  across the switch (`worker/switch.test.ts`).
 - **chat** — run `pnpm chat-server`, then open the page in several tabs (or
   browsers) and hop between rooms. Each room is one server-side process,
   spawned on first lookup and evicted when idle — one node process holds

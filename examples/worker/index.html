@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Worker — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .frames { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .sweep { position: relative; width: 56px; height: 56px; flex: none; border: 1px solid var(--line); border-radius: 50%; }
+  .hand { position: absolute; left: 50%; top: 50%; width: 2px; height: 22px; margin-left: -1px; background: var(--accent); transform-origin: 50% 0; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>The wire over a Web Worker</h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>A transport is anything that carries ordered, reliable strings, so the port between two threads is one. The worker hosts a registry; the tab connects to it. That is the entire worker file:</p>
+<pre><code><span class="k">import</span> { define, registry } <span class="k">from</span> <span class="s">'@nonchalant/core'</span>
+<span class="k">import</span> { expose } <span class="k">from</span> <span class="s">'@nonchalant/wire'</span>
+<span class="k">import</span> { portTransport, workerEndpoint } <span class="k">from</span> <span class="s">'../lib/port.ts'</span>
+<span class="k">import</span> { primes } <span class="k">from</span> <span class="s">'./primes.ts'</span>
+
+expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))</code></pre>
+<p>and the tab looks the process up the way it looks up anything else:</p>
+<pre><code><span class="k">const</span> there = connect&lt;Lab&gt;(portTransport(<span class="k">new</span> Worker(<span class="k">new</span> URL(<span class="s">'./worker.ts'</span>, <span class="k">import</span>.meta.url), { type: <span class="s">'module'</span> })))
+<span class="k">const</span> here  = registry({ primes: define(primes) })   <span class="c">// the same definition, this thread</span></code></pre>
+<p>The switch flips between those two registries at runtime. <code>start</code>, <code>stop</code> and <code>reset</code> are the same casts either way; the state arrives as the same patches. What differs is who does the arithmetic: on this thread the grinder shares the frame budget with the hand, and the worst-frame number climbs from about 17 ms to the length of one chunk.</p>
+<p><code>portTransport</code> is userland — about twenty lines over <code>postMessage</code>, in <code>examples/lib/port.ts</code>. It needs no reconnect story: a port never drops, and messages posted before the worker has evaluated its script are queued rather than lost.</p>
+<pre><code><span class="k">export function</span> portTransport(port: Endpoint): Transport {
+  <span class="k">let</span> handlers: TransportHandlers | <span class="k">null</span> = <span class="k">null</span>
+  port.addEventListener(<span class="s">'message'</span>, (ev) =&gt; {
+    <span class="k">if</span> (<span class="k">typeof</span> ev.data === <span class="s">'string'</span>) handlers?.message(ev.data)
+  })
+  <span class="k">return</span> {
+    send: (data) =&gt; port.postMessage(data),
+    subscribe: (h) =&gt; { handlers = h; queueMicrotask(() =&gt; h.open?.()); <span class="k">return</span> () =&gt; { handlers = <span class="k">null</span> } },
+  }
+}</code></pre>
+<p>Only state crosses the port. The thousands of primes the process has found live in a plain array inside it; each yield carries the counters and the last six. The full list is one <code>ask()</code> away — a correlated request, answered over the same port.</p>
+</aside>
+</div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

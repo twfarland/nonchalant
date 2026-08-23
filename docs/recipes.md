@@ -129,6 +129,26 @@ tab connects as a client. Close the hosting tab and the lock — and the hosting
 job — moves to another. The protocol never assumed a server, just a transport.
 `examples/multi-tab`.
 
+## A Web Worker — the wire between threads
+
+A transport carries ordered, reliable strings; the port to a worker is one. The
+worker calls `expose(registry({...}), portTransport(workerEndpoint()))`, the tab
+calls `connect(portTransport(new Worker(...)))`, and a heavy process runs off
+the thread that draws while its state arrives as ordinary patches. The transport
+is ~20 lines of userland `postMessage` (`examples/lib/port.ts`) and needs no
+reconnect story: a port does not drop.
+
+Two things to keep in mind when a process grinds on its own:
+
+- Chunk the work and drive the next chunk with a **timer**, not a bare
+  `self.send` — a mailbox loop that re-sends synchronously resolves in
+  microtasks, and the event loop never turns again, so nothing else is heard.
+- Yield the small thing. Keep the working set in the process (a plain local
+  array) and let `ask()` fetch it when someone actually wants it; every yield
+  is a diff that has to cross.
+
+`examples/worker`.
+
 ## Where are the operators?
 
 If you're arriving from RxJS or an FRP library: there's deliberately no

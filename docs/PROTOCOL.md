@@ -1,7 +1,7 @@
 # The Nonchalant wire protocol (rev 2)
 
-Transport-agnostic (WebSocket, BroadcastChannel, in-memory, anything ordered and
-reliable). Carries **state patches of plain data — never markup, never code**.
+Transport-agnostic (WebSocket, BroadcastChannel, a worker port, in-memory —
+anything ordered and reliable). Carries **state patches of plain data — never markup, never code**.
 Any language can implement the host half; this file plus the conformance vectors
 (`packages/wire/spec/vectors/*.json`, format in `packages/wire/spec/README.md`)
 are the contract. External hosts certify against the same vectors the reference
