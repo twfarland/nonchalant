@@ -328,7 +328,7 @@ export function spawnProcess<T, In, A>(
         ? errorValue
         : new Error(`nonchalant: process ${phase === 'disposed' ? 'disposed' : 'ended'}`),
     )
-    disposeChildren() // owned children die last (dispose order per DESIGN)
+    disposeChildren() // owned children die last: mailbox, then finally blocks, then children
     await Promise.all([...childSettlements])
     if (parent !== null) parent.children.delete(core)
     internal?.onSettled?.()

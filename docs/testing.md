@@ -77,10 +77,15 @@ just closures over `send`:
 
 ```ts
 const tree = TodoItem(store, { id: 1, title: 'milk', done: false })
-const checkbox = tree.children[0].children[0]          // typed plain data
+const checkbox = tree.children[0].children[0]           // typed plain data
 checkbox.attrs.onchange()                               // handlers are closures
-expect((await it.next()).value.todos[0].done).toBe(true)
+await tick()                                            // the cast reaches the mailbox
+expect(store().todos[0]!.done).toBe(true)               // the store moved
 ```
+
+The handler is a closure over `send`, so the assertion is about the state
+process, not the tree: one `await tick()` (`new Promise((r) => setTimeout(r, 0))`)
+lets the mailbox turn before the store publishes its next value.
 
 When you do want real nodes, happy-dom runs the sink fast, and the DOM-write
 spies in `packages/dom/test/dom.test.ts` show how to assert granularity

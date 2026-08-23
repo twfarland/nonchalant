@@ -117,7 +117,9 @@ reconcile by key — that's the one diff this library keeps, it's local to the
 list, and it's honest about it: same key patches in place, `key: 0` counts,
 identical vnodes are skipped entirely, removals can wait for an `exit`
 transition. A promise in a slot occupies only its own slot while pending;
-a binding that throws keeps its previous content and logs.
+a binding that throws keeps its previous content and reports the failure —
+`onRenderError(handler)` routes those reports to your error reporting instead
+of the console.
 
 Strings are never parsed as markup, so injected HTML in your data is inert
 text — asserted, along with tables, SVG, and the other classic string-renderer
@@ -158,12 +160,17 @@ flowchart LR
     end
     T <--> T2
 ```
-`expose(reg, transport)` serves a registry; `connect(transport)` gives you the
-same lookup interface backed by the other side. Under the hood each remote
-process is a local process that applies incoming patches, which is why remote
-reads are just as fine-grained as local ones, a crash on the host shows up as
-`stale: true` here, and reconnecting is nothing special: look the name up
-again, get the full state, diff it against what you kept.
+`expose(reg, transport, opts?)` serves a registry — in fact anything with a
+`lookup` method, which is the seam per-connection scoping uses, and `opts`
+carries `maxWatches` to cap how many refs one session may hold open.
+`connect(transport)` gives you the same lookup interface backed by the other
+side. Under the hood each remote process is a local process that applies
+incoming patches, which is why remote reads are just as fine-grained as local
+ones, a crash on the host shows up as `stale: true` here, and reconnecting is
+nothing special: look the name up again, get the full state, diff it against
+what you kept. The WebSocket transport redials on its own, with exponential
+backoff jittered to 50–100% of each step so a fleet of clients doesn't
+stampede a restarting host; `retryDelay` tunes the base.
 
 The format is documented for other languages in `packages/wire/spec/` — the
 JSON vectors there are the contract, and this repo's CI runs them too.

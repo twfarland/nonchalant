@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nonchalant — a state-process runtime for TypeScript</title>
+<meta name="description" content="A UI library built on one primitive: a process. Plain-let state, messages in, snapshots out, and the same unit whether it runs in this tab or on a server.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23131312'/%3E%3Cpath d='M9 22V10l14 12V10' stroke='%23F5F5F4' stroke-width='2.5' fill='none' stroke-linecap='square'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..600&display=swap">
+<link rel="stylesheet" href="./site/styles.css">
+</head>
+<body>
+
+<div class="page">
+
+<nav class="topnav">
+  <a class="brand" href="#top">NONCHALANT</a>
+  <a href="#idea">The idea</a>
+  <a href="#get">Get it</a>
+  <a href="#process">The primitive</a>
+  <a href="#demos">Live demos</a>
+  <a href="#updates">Updates</a>
+  <a href="#wire">The wire</a>
+  <a href="#more">Read more</a>
+  <span class="spacer"></span>
+  <a href="https://github.com/twfarland/nonchalant">GitHub</a>
+</nav>
+
+<header class="mast" id="top">
+  <div class="eyebrow">TypeScript &nbsp;·&nbsp; MIT &nbsp;·&nbsp; core + DOM under 13&nbsp;KB gzipped</div>
+  <h1>Nonchalant</h1>
+  <p class="deck">One primitive. A process owns its state, takes messages in order, publishes snapshots, and does not care which side of the wire it runs on.</p>
+  <hr class="mast-rule">
+  <div class="mast-meta">
+    <span>Async generators, plain <code>let</code> state</span>
+    <span>Views run once</span>
+    <span>Fine-grained updates, no compiler</span>
+    <span>Experimental — not yet on npm</span>
+  </div>
+</header>
+
+<section id="idea">
+  <div class="sec-head"><span class="sec-num">01</span><h2>The idea</h2></div>
+
+  <p class="lede">A generator already has the three things a piece of application state needs: local variables to hold it, a loop to take input in order, and an end. Nonchalant runs that generator and gives you a handle to it.</p>
+
+  <p>You write a process as an async generator. <code>spawn</code> runs it and hands back a typed handle you can read, send to, ask, iterate, and dispose. State is ordinary <code>let</code> variables; input is <code>for await</code>; output is <code>yield</code>. There is no store, no reducer registration, no dependency array.</p>
+
+<pre><code data-ts>
+import { spawn } from '@nonchalant/core'
+import type { Self } from '@nonchalant/core'
+import { mount } from '@nonchalant/dom'
+import { button, div, span } from '@nonchalant/dom/tags'
+
+const counter = spawn(async function* (self: Self&lt;number&gt;) {
+  let n = 0                          // this is the state
+  yield n
+  for await (const d of self) {      // this is the input
+    n += d
+    yield n                          // this is the output
+  }
+}, undefined, { initial: 0 })
+
+mount(document.getElementById('app')!, div({},
+  button({ onclick: () =&gt; counter.send(-1) }, '−'),
+  span({}, counter),                 // a live binding
+  button({ onclick: () =&gt; counter.send(1) }, '+')))
+</code></pre>
+
+  <p>That same unit scales up without changing shape. A widget's state is a process. Shared application state is a process, reached by name. A cached query is a process with an idle timeout. A process on a server is the same process, reached through a transport instead of a function call.</p>
+
+  <div class="note"><b>What it is not.</b> Not a React-compatible component model, not an Erlang runtime, not a complete query client. It is an experiment in how far one primitive goes — and it is honest about the edges, which are written down rather than glossed.</div>
+</section>
+
+<section id="get">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Get it</h2></div>
+
+  <p>The packages are not published yet — the npm scope claim and first release are still to come. For now it is a clone-and-explore library:</p>
+
+<pre><code>git clone https://github.com/twfarland/nonchalant
+cd nonchalant
+pnpm install
+
+pnpm dev     # this site at /, the example gallery at /examples/
+pnpm test    # the whole suite, including the perf, size, and DOM-write budgets
+pnpm check   # strict TypeScript across packages, examples, and this site</code></pre>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>@nonchalant/core</h4>
+      <p>The process runtime, the reactive graph, the structural diff, and the registry. Zero dependencies, never touches the DOM.</p>
+    </div>
+    <div class="card">
+      <h4>@nonchalant/dom</h4>
+      <p>Tag constructors and the DOM sink. Builds nodes with <code>createElement</code> only — no string is ever parsed as markup.</p>
+    </div>
+    <div class="card">
+      <h4>@nonchalant/wire</h4>
+      <p>The eight-op protocol, its codec, and transports. Isomorphic and DOM-free, with cross-language conformance vectors.</p>
+    </div>
+    <div class="card">
+      <h4>@nonchalant/host</h4>
+      <p>The Node WebSocket host: origin policy, handshake authorization, per-connection scoping, and connection limits.</p>
+    </div>
+  </div>
+</section>
+
+<section id="process">
+  <div class="sec-head"><span class="sec-num">03</span><h2>The primitive</h2></div>
+
+  <p>One noun with two faces. <strong>Process</strong> is what a holder of the running thing can do; <strong>Self</strong> is what the generator itself receives.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>From the outside</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>p()</code></td><td>Read the latest value, synchronously. Inside a binding, effect, or derive this also subscribes — by path. Anywhere else it is just a read.</td></tr>
+      <tr><td><code>p.send(msg)</code></td><td>Fire-and-forget. Exists only if the message type has plain messages.</td></tr>
+      <tr><td><code>p.ask(msg)</code></td><td>Request/response, typed. Exists only if the message type has <code>Call</code> messages. Rejects if the process crashes, ends, or is disposed.</td></tr>
+      <tr><td><code>p.pending</code> / <code>p.stale</code> / <code>p.error</code></td><td>Lifecycle as ordinary reads. Loading and failure states are values, not a separate mechanism.</td></tr>
+      <tr><td><code>for await (v of p)</code></td><td>A lossy latest-value stream. You always get the newest, never a backlog.</td></tr>
+      <tr><td><code>p[Symbol.dispose]()</code></td><td>Teardown: the mailbox closes, the signal aborts, finalizers run, owned children die with it.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>From the inside</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>for await (msg of self)</code></td><td>The mailbox, in order. Messages queue while you are busy — sequential handling is the default, so a double-submit queues instead of racing.</td></tr>
+      <tr><td><code>self.latest()</code></td><td>Skip to the newest message and drop the rest. What a typeahead wants.</td></tr>
+      <tr><td><code>self.signal</code></td><td>An <code>AbortSignal</code> that fires on dispose or crash. Thread it into every fetch.</td></tr>
+      <tr><td><code>self.send(msg)</code></td><td>Post to your own mailbox — the actor self-send, for background work reporting back.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>A message that expects an answer is a <code>Call</code>, and the compiler keeps the two straight: it refuses to <code>send</code> a call or <code>ask</code> a cast.</p>
+
+<pre><code data-ts>
+type CartMsg =
+  | { type: 'add'; item: Item }                                   // a cast
+  | Call&lt;{ type: 'checkout' }, { ok: boolean; charged: number }&gt;  // a call
+
+cart.send({ type: 'add', item })                 // fine
+const res = await cart.ask({ type: 'checkout' }) // res is typed; a crash rejects it
+</code></pre>
+</section>
+
+<section id="demos">
+  <div class="sec-head"><span class="sec-num">04</span><h2>Live demos</h2></div>
+
+  <p class="lede">Every demo below is running on this page right now — the real library, no server anywhere. The listing under each one is the program above it: the same file, imported twice, once to run and once to read.</p>
+
+  <div class="demo" data-demo="counter">
+    <div class="demo-head">
+      <span class="demo-title">Counter</span>
+      <span class="demo-note">state in, messages out · click fast: the mailbox queues them</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <div class="demo" data-demo="todos">
+    <div class="demo-head">
+      <span class="demo-title">Todos</span>
+      <span class="demo-note">one process owns the list · keyed rows</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <div class="demo" data-demo="typeahead">
+    <div class="demo-head">
+      <span class="demo-title">Typeahead</span>
+      <span class="demo-note">self.latest() conflates queued input</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <div class="demo" data-demo="form">
+    <div class="demo-head">
+      <span class="demo-title">Form</span>
+      <span class="demo-note">ask() — a submit that learns its own outcome</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <div class="demo" data-demo="drag">
+    <div class="demo-head">
+      <span class="demo-title">Drag</span>
+      <span class="demo-note">a gesture with a lifetime</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <div class="demo" data-demo="shared">
+    <div class="demo-head">
+      <span class="demo-title">Shared state</span>
+      <span class="demo-note">lookup(name, args) is get-or-spawn</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <div class="note">
+    <b>More, and bigger.</b> The full ladder — TodoMVC, a router with code splitting, undo/redo as function composition, a query cache with write-through mutations, a canvas and a DOM renderer driven by one process, the seven GUIs, and a 60&nbsp;fps Mario — is in the <a href="./examples/">example gallery</a>. Everything there runs in the browser alone except the chat demo, which wants a local WebSocket host.
+  </div>
+</section>
+
+<section id="updates">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Why the updates stay small</h2></div>
+
+  <p>You write ordinary immutable updates. Every yield is diffed structurally against the previous snapshot, and a reader wakes only if a path it actually read is in the diff.</p>
+
+<pre><code data-ts>
+s = { ...s, total: s.total + item.price }   // an ordinary immutable update
+yield s                                     // diffed → only /total readers wake;
+                                            // a binding on items[3].done sleeps through it
+</code></pre>
+
+  <p>Nothing declares its dependencies. Reads inside a tracked context go through a short-lived recording proxy, so the set of paths a binding depends on is observed rather than annotated — which is why there are no dependency arrays, no memos, and no re-render tax to defend against. Views run once and never rebuild; structural change is expressed as keyed lists or swapped regions.</p>
+
+  <p>The claims are CI assertions, not adjectives:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Budget</th><th>Enforced in</th></tr></thead>
+    <tbody>
+      <tr><td>1 changed row in 10,000 diffs in ≤ 100 µs</td><td><code>reconcile.perf.test.ts</code></td></tr>
+      <tr><td>One changed label in a 50-row list is one DOM write</td><td><code>dom.test.ts</code></td></tr>
+      <tr><td>A 60 fps game: 1 view yield, ≤ 3 DOM writes per frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
+      <tr><td>core ≤ 8 KB gzip, core + DOM ≤ 13 KB, wire ≤ 9.5 KB</td><td><code>size.test.ts</code></td></tr>
+      <tr><td>Nothing retained after dispose</td><td><code>process.leaks.test.ts</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="wire">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Over the wire</h2></div>
+
+  <p><code>lookup(name, args)</code> is one operation doing three jobs: dependency injection, query caching, and — once a transport is involved — remote addressing. Swapping a local registry for a connection keeps the interface, so the process and the view do not change:</p>
+
+<pre><code data-ts>
+const shop = registry({ cart: define(cart) })                  // state lives in this tab
+const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))      // state lives on a server
+</code></pre>
+
+  <p>What crosses is a patch of plain data — never markup, never code — so the browser keeps rendering and local interaction, and any language can implement the host half against the conformance vectors. A crashed process on the host shows up here as <code>stale: true</code> with the last value intact; reconnecting is not a special case, just a re-lookup that answers with a full snapshot.</p>
+
+  <div class="note"><b>These demos need a terminal, not a server you have to deploy.</b> The chat room and the shared cart run against a local Node host — <code>pnpm chat-server</code> or <code>pnpm cart-server</code>, then open the page from <code>pnpm dev</code>. The shared-cart page also runs standalone with its state in the tab: one commented line swaps between the two. Before putting a host on the internet, read <a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a> — origin policy, authorization, per-connection scoping, and the limits that are not on by default.</div>
+
+  <p>One demo needs no server but does need two tabs: <a href="./examples/multi-tab/">multi-tab</a> elects one tab as the host over a <code>BroadcastChannel</code>, and moves the job when you close it. Open it twice.</p>
+</section>
+
+<section id="more">
+  <div class="sec-head"><span class="sec-num">07</span><h2>Read more</h2></div>
+
+  <p>This page is the short version. The written documentation goes considerably deeper, and every performance or granularity claim in it points at the test that enforces it.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Document</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/tutorial.md">Thinking in processes</a></td><td>The tutorial: build a cart, end with it on a server.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/concepts.md">Concepts</a></td><td>The reference — each concept, its contract, and its test.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/recipes.md">Recipes</a></td><td>Typeahead, forms, query cache, routing, undo/redo, drag, durable processes.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/testing.md">Testing</a></td><td>Driving generators directly; tests as message/yield transcripts.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/migration.md">Migration</a></td><td>Coming from React, Solid, or LiveView — including what you give up.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a></td><td>Origins, authorization, connection scoping, deployment boundaries.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/PROTOCOL.md">Protocol</a></td><td>The eight-op data wire and its conformance rules.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/internals/README.md">Internals</a></td><td>Contributor notes: how core is built, and the invariants that hold it together.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Prior art it stands on</h3>
+  <p><a href="https://github.com/stackblitz/alien-signals">alien-signals</a> for the propagation core, which is a faithful port. <a href="https://crank.js.org">Crank</a> for the proof that generator components with plain-local state feel right. Erlang/OTP for mailboxes, casts and calls, and named processes. TanStack Query for cache keys, sharing, and idle eviction. Solid and lit-html for the localized keyed diff. LiveView for server-held state — with data patches here instead of HTML.</p>
+</section>
+
+<footer>
+  Nonchalant — an experimental TypeScript runtime for stateful async-generator processes.<br>
+  MIT © Tim Farland · <a href="https://github.com/twfarland/nonchalant">github.com/twfarland/nonchalant</a> · Demos on this page run entirely in your browser.
+</footer>
+
+</div>
+
+<script type="module" src="./site/main.ts"></script>
+</body>
+</html>

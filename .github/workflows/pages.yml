@@ -1,0 +1,64 @@
+# Builds the documentation site and the example gallery, and publishes them to
+# GitHub Pages. No build output is committed — the artifact is produced here.
+#
+# One-time setup: repository Settings → Pages → Source: "GitHub Actions".
+
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; queue at most one behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # the site is type-checked with everything else, so a broken demo fails
+      # the deploy rather than shipping
+      - run: pnpm check
+
+      # the demos are the documentation: if one stops rendering, do not publish.
+      # Only this file — the perf and size budgets are timing-sensitive on
+      # shared runners and are not a reason to block a docs deploy.
+      - run: npx vitest run site/site.test.ts
+
+      # base must match the project-page path: https://<user>.github.io/<repo>/
+      - run: pnpm build:site --base=/${{ github.event.repository.name }}/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

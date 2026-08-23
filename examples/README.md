@@ -7,12 +7,12 @@ are self-contained — no backends required.
 | example | shows |
 |---|---|
 | `counter/` | widget state as a closed-over `cell`; a Process as a live slot |
-| `todomvc/` | one state process + one view; the keyed list patches one row at a time |
+| `todomvc/` | ⏱ one state process + one view; the keyed list patches one row at a time |
 | `typeahead/` | `latest()` queue conflation, lifetime abort via `self.signal` |
 | `form/` | `ask()` — a submit that learns its own outcome (try someone@taken.com) |
 | `router/` | pages as view processes over the userland router in `lib/router.ts` |
 | `undo-redo/` | middleware as function composition over `channel` |
-| `query/` | server state the process way: queries as definitions, mutations as `ask()` |
+| `query/` | ⏱ server state the process way: queries as definitions, mutations as `ask()` |
 | `drag/` | a gesture with a lifetime: born on pointerdown, dead on pointerup |
 | `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |

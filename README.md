@@ -12,6 +12,10 @@ transport? It is not a React-compatible component model, an Erlang runtime, or
 a complete query client. The useful part is the combination of sequential
 messages, fine-grained snapshot reads, ownership, and a small data-only wire.
 
+**[twfarland.github.io/nonchalant](https://twfarland.github.io/nonchalant/)** —
+the short version, with the demos running on the page and the whole example
+gallery alongside it.
+
 ```ts
 import { spawn } from '@nonchalant/core'
 import type { Self } from '@nonchalant/core'
@@ -112,20 +116,6 @@ const it = todosProc(self, undefined)
 expect((await it.next()).value.todos).toHaveLength(1)
 ```
 
-```mermaid
-flowchart LR
-    subgraph tab [this tab]
-        V["view bindings"] -->|"send / ask"| L["registry.lookup(name)"]
-        L --> P1[["your process"]]
-        P1 -->|"yield → diff → wake by path"| V
-    end
-    subgraph server [or a server]
-        P2[["the same process"]]
-    end
-    L -.->|"connect(transport)"| W["8-op wire, JSON patches"]
-    W -.-> P2
-```
-
 - **A language-agnostic wire.** Eight JSON ops carrying state patches — never
   markup, never code. The conformance vectors in `packages/wire/spec/` are the
   contract; any language can implement the host half.
@@ -152,9 +142,10 @@ BEAM-style preemption.
 
 ```sh
 pnpm install
-pnpm dev       # opens the example gallery
-pnpm test      # the whole suite, including the perf/size/granularity budgets
-pnpm check     # strict TypeScript across packages and examples
+pnpm dev         # the doc site at /, the example gallery at /examples/
+pnpm test        # the whole suite, including the perf/size/granularity budgets
+pnpm check       # strict TypeScript across packages, examples, and the site
+pnpm build:site  # the static site, as GitHub Pages publishes it
 ```
 
 ## Learn it
@@ -169,6 +160,7 @@ pnpm check     # strict TypeScript across packages and examples
 | [Hosting safely](docs/hosting.md) | authentication, browser origins, and deployment boundaries |
 | [Protocol](docs/PROTOCOL.md) | the data wire and conformance rules |
 | [Examples](examples/README.md) | the demo ladder |
+| [Internals](docs/internals/README.md) | contributor notes: how core is built, and its invariants |
 
 ## Packages
 
@@ -177,7 +169,7 @@ pnpm check     # strict TypeScript across packages and examples
 | `@nonchalant/core` | `Process`, `spawn`, `derive`, the registry, `reconcile`, the reactive graph. Zero dependencies, no DOM. |
 | `@nonchalant/dom` | tag constructors, `h()`, the DOM sink, keyed reconciliation, `mount`. |
 | `@nonchalant/wire` | the protocol, codec, transports (WebSocket, BroadcastChannel, in-memory), `connect`. Isomorphic. |
-| `@nonchalant/host` | the Node WebSocket host, including handshake authorization and origin policy hooks. |
+| `@nonchalant/host` | the Node WebSocket host: handshake authorization, origin policy, per-connection registry scoping, and connection limits. |
 
 ## Credits and prior art
 

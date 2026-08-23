@@ -14,7 +14,7 @@ Client → host:
     { op: "lookup", ref, name, args? }  // get-or-spawn by schema name; args are data
     { op: "send",   ref, msg }          // cast: fire-and-forget
     { op: "call",   ref, id, msg }      // ask(): correlated request
-    { op: "exit",   ref }               // release; host disposes when unwatched
+    { op: "exit",   ref }               // release this watch; see Semantics for reclamation
 
 Host → client:
 
@@ -76,13 +76,19 @@ sequenceDiagram
   all pending calls for the ref. No further yields arrive until a re-lookup.
 
 The reference implementation emits `{ message, id? }`; hosts may add fields.
-A lookup for a name outside the schema MUST answer with a process-level raise.
+A lookup for a name outside the schema MUST answer with a process-level raise,
+and a lookup a host refuses for resource reasons (a per-session watch cap, for
+example) answers the same way — the ref simply never becomes watched.
 
 ## Semantics
 
 - `lookup` is get-or-spawn against the host's **published schema** — the schema
   is simultaneously the type contract and the security whitelist. Nothing
   outside it can be spawned remotely.
+- `exit` releases the client's watch, not the process. Whether the process is
+  then reclaimed is the host registry's business: the reference implementation
+  disposes it once no watcher remains *and* its definition declares an idle
+  timeout, so a definition without one stays resident until the host evicts it.
 - One `reply` per `call` id; a crashed process rejects its pending calls
   rather than silently retrying.
 - Casts arriving while a process is restarting are retained in a bounded

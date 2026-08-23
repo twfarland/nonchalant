@@ -1,0 +1,165 @@
+// @vitest-environment happy-dom
+//
+// The site's demos are documentation that executes, so a demo that stops
+// rendering is a broken doc page. This mounts each one the way the page does
+// and drives the interactions the captions promise.
+
+import { describe, it, expect } from 'vitest'
+import { flush } from '@nonchalant/core'
+import { highlight } from './highlight.ts'
+import { run as counter } from './demos/counter.ts'
+import { run as todos } from './demos/todos.ts'
+import { run as typeahead } from './demos/typeahead.ts'
+import { run as form } from './demos/form.ts'
+import { run as drag } from './demos/drag.ts'
+import { run as shared } from './demos/shared.ts'
+
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+const host = (): HTMLElement => {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  return el
+}
+
+const settle = async (): Promise<void> => {
+  await tick()
+  flush()
+}
+
+describe('site demos', () => {
+  it('counter counts both ways, and same-tick clicks queue instead of racing', async () => {
+    const el = host()
+    counter(el)
+    await settle()
+    const [minus, plus] = [...el.querySelectorAll('button')]
+    expect(el.querySelector('.count')?.textContent).toBe('0')
+
+    plus?.click()
+    await settle()
+    expect(el.querySelector('.count')?.textContent).toBe('1')
+
+    // three clicks in one tick: deltas queue in the mailbox and all three land,
+    // which a read-modify-write (`send(count() - 1)`) would lose
+    minus?.click()
+    minus?.click()
+    minus?.click()
+    await settle()
+    expect(el.querySelector('.count')?.textContent).toBe('-2')
+  })
+
+  it('todos renders its seed rows, adds, toggles, and removes', async () => {
+    const el = host()
+    todos(el)
+    await settle()
+    expect(el.querySelectorAll('li').length).toBe(2)
+
+    const field = el.querySelector('input[type="text"]') as HTMLInputElement
+    field.value = 'write the docs'
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    expect(el.querySelectorAll('li').length).toBe(3)
+    expect(field.value).toBe('') // the field clears itself
+
+    const secondRow = el.querySelectorAll('li')[1] as HTMLElement
+    ;(secondRow.querySelector('input[type="checkbox"]') as HTMLInputElement).click()
+    await settle()
+    expect(secondRow.querySelector('span')?.getAttribute('class')).toBe('done')
+
+    ;(secondRow.querySelector('button') as HTMLButtonElement).click()
+    await settle()
+    expect(el.querySelectorAll('li').length).toBe(2)
+  })
+
+  it('typeahead starts empty and searches on input', async () => {
+    const el = host()
+    typeahead(el)
+    await settle()
+    expect(el.querySelector('.muted')?.textContent).toBe('0 matches')
+
+    const field = el.querySelector('input') as HTMLInputElement
+    field.value = 'berry'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    expect(el.querySelector('.muted')?.textContent).toBe('searching…')
+
+    await new Promise((resolve) => setTimeout(resolve, 500)) // the fake API's latency
+    flush()
+    expect(el.querySelectorAll('li').length).toBeGreaterThan(0)
+  })
+
+  it('form replies to ask() with the outcome, both ways', async () => {
+    const el = host()
+    form(el)
+    await settle()
+    expect(el.querySelector('.readout')?.textContent).toBe('awaiting submit')
+
+    const field = el.querySelector('input') as HTMLInputElement
+    const submit = el.querySelector('button') as HTMLButtonElement
+
+    field.value = 'nope'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    submit.click()
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    flush()
+    expect(el.querySelector('.readout')?.textContent).toBe('that is not an email')
+
+    field.value = 'me@example.com'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    submit.click()
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    flush()
+    expect(el.querySelector('.readout')?.textContent).toBe('signed up')
+  })
+
+  it('drag renders a draggable box', async () => {
+    const el = host()
+    drag(el)
+    await settle()
+    expect(el.querySelector('.dragfield')).not.toBeNull()
+    expect(el.querySelector('.dragbox')?.textContent).toBe('drag me')
+  })
+
+  it('shared state: two panels built apart move together', async () => {
+    const el = host()
+    shared(el)
+    await settle()
+    const readout = (): string => el.querySelector('.readout')?.textContent ?? ''
+    expect(readout()).toBe('0 items · $0')
+
+    const add = [...el.querySelectorAll('button')].find((b) => b.textContent === 'add boots')
+    add?.click()
+    await settle()
+    expect(readout()).toBe('1 item · $120') // panel two saw panel one's message
+    expect(el.querySelectorAll('li').length).toBe(1)
+
+    const clear = [...el.querySelectorAll('button')].find((b) => b.textContent === 'clear')
+    clear?.click()
+    await settle()
+    expect(readout()).toBe('0 items · $0')
+  })
+})
+
+describe('the plain highlighter', () => {
+  it('marks keywords, strings, and comments', () => {
+    expect(highlight('const x = 1')).toBe('<span class="k">const</span> x = 1')
+    expect(highlight("'hi'")).toBe('<span class="s">\'hi\'</span>')
+    expect(highlight('// note')).toBe('<span class="c">// note</span>')
+  })
+
+  it('escapes markup so source can never become HTML', () => {
+    expect(highlight('a < b && c > d')).toBe('a &lt; b &amp;&amp; c &gt; d')
+    expect(highlight('"<script>"')).toBe('<span class="s">"&lt;script&gt;"</span>')
+  })
+
+  it('does not find keywords inside strings or comments', () => {
+    expect(highlight("'const'")).toBe('<span class="s">\'const\'</span>')
+    expect(highlight('// const')).toBe('<span class="c">// const</span>')
+    expect(highlight('constant')).toBe('constant') // whole words only
+  })
+
+  it('handles escaped quotes and unterminated comments without hanging', () => {
+    expect(highlight("'it\\'s'")).toBe('<span class="s">\'it\\\'s\'</span>')
+    expect(highlight('/* open')).toBe('<span class="c">/* open</span>')
+  })
+})

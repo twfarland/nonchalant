@@ -115,9 +115,9 @@ mount(document.getElementById('app')!, CartView(cart))
 
 There's no re-render. The function runs once; after that, changes flow through
 the bindings to exactly the DOM they affect. Widget-local state is just a
-process you close over — see `examples/counter`, where `cell(0)` is five lines
-of sugar over `spawn`. When the widget is built inside a view process, its
-cells belong to that process and are disposed with it.
+process you close over — see `examples/counter`, which holds its state in
+`cell(0)`, core's small sugar over `spawn`. When the widget is built inside a
+view process, its cells belong to that process and are disposed with it.
 
 ## 5. When you need an answer, ask
 

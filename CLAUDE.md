@@ -8,7 +8,8 @@ the model; `README.md` is the front page.
 ## Commands
 - `pnpm check` — strict tsc over all packages, examples, and tests
 - `pnpm test` — vitest (unit, property, leak, perf, size, and golden budgets)
-- `pnpm dev` — vite; opens the example gallery at /examples/
+- `pnpm dev` — vite; the doc site at /, the example gallery at /examples/
+- `pnpm build:site` — the static Pages build (doc site + gallery) into `dist/`
 - `pnpm cart-server` — the shared-cart demo's WebSocket host
 
 ## Hard rules
@@ -103,6 +104,13 @@ Structure:
 - `packages/host` — the Node WebSocket host.
 - `examples/` — the demo ladder (see its README); `mario/` and `7guis/cells`
   carry their own test files.
+- `docs/internals/` — contributor notes on core's mechanisms and invariants
+  (reconcile, track, graph, process, registry), with an architecture overview
+  in its README. Update these when you change how a mechanism works.
+- `index.html` + `site/` — the GitHub Pages doc site. Its demos in
+  `site/demos/` are imported twice, as code that runs and as text that is
+  displayed, so a listing can never drift from its demo; `site.test.ts` drives
+  every one of them. `vite.config.ts` builds it with the example gallery.
 
 ## Known sharp edges (leave signposts if you touch them)
 - Ownership is ambient only during the synchronous window of a process
@@ -116,6 +124,7 @@ Structure:
   `track.ts`.
 
 ## Status
-Implementation and docs are complete and tested. Not yet done: npm scope claim
-and first publish, Changesets, a hosted docs site, js-framework-benchmark
-submission (the app exists in examples/).
+Implementation and docs are complete and tested. The Pages site is built and
+deployed by `.github/workflows/pages.yml` — it needs Settings → Pages → Source
+set to "GitHub Actions" once. Not yet done: npm scope claim and first publish,
+Changesets, js-framework-benchmark submission (the app exists in examples/).

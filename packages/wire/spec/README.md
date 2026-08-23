@@ -8,7 +8,14 @@ same files.
 
 ## patches.json
 
-Patch-application semantics — what `applyPatch(prev, patch)` must do:
+Patch-application semantics — what `applyPatch(prev, patch)` must do. The file
+is an envelope holding the cases:
+
+```json
+{ "description": "...", "cases": [ <case>, ... ] }
+```
+
+Each case is one of:
 
 ```json
 { "name": "...", "prev": <Json>, "patch": [<Op>...], "next": <Json> }
@@ -31,8 +38,14 @@ Patch-application semantics — what `applyPatch(prev, patch)` must do:
 
 ## session-*.json
 
-Scripted host sessions over the canonical **counter** process, which every
-certifying host implements from this description:
+Scripted host sessions over the canonical **counter** process. Each file is an
+envelope holding the ordered steps:
+
+```json
+{ "description": "...", "steps": [ <step>, ... ] }
+```
+
+Every certifying host implements the counter from this description:
 
 - schema name `"counter"`, args `{ "start": number }`
 - state: `{ "n": number }`, first yield is the full initial state

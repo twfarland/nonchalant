@@ -9,7 +9,9 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "vite --open /examples/",
+    "dev": "vite --open /",
+    "build:site": "vite build",
+    "preview:site": "vite preview",
     "cart-server": "vite-node examples/shared-cart/server.ts",
     "chat-server": "vite-node examples/chat/server.ts"
   },
