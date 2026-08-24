@@ -131,7 +131,13 @@ function setAttrValue(el: Element, name: string, v: unknown): void {
     ;(el as unknown as Record<string, unknown>)[name] = v
     return
   }
-  if (v === null || v === undefined || v === false) el.removeAttribute(name)
+  if (v === null || v === undefined) return void el.removeAttribute(name)
+  // aria-* takes enumerated strings, not HTML boolean presence: aria-pressed
+  // must read "false", and an absent one means "not a toggle" instead
+  if (typeof v === 'boolean' && name.startsWith('aria-')) {
+    return void el.setAttribute(name, v ? 'true' : 'false')
+  }
+  if (v === false) el.removeAttribute(name)
   else if (v === true) el.setAttribute(name, '')
   else el.setAttribute(name, String(v))
 }

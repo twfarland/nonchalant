@@ -132,6 +132,12 @@ a binding that throws keeps its previous content and reports the failure.
 `onRenderError(handler)` routes those reports to your error reporting instead
 of the console.
 
+Attribute values follow the platform: `false` and `null` remove an attribute,
+`true` sets it to the empty string, and anything else is stringified. The
+exception is `aria-*`, which takes enumerated strings rather than presence, so a
+boolean there renders as `"true"` or `"false"` — an absent `aria-pressed` means
+"not a toggle", which is not what `false` is claiming.
+
 Strings are never parsed as markup, so HTML in application data remains inert
 text. Tests also cover tables, SVG, and other common string-renderer
 failure modes, in `packages/dom/test/dom.test.ts`.

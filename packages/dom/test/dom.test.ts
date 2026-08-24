@@ -140,6 +140,22 @@ describe('dynamic slots', () => {
     active[Symbol.dispose]()
   })
 
+  it('a boolean attr is presence, but a boolean aria-* is the string it must be', async () => {
+    const root = container()
+    const pressed = cell(false)
+    mount(root, button({ disabled: pressed, 'aria-pressed': pressed }, 'toggle'))
+    const btn = root.querySelector('button')!
+    // ARIA is enumerated, not presence: an absent aria-pressed means "not a
+    // toggle at all", which is a different claim from "off"
+    expect(btn.hasAttribute('disabled')).toBe(false)
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+    pressed.cast(true)
+    await tick()
+    expect(btn.getAttribute('disabled')).toBe('')
+    expect(btn.getAttribute('aria-pressed')).toBe('true')
+    pressed[Symbol.dispose]()
+  })
+
   it('a promise slot holds only its own region: empty, then content', async () => {
     const root = container()
     let resolve!: (v: VNode) => void
