@@ -68,6 +68,17 @@ sharing, granularity.
   `disconnect()` / `reconnect()` / `settle()` — partition tests are three
   lines: `packages/wire/test/wire.test.ts`. The conformance vectors in
   `packages/wire/spec/` are the same idea across languages.
+- **Properties where a contract is universally quantified.** Four claims are
+  about *every* state, patch, or message rather than the cases we thought of,
+  so they are fast-check properties:
+  `reconcile(prev, next)` round-trips and never mutates its inputs
+  (`reconcile.test.ts`); a reader wakes whenever what it read changed and never
+  for a write that landed elsewhere (`graph.test.ts`); a decoded message is
+  always well formed and never decodes as the other direction
+  (`wire.test.ts`); and the client ends up holding exactly the host's state
+  whatever the order of messages and partitions (`wire.test.ts`). When you add
+  one, mutate the implementation to check the property actually fails — a
+  property that cannot fail is decoration.
 
 ## Views are data
 
@@ -103,3 +114,4 @@ budgets against it.
 | views test without a DOM | trees are plain data; handlers are closures |
 | granularity is countable | wakes and DOM writes are exact, so assert exact numbers |
 | partitions are a method call | the in-memory transport can split and heal |
+| contracts can be quantified | states, patches, and messages are plain data, so fast-check can generate them |

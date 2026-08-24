@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
+import fc from 'fast-check'
 import { define, effect, registry } from '@nonchalant/core'
-import type { Call, Definition, Proc } from '@nonchalant/core'
+import type { Call, Definition, Json, Patch, Proc } from '@nonchalant/core'
 import { connect, WireError } from '../src/client.ts'
 import { expose } from '../src/host.ts'
 import { decodeClient, decodeHost, encode, type ClientMsg, type HostMsg } from '../src/protocol.ts'
@@ -53,6 +54,76 @@ const setup = () => {
   return { link, reg, conn, teardown }
 }
 
+// ---------- arbitraries for the codec properties ----------
+
+const { json } = fc.letrec<{ json: Json }>((tie) => ({
+  json: fc.oneof(
+    { maxDepth: 3, withCrossShrink: true },
+    fc.constant(null),
+    fc.boolean(),
+    fc.integer(),
+    fc.string(),
+    fc.array(tie('json'), { maxLength: 4 }),
+    fc.dictionary(fc.string({ maxLength: 6 }), tie('json'), { maxKeys: 4 }).map((d) => ({ ...d })),
+  ),
+}))
+
+const path = fc.oneof(fc.constant(''), fc.array(fc.string({ maxLength: 4 }), { minLength: 1, maxLength: 3 })
+  .map((segs) => '/' + segs.map((s) => s.replace(/~/g, '~0').replace(/\//g, '~1')).join('/')))
+
+const patch: fc.Arbitrary<Patch> = fc.array(
+  fc.oneof(
+    fc.tuple(fc.constant('set' as const), path, json),
+    fc.tuple(fc.constant('del' as const), path),
+    fc.tuple(fc.constant('splice' as const), path, fc.nat(20), fc.nat(20), fc.array(json, { maxLength: 3 })),
+  ),
+  { maxLength: 4 },
+)
+
+const ref = fc.string({ maxLength: 8 })
+
+// optional fields are absent, never explicitly undefined: JSON has no such value
+const clientMsg: fc.Arbitrary<ClientMsg> = fc.oneof(
+  fc.tuple(ref, fc.string({ maxLength: 8 }), fc.option(json, { nil: undefined })).map(([r, name, args]) =>
+    args === undefined ? { op: 'lookup' as const, ref: r, name } : { op: 'lookup' as const, ref: r, name, args }),
+  fc.tuple(ref, json).map(([r, msg]) => ({ op: 'send' as const, ref: r, msg })),
+  fc.tuple(ref, fc.integer(), json).map(([r, id, msg]) => ({ op: 'call' as const, ref: r, id, msg })),
+  ref.map((r) => ({ op: 'exit' as const, ref: r })),
+)
+
+const hostMsg: fc.Arbitrary<HostMsg> = fc.oneof(
+  fc.tuple(ref, patch).map(([r, p]) => ({ op: 'yield' as const, ref: r, patch: p })),
+  fc.tuple(ref, fc.integer(), json).map(([r, id, value]) => ({ op: 'reply' as const, ref: r, id, value })),
+  fc.tuple(ref, fc.option(json, { nil: undefined })).map(([r, value]) =>
+    value === undefined ? { op: 'done' as const, ref: r } : { op: 'done' as const, ref: r, value }),
+  fc.tuple(ref, json).map(([r, error]) => ({ op: 'raise' as const, ref: r, error })),
+)
+
+/** What the decoders promise their callers: null, or a message every consumer can trust. */
+const wellFormed = (msg: ClientMsg | HostMsg | null): boolean => {
+  if (msg === null) return true
+  if (typeof msg.ref !== 'string') return false
+  switch (msg.op) {
+    case 'lookup': return typeof msg.name === 'string'
+    case 'send': return 'msg' in msg
+    case 'call': return typeof msg.id === 'number' && 'msg' in msg
+    case 'exit': return true
+    case 'yield':
+      return msg.patch.every((op) =>
+        (op[1] === '' || op[1].startsWith('/')) &&
+        (op[0] === 'set'
+          ? op.length === 3
+          : op[0] === 'del'
+            ? op.length === 2
+            : op.length === 5 && Number.isInteger(op[2]) && op[2] >= 0 && Number.isInteger(op[3]) && op[3] >= 0 &&
+              Array.isArray(op[4])))
+    case 'reply': return typeof msg.id === 'number' && 'value' in msg
+    case 'done': return true
+    case 'raise': return 'error' in msg
+    default: return false
+  }
+}
+
 describe('codec', () => {
   it('round-trips both directions and rejects garbage and wrong directions', () => {
     const c: ClientMsg = { op: 'call', ref: 'r1', id: 3, msg: { type: 'get' } }
@@ -70,6 +141,78 @@ describe('codec', () => {
     expect(decodeHost('{"op":"yield","ref":"r1","patch":[["splice","",-1,0,[]]]}')).toBeNull()
     expect(decodeHost('{"op":"yield","ref":"r1","patch":[["splice","",0.5,0,[]]]}')).toBeNull()
     expect(decodeHost('{"op":"yield","ref":"r1","patch":[["splice","",0,-2,[]]]}')).toBeNull()
+  })
+
+  // Properties, because this file is the vocabulary other languages certify
+  // against: a host that only satisfies the examples above is not conformant.
+  it('round-trips every message shape, both directions', () => {
+    fc.assert(
+      fc.property(clientMsg, (msg) => {
+        expect(decodeClient(encode(msg))).toStrictEqual(msg)
+      }),
+      { numRuns: 300 },
+    )
+    fc.assert(
+      fc.property(hostMsg, (msg) => {
+        expect(decodeHost(encode(msg))).toStrictEqual(msg)
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('a message never decodes as the other direction', () => {
+    fc.assert(
+      fc.property(clientMsg, (msg) => {
+        expect(decodeHost(encode(msg))).toBeNull()
+      }),
+      { numRuns: 200 },
+    )
+    fc.assert(
+      fc.property(hostMsg, (msg) => {
+        expect(decodeClient(encode(msg))).toBeNull()
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('anything a decoder accepts is well formed, and nothing makes it throw', () => {
+    // near-misses matter more than noise: valid messages with one field
+    // dropped or replaced are exactly what a buggy host emits
+    const damaged = fc
+      .tuple(fc.oneof(clientMsg, hostMsg), fc.nat(9), json)
+      .map(([msg, which, value]) => {
+        const obj = JSON.parse(encode(msg)) as Record<string, Json>
+        const keys = Object.keys(obj)
+        const key = keys[which % keys.length] as string
+        if (which % 2 === 0) delete obj[key]
+        else obj[key] = value
+        return JSON.stringify(obj)
+      })
+
+    // and patches that are *almost* patches: bad verbs, wrong arity, fractional
+    // or negative splice numbers, paths without a leading slash
+    const hostileOp = fc.oneof(
+      fc.tuple(fc.constantFrom('set', 'del', 'splice', 'frobnicate'), fc.oneof(path, fc.string({ maxLength: 4 })), json),
+      fc.tuple(
+        fc.constant('splice'),
+        path,
+        fc.oneof(fc.integer({ min: -4, max: 20 }), fc.double({ min: -4, max: 20, noNaN: true })),
+        fc.oneof(fc.integer({ min: -4, max: 20 }), fc.double({ min: -4, max: 20, noNaN: true })),
+        fc.array(json, { maxLength: 2 }),
+      ),
+      fc.array(json, { maxLength: 5 }),
+    )
+    const hostileYield = fc
+      .tuple(ref, fc.array(hostileOp, { maxLength: 3 }))
+      .map(([r, ops]) => JSON.stringify({ op: 'yield', ref: r, patch: ops }))
+
+    fc.assert(
+      fc.property(fc.oneof(fc.string(), fc.json(), damaged, hostileYield), (data) => {
+        expect(wellFormed(decodeClient(data))).toBe(true)
+        expect(wellFormed(decodeHost(data))).toBe(true)
+      }),
+      { numRuns: 1000 },
+    )
   })
 })
 
@@ -349,4 +492,57 @@ describe('broadcast channel transport', () => {
       reg.evict('cart')
     },
   )
+})
+
+// The one property that exercises the whole stack at once: reconcile on the
+// host, patch application on the client, yield conflation, and reconnect as a
+// full snapshot. Whatever order messages and partitions arrive in, the client
+// must end up holding exactly what the host holds — the claim the protocol
+// makes and the reason reconnect is not a special case.
+describe('convergence', () => {
+  const command = fc.oneof(
+    fc.record({ do: fc.constant('toggle' as const), i: fc.nat(2) }),
+    fc.record({ do: fc.constant('total' as const), n: fc.integer({ min: 0, max: 50 }) }),
+    fc.record({ do: fc.constant('partition' as const) }),
+    fc.record({ do: fc.constant('heal' as const) }),
+    fc.record({ do: fc.constant('settle' as const) }),
+  )
+
+  it('the client holds exactly the host state, whatever the schedule', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.array(command, { maxLength: 12 }), async (script) => {
+        const link = memoryPair()
+        const reg = registry({ cart: define(cart) })
+        const stop = expose(reg, link.host)
+        const conn = connect<Shop>(link.client)
+        const remote = conn.lookup('cart')
+        const host = reg.lookup('cart') // the very process being served
+        let connected = true
+
+        try {
+          for (const cmd of script) {
+            if (cmd.do === 'toggle') remote.send({ type: 'toggle', i: cmd.i })
+            else if (cmd.do === 'total') remote.send({ type: 'total', n: cmd.n })
+            else if (cmd.do === 'partition' && connected) { link.disconnect(); connected = false }
+            else if (cmd.do === 'heal' && !connected) { link.reconnect(); connected = true }
+            else await link.settle()
+          }
+          if (!connected) link.reconnect() // heal at the end: the client re-looks-up
+
+          const same = (): boolean =>
+            remote() !== undefined && JSON.stringify(remote()) === JSON.stringify(host())
+          for (let i = 0; i < 20 && !same(); i++) {
+            await tick()
+            await link.settle()
+          }
+          expect(remote()).toStrictEqual(host())
+        } finally {
+          conn.close()
+          stop()
+          reg.evict('cart')
+        }
+      }),
+      { numRuns: 50 },
+    )
+  })
 })

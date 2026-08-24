@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
 import { source, effect, flush, untracked } from '../src/graph.ts'
 import { derive } from '../src/index.ts'
 import { affects, createRecorder, type PathTree } from '../src/track.ts'
@@ -584,5 +585,181 @@ describe('path intersection boundaries (affects)', () => {
     const tree = record((s) => void s.items[0]!.n)
     expect(affects(tree, [['set', '/items', []]] as Patch)).toBe(true)
     expect(affects(tree, [['set', '', null]] as Patch)).toBe(true)
+  })
+})
+
+// ---------- properties ----------
+//
+// The example tests above pin the cases we reasoned about. These two pin the
+// contract itself over states and patches nobody chose: a reader must wake
+// whenever what it read changed (a missed wake is a silently wrong UI), and
+// must not wake for a write that lands nowhere it looked (a spurious wake is
+// the re-render tax this library exists to avoid).
+
+const jsonKey = fc.oneof(fc.constantFrom('a', 'b', 'c', 'items', 'meta', 'n'), fc.string({ maxLength: 3 }))
+
+const { jsonValue } = fc.letrec<{ jsonValue: Json }>((tie) => ({
+  jsonValue: fc.oneof(
+    { maxDepth: 3, withCrossShrink: true },
+    fc.constant(null),
+    fc.boolean(),
+    fc.integer({ min: -4, max: 4 }),
+    fc.string({ maxLength: 3 }),
+    fc.array(tie('jsonValue'), { maxLength: 4 }),
+    fc.dictionary(jsonKey, tie('jsonValue'), { maxKeys: 4 }).map((d) => ({ ...d })),
+  ),
+}))
+
+// An object at the root with a keyed list in it — the shape this library is
+// about, and the only way to reach the splice paths in `affects`.
+const row = fc.record({ done: fc.boolean(), n: fc.integer({ min: -4, max: 4 }) })
+
+const jsonState: fc.Arbitrary<Json> = fc
+  .tuple(fc.dictionary(jsonKey, jsonValue, { maxKeys: 3 }), fc.array(row, { maxLength: 4 }))
+  .map(([rest, items]) => ({ ...rest, items }) as Json)
+
+const readPath = fc.oneof(
+  fc.array(fc.oneof(jsonKey, fc.constantFrom('0', '1', '2')), { maxLength: 3 }),
+  fc.tuple(fc.constant('items'), fc.constantFrom('0', '1', '2', '3'), fc.constantFrom('done', 'n'))
+    .map((segs) => [...segs]),
+  fc.constant(['items']),
+)
+
+const at = (v: unknown, segs: readonly string[]): unknown => {
+  let cur = v
+  for (const seg of segs) {
+    if (cur === null || typeof cur !== 'object') return undefined
+    cur = (cur as Record<string, unknown>)[seg]
+  }
+  return cur
+}
+
+/** What a reader reads, and the value it would show. Stringify so containers are read through. */
+const project = (v: unknown, paths: readonly (readonly string[])[]): string =>
+  paths.map((p) => JSON.stringify(at(v, p)) ?? 'undefined').join('|')
+
+/** Every path to a scalar leaf in a value. */
+const leafPaths = (v: unknown, prefix: string[] = []): string[][] => {
+  if (v === null || typeof v !== 'object') return prefix.length === 0 ? [] : [prefix]
+  const entries = Array.isArray(v) ? v.map((x, i) => [String(i), x] as const) : Object.entries(v)
+  return entries.flatMap(([k, child]) => leafPaths(child, [...prefix, k]))
+}
+
+const updateAt = (v: Json, segs: readonly string[], fn: (leaf: Json) => Json): Json => {
+  if (segs.length === 0) return fn(v)
+  const [head, ...rest] = segs as [string, ...string[]]
+  if (Array.isArray(v)) {
+    const i = Number(head)
+    return v.map((x, j) => (j === i ? updateAt(x, rest, fn) : x)) // untouched elements keep identity
+  }
+  const obj = v as { [k: string]: Json }
+  return { ...obj, [head]: updateAt(obj[head] as Json, rest, fn) }
+}
+
+/** Paths to every array in a value, so edits can splice where splices are possible. */
+const arrayPaths = (v: unknown, prefix: string[] = []): string[][] => {
+  if (v === null || typeof v !== 'object') return []
+  const here = Array.isArray(v) ? [prefix] : []
+  const entries = Array.isArray(v) ? v.map((x, i) => [String(i), x] as const) : Object.entries(v)
+  return [...here, ...entries.flatMap(([k, child]) => arrayPaths(child, [...prefix, k]))]
+}
+
+type Edit = { kind: 'set' | 'insert' | 'remove'; where: number; value: Json }
+
+/** One edit, written the way application code writes them: spread and share. */
+const applyEdit = (v: Json, edit: Edit): Json => {
+  if (edit.kind === 'set') {
+    const leaves = leafPaths(v)
+    return leaves.length === 0 ? v : updateAt(v, leaves[edit.where % leaves.length] as string[], () => edit.value)
+  }
+  const arrays = arrayPaths(v)
+  if (arrays.length === 0) return v
+  const target = arrays[edit.where % arrays.length] as string[]
+  return updateAt(v, target, (arr) => {
+    const list = arr as Json[]
+    if (edit.kind === 'insert') {
+      const i = edit.where % (list.length + 1)
+      return [...list.slice(0, i), edit.value, ...list.slice(i)]
+    }
+    if (list.length === 0) return list
+    const i = edit.where % list.length
+    return [...list.slice(0, i), ...list.slice(i + 1)]
+  })
+}
+
+
+const disjoint = (a: readonly string[], b: readonly string[]): boolean => {
+  const shared = Math.min(a.length, b.length)
+  for (let i = 0; i < shared; i++) if (a[i] !== b[i]) return true
+  return false // one is a prefix of the other: the write is inside what was read
+}
+
+describe('notification properties', () => {
+  // both kinds of next state matter: an unrelated one (root sets, wholesale
+  // replacement) and one edited out of prev (scoped sets, dels, splices)
+  const statePair = jsonState.chain((prev) =>
+    fc.oneof(
+      jsonState.map((next) => [prev, next] as const),
+      fc
+        .array(fc.record({ kind: fc.constantFrom('set' as const, 'insert' as const, 'remove' as const), where: fc.nat(30), value: jsonValue }), { minLength: 1, maxLength: 4 })
+        .map((edits) => [prev, edits.reduce(applyEdit, prev)] as const),
+    ))
+
+  it('a reader always wakes when what it read changed', () => {
+    fc.assert(
+      fc.property(statePair, fc.array(readPath, { minLength: 1, maxLength: 3 }), ([prev, next], paths) => {
+        const src = source<Json>(prev as Json)
+        let runs = 0
+        let shown = ''
+        const stop = effect(() => {
+          runs++
+          shown = project(src(), paths)
+        })
+        const before = shown
+        src.publish(next as Json)
+        flush()
+        try {
+          if (project(next, paths) !== before) expect(runs).toBe(2)
+          expect(shown).toBe(project(next, paths)) // and it wakes with the right value
+        } finally {
+          stop()
+        }
+      }),
+      { numRuns: 400 },
+    )
+  })
+
+  it('a reader never wakes for a write that lands where it did not look', () => {
+    fc.assert(
+      fc.property(
+        jsonState,
+        fc.array(fc.nat(20), { minLength: 1, maxLength: 3 }),
+        fc.nat(20),
+        fc.integer({ min: 5, max: 9 }),
+        (state, readSeeds, writeSeed, value) => {
+          const leaves = leafPaths(state)
+          fc.pre(leaves.length > 1)
+          const paths = readSeeds.map((s) => leaves[s % leaves.length] as string[])
+          const write = leaves[writeSeed % leaves.length] as string[]
+          fc.pre(paths.every((p) => disjoint(p, write)))
+          fc.pre(at(state, write) !== value) // an actual change, or nothing should wake anyway
+
+          const src = source<Json>(state as Json)
+          let runs = 0
+          const stop = effect(() => {
+            runs++
+            void project(src(), paths)
+          })
+          src.publish(updateAt(state as Json, write, () => value))
+          flush()
+          try {
+            expect(runs).toBe(1)
+          } finally {
+            stop()
+          }
+        },
+      ),
+      { numRuns: 400 },
+    )
   })
 })
