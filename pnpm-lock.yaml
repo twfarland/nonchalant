@@ -14,6 +14,9 @@ importers:
       '@nonchalant/dom':
         specifier: workspace:*
         version: link:packages/dom
+      '@nonchalant/durable':
+        specifier: workspace:*
+        version: link:packages/durable
       '@nonchalant/host':
         specifier: workspace:*
         version: link:packages/host
@@ -52,6 +55,12 @@ importers:
   packages/core: {}
 
   packages/dom:
+    dependencies:
+      '@nonchalant/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/durable:
     dependencies:
       '@nonchalant/core':
         specifier: workspace:*

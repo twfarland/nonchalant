@@ -17,6 +17,8 @@ are self-contained — no backends required.
 | `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
 | `worker/` | ⏱ the wire over a Web Worker port — heavy state off the UI thread |
+| `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable |
+| `multi-agent/` | ⏱ delegation, hand-off, a state-machine supervisor, shared usage limits |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
 | `shared-cart/` | the same cart and view using either a local or remote registry |
 | `mario/` | ⏱ the golden demo: 1 view yield, ≤ 3 DOM writes/frame, CI-asserted |
@@ -49,6 +51,14 @@ Notes:
   both halves of the wire over a `MessageChannel`
   (`worker/primes.test.ts`) and assert that the bindings follow the grinder
   across the switch (`worker/switch.test.ts`).
+- **agent** — the backend claim, running in a tab: the agent loop, its tools,
+  and the human-approval gate are all processes, and the page binds to them
+  the way every other demo binds to its state. Press *kill the machine*
+  mid-question to watch `durable()` bring it back from its journal.
+- **multi-agent** — brief the team, then press *kill the supervisor* while it
+  is writing: the brief replays and the researcher's run count does not move,
+  because the delegated call is answered from its record. Drop the budget to
+  watch the pipeline stop at *out of budget* instead of half-finishing.
 - **chat** — run `pnpm chat-server`, then open the page in several tabs (or
   browsers) and hop between rooms. Each room is one server-side process,
   spawned on first lookup and evicted when idle — one node process holds

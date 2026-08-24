@@ -15,6 +15,7 @@ import { run as drag } from './demos/drag.ts'
 import { run as shared } from './demos/shared.ts'
 import { run as worker } from './demos/worker.ts'
 import { run as mario } from './demos/mario.ts'
+import { run as agent } from './demos/agent.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -162,6 +163,44 @@ describe('site demos', () => {
     await settle()
     demo[Symbol.dispose]()
   })
+
+  // the claim the section around it makes: this is the same machinery as the
+  // counter above, so it is tested the same way
+  it('agent: reaches for a tool, streams an answer, and parks on approval', async () => {
+    const el = host()
+    const demo = agent(el)
+    await settle()
+    const readout = (): string => el.querySelector('.readout')?.textContent ?? ''
+    const waitFor = async (ready: () => boolean, what: string): Promise<void> => {
+      for (let i = 0; i < 500 && !ready(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 4))
+        flush()
+      }
+      if (!ready()) throw new Error(`never reached: ${what}`)
+    }
+    expect(readout()).toBe('no answer yet')
+
+    const press = (label: string): void => {
+      const b = [...el.querySelectorAll('button')].find((x) => x.textContent === label)
+      b?.click()
+    }
+    press('ask') // the field starts on "what is a patch?"
+    await waitFor(() => el.querySelectorAll('li').length >= 2, 'the tool call')
+    expect(el.querySelectorAll('li')[1]?.textContent).toContain('search')
+    await waitFor(() => readout().includes('patches'), 'the streamed answer')
+
+    // and the tool that waits for a person: no reply, no progress
+    const field = el.querySelector('input') as HTMLInputElement
+    field.value = 'refund 20'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle() // the field's cell takes a turn to publish, like any process
+    press('ask')
+    await waitFor(() => el.textContent?.includes('approve refund 20?') === true, 'the approval request')
+    press('yes')
+    await waitFor(() => readout().includes('approved'), 'the decision to reach the agent')
+
+    demo[Symbol.dispose]()
+  }, 20_000) // a stubbed model still takes its time, on purpose
 
   it('mario: the stage owns its keyboard and the sprite tracks the walk', async () => {
     const el = host()

@@ -12,6 +12,7 @@ import { run as drag } from './demos/drag.ts'
 import { run as shared } from './demos/shared.ts'
 import { run as worker } from './demos/worker.ts'
 import { run as mario } from './demos/mario.ts'
+import { run as agentDemo } from './demos/agent.ts'
 
 import counterSrc from './demos/counter.ts?raw'
 import todosSrc from './demos/todos.ts?raw'
@@ -21,6 +22,7 @@ import dragSrc from './demos/drag.ts?raw'
 import sharedSrc from './demos/shared.ts?raw'
 import workerSrc from './demos/worker.ts?raw'
 import marioSrc from './demos/mario.ts?raw'
+import agentSrc from './demos/agent.ts?raw'
 
 interface Demo {
   id: string
@@ -37,6 +39,7 @@ const demos: Demo[] = [
   { id: 'shared', src: sharedSrc, run: shared },
   { id: 'worker', src: workerSrc, run: worker },
   { id: 'mario', src: marioSrc, run: mario },
+  { id: 'agent', src: agentSrc, run: agentDemo },
 ]
 
 for (const demo of demos) {

@@ -241,7 +241,10 @@ const accounts = registry({
 
 That is the virtual-actor lifecycle in userland: `lookup('account', { id })`
 is activation, the load is hydration, and `evict` is deactivation — the next
-lookup reactivates and rehydrates. Because the mailbox is the single writer,
+lookup reactivates and rehydrates. When you want the rest of it — the message
+journaled before it is handled, effects that do not run twice, state and cursor
+committed together — that recipe is packaged as `@nonchalant/durable`; see
+[Processes on the server](server.md). Because the mailbox is the single writer,
 checkpoints are ordered with no application-level locking; the same shape
 gives event sourcing (append the message instead of saving the snapshot,
 replay to hydrate). To keep persistence out of the domain code, wrap the proc,

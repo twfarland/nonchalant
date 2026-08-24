@@ -7,10 +7,12 @@ explicit lifetime. `spawn` returns a typed handle that you can read, send to,
 ask, iterate, and dispose.
 
 The project explores a specific idea: can the same state-owning unit work for
-widget state, shared application state, cached work, and state reached over a
-transport? It is not a React-compatible component model, an Erlang runtime, or
-a complete query client. The useful part is the combination of sequential
-messages, fine-grained snapshot reads, ownership, and a small data-only wire.
+widget state, shared application state, cached work, state reached over a
+transport, and work that runs on a server — an agent loop, a durable workflow —
+without becoming a different thing at each layer? It is not a React-compatible
+component model, an Erlang runtime, or a complete query client. The useful part
+is the combination of sequential messages, fine-grained snapshot reads,
+ownership, and a small data-only wire.
 
 **[twfarland.github.io/nonchalant](https://twfarland.github.io/nonchalant/)** —
 the short version, with the demos running on the page and the whole example
@@ -156,9 +158,10 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 |---|---|
 | [Thinking in processes](docs/tutorial.md) | the tutorial — build a cart, end with it on a server |
 | [Concepts](docs/concepts.md) | the reference: each concept, its contract, its tests |
-| [Recipes](docs/recipes.md) | typeahead, forms, query cache, routing, undo/redo, drag |
+| [Recipes](docs/recipes.md) | typeahead, forms, query cache, routing, undo/redo, drag, durability |
 | [Testing](docs/testing.md) | driving generators directly, transcripts, views as data |
 | [Migration](docs/migration.md) | coming from React, Solid, or LiveView |
+| [Processes on the server](docs/server.md) | virtual actors, durable execution, and agent loops — with the limits stated |
 | [Hosting safely](docs/hosting.md) | authentication, browser origins, and deployment boundaries |
 | [Protocol](docs/PROTOCOL.md) | the data wire and conformance rules |
 | [Examples](examples/README.md) | the demo ladder |
@@ -171,6 +174,7 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 | `@nonchalant/core` | `Process`, `spawn`, `derive`, the registry, `reconcile`, the reactive graph. Zero dependencies, no DOM. |
 | `@nonchalant/dom` | tag constructors, `h()`, the DOM sink, keyed reconciliation, `mount`. |
 | `@nonchalant/wire` | the protocol, codec, transports (WebSocket, worker port, BroadcastChannel, in-memory), `connect`. Isomorphic. |
+| `@nonchalant/durable` | `durable(proc)`: the message journal, the effect journal, durable calls, and the `Store` port. Isomorphic; ships the in-memory adapter. |
 | `@nonchalant/host` | the Node WebSocket host: handshake authorization, origin policy, per-connection registry scoping, and connection limits. |
 
 ## Credits and prior art

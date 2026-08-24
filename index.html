@@ -23,6 +23,7 @@
   <a href="#demos">Live demos</a>
   <a href="#updates">Updates</a>
   <a href="#wire">The wire</a>
+  <a href="#backend">On the server</a>
   <a href="#more">Read more</a>
   <span class="spacer"></span>
   <a href="https://github.com/twfarland/nonchalant">GitHub</a>
@@ -99,6 +100,10 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
     <div class="card">
       <h4>@nonchalant/wire</h4>
       <p>The eight-op protocol, its codec, and transports. Isomorphic and DOM-free, with cross-language conformance vectors.</p>
+    </div>
+    <div class="card">
+      <h4>@nonchalant/durable</h4>
+      <p>A wrapper that writes a process down: the message journal, the effect journal, and a six-method store contract.</p>
     </div>
     <div class="card">
       <h4>@nonchalant/host</h4>
@@ -309,8 +314,96 @@ const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // 
   <p>Two of them need no server at all. <a href="./examples/multi-tab/">multi-tab</a> elects one tab as the host over a <code>BroadcastChannel</code> and moves the job when you close it — open it twice. <a href="./examples/worker/">worker</a> puts the grinder from the demo above on a thread, with a switch that moves it back and forth while it runs: the numbers are identical either way, and only the frame meter can tell.</p>
 </section>
 
+<section id="backend">
+  <div class="sec-head"><span class="sec-num">07</span><h2>The same primitive on the server</h2></div>
+
+  <p class="lede">An agent loop is a process that takes a question, calls out, looks at what came back, and yields as it goes. That is the same sentence as the one describing a todo list. So the agent below is not a second framework with a shared vocabulary — it is the primitive from section 03, running on this page.</p>
+
+  <div class="demo" data-demo="agent">
+    <div class="demo-head">
+      <span class="demo-title">Agent</span>
+      <span class="demo-note">stubbed model · ask about a process, patch, worker, durable · or "refund 20"</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <h3>Tools are processes, so a tool call is <code>ask()</code></h3>
+
+  <p>Nothing above is a tool-calling runtime. A tool is a process with state — the search tool counts its own calls — and calling one is the typed request/reply that every other process gets. Which means a tool can live on a server without the agent noticing, because reaching it is a registry lookup, and a lookup does not care about distance.</p>
+
+  <p>It also means <strong>human-in-the-loop needs no mechanism at all</strong>. Say <em>refund 20</em> to the demo: the approval tool receives the request and simply does not reply until you click. The agent's side is an ordinary <code>await</code>; the queue of waiting requests is ordinary state, which is why the buttons that answer it are an ordinary view.</p>
+
+<pre><code data-ts>
+for await (const msg of self) {
+  if (msg.type === 'request') waiting = [...waiting, { ...msg, reply: msg.reply }]  // parked
+  else { waiting[0]?.reply(msg.ok); waiting = waiting.slice(1) }                    // a person decided
+  yield state()
+}
+</code></pre>
+
+  <h3>Durability is a wrapper, not a runtime</h3>
+
+  <p><code>@nonchalant/durable</code> wraps a process and writes it down. Each message is journaled before it is handled; each effect inside <code>step()</code> is journaled as it completes; and the state and the cursor past that message are committed together when the process asks for its next one. Crash anywhere in between and the message is redelivered with its finished effects already answered — the generator re-runs, the effects do not.</p>
+
+<pre><code data-ts>
+const run = durable(agent, { store, key: (args) => args.id })   // an ordinary Proc comes back out
+
+const plan = await d.step(`plan-${turn}`, () => model.plan(transcript, SPECS, { signal: self.signal }))
+const result = await d.step(`tool-${turn}`, () => callTool(tools, plan.tool, plan.args))
+</code></pre>
+
+  <h3>Calls are durable too, which is what makes delegation safe</h3>
+
+  <p>A durable process is only worth calling if the call survives as well. An <code>ask</code> into one carries an idempotency key, the answer is recorded under it, and a retry is answered from the record rather than doing the work again. <code>d.call</code> derives the key from the caller, the message it is handling, and the name — so a replay asks with the same one:</p>
+
+<pre><code data-ts>
+const notes = await d.call('research', (callId) =>
+  crew.researcher.ask({ type: 'research', topic, callId }))
+</code></pre>
+
+  <p>That is the difference between a durable process and a process that merely saves its state. In <a href="./examples/multi-agent/">the multi-agent demo</a> a supervisor briefs a researcher, hands the result to a writer, and stops for a person before publishing. Kill the supervisor while it is writing: the brief replays, and the researcher's run count does not move.</p>
+
+  <h3>The patterns the agent frameworks name</h3>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>The pattern</th><th>What it is here</th></tr></thead>
+    <tbody>
+      <tr><td>Single agent</td><td>One process.</td></tr>
+      <tr><td>Agent delegation</td><td>The tool is another agent, so the delegation is a durable call.</td></tr>
+      <tr><td>Programmatic hand-off</td><td>The supervisor passes one agent's output to the next as an argument. No shared blackboard, no history object.</td></tr>
+      <tr><td>Graph-based control flow</td><td><code>stage</code> is a field, the code between yields is the edge — and the graph renders, because it is data.</td></tr>
+      <tr><td>Usage limits across the system</td><td>One budget process everybody asks, inside a <code>step</code> so a replay does not spend twice.</td></tr>
+      <tr><td>Shared dependencies</td><td>Arguments, or a registry lookup for anything shared.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Press <b>kill it</b> in the middle of a question. The process is disposed, the next lookup activates a new one, and it continues from the journal instead of asking the model again. The store is a port: the adapter here keeps everything in a <code>Map</code>, and a real one implements the same eight methods over whatever it is built on, with the process above it unchanged.</p>
+
+  <p>Two things stay true and are worth saying plainly. An effect that was <em>in flight</em> when the process died runs again, because its result never landed: journaled steps are exactly-once, everything else is at-least-once. And a mailbox is a single writer only while one node owns the name — several hosts activating the same id need a lease in the store, which is a distributed-systems problem no amount of API design removes.</p>
+
+  <h3>What this is, next to what you may be comparing it with</h3>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Elsewhere</th><th>Here</th></tr></thead>
+    <tbody>
+      <tr><td>An agent graph with nodes, edges, and a runtime to walk them</td><td>A loop in a generator. Control flow is <code>if</code> and <code>for</code>, because it is control flow.</td></tr>
+      <tr><td>A streaming API so a UI can watch a run</td><td>The run <em>is</em> state. A view binds to it; over a wire it arrives as patches.</td></tr>
+      <tr><td>An interrupt protocol for human approval</td><td>A reply that has not been sent yet.</td></tr>
+      <tr><td>Workflow code that must be deterministic so history can replay it</td><td>Ordinary code; the effects are journaled instead. You pay for that with at-least-once on the effect that was in flight.</td></tr>
+      <tr><td>A worker fleet, a scheduler, a queue, and a console</td><td>Not included. This is a durability wrapper and a store interface, not an orchestration platform.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>The tests are the honest part: <code>examples/agent/agent.test.ts</code> drives the whole loop with no DOM and no network — the model is an argument and the run reads as a transcript of yields — and <code>packages/durable</code> proves crash consistency as a property, running every crash schedule a generator can produce and checking the workflow lands where the uninterrupted run landed.</p>
+</section>
+
 <section id="more">
-  <div class="sec-head"><span class="sec-num">07</span><h2>Read more</h2></div>
+  <div class="sec-head"><span class="sec-num">08</span><h2>Read more</h2></div>
 
   <p>This page is the short version. The written documentation goes considerably deeper, and every performance or granularity claim in it points at the test that enforces it.</p>
 
@@ -323,6 +416,7 @@ const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // 
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/recipes.md">Recipes</a></td><td>Typeahead, forms, query cache, routing, undo/redo, drag, durable processes.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/testing.md">Testing</a></td><td>Driving generators directly; tests as message/yield transcripts.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/migration.md">Migration</a></td><td>Coming from React, Solid, or LiveView — including what you give up.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/server.md">Processes on the server</a></td><td>Virtual actors, durable execution, and agent loops — with the limits stated.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a></td><td>Origins, authorization, connection scoping, deployment boundaries.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/PROTOCOL.md">Protocol</a></td><td>The eight-op data wire and its conformance rules.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/internals/README.md">Internals</a></td><td>Contributor notes: how core is built, and the invariants that hold it together.</td></tr>

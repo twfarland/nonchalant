@@ -29,6 +29,8 @@ const pages = [
   'examples/bounce/index.html',
   'examples/multi-tab/index.html',
   'examples/worker/index.html',
+  'examples/agent/index.html',
+  'examples/multi-agent/index.html',
   'examples/shared-cart/index.html',
   'examples/mario/index.html',
   'examples/js-framework-benchmark/index.html',

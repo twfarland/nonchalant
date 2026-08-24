@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-agent — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .graph { margin: 0.75rem 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  .node { border: 1px solid var(--line); border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.85rem; color: var(--muted); }
+  .node.done { border-color: var(--ok); color: var(--ok); }
+  .node.here { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .arrow { color: var(--muted); }
+  .tag { display: inline-block; min-width: 4rem; color: var(--muted); font-size: 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.06em; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>A team of agents <span class="muted">— delegation, hand-off, a graph, and a budget</span></h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>A supervisor briefs a researcher, hands what comes back to a writer, and stops for a person before publishing. Every box above is a process; the four ways agents are usually wired together are all just process code here.</p>
+
+<h2>Delegation — the tool is another agent</h2>
+<p>A tool call is <code>ask()</code>, and an agent is a process, so delegating is calling. <code>d.call</code> journals it on the caller's side and derives an idempotency key, which the callee uses to recognise a retry:</p>
+<pre><code><span class="k">const</span> notes = <span class="k">await</span> d.call(<span class="s">'research'</span>, (callId) =&gt;
+  crew.researcher.ask({ <span class="k">type</span>: <span class="s">'research'</span>, topic: msg.topic, callId }))</code></pre>
+<p>Press <strong>kill the supervisor</strong> while it is writing. The supervisor dies with its brief unacknowledged, the next lookup activates a new one, and the brief is replayed — but the researcher's run count does not move, because the delegated call is answered from its record. That is the difference between a durable process and a process that merely saves its state.</p>
+
+<h2>Hand-off — the output is the next input</h2>
+<p>No shared blackboard and no message-history object: what the researcher returned is passed to the writer as an argument, and both are visible in the supervisor's state because that is where they were put.</p>
+
+<h2>The graph is the state</h2>
+<p>There is no graph library. <code>stage</code> is a field, the code between yields is the edge, and the row of nodes above is an ordinary view of it — which means the pipeline's position survives a restart along with everything else.</p>
+<pre><code>s = { ...s, stage: <span class="s">'writing'</span>, notes }
+<span class="k">yield</span> s</code></pre>
+
+<h2>Usage limits — one process everybody has to ask</h2>
+<p>The budget is a plain, non-durable process: a live limit for this deployment rather than a record of what happened. Each agent asks it before spending, inside a <code>d.step</code> so a replay does not spend twice. Set the limit low enough and the pipeline stops at <em>out of budget</em> instead of half-finishing.</p>
+<pre><code><span class="k">const</span> allowance = <span class="k">await</span> d.step(<span class="s">'budget'</span>, () =&gt; meter.ask({ <span class="k">type</span>: <span class="s">'spend'</span>, tokens: 200 }))</code></pre>
+
+<p>The tests (<code>multi-agent.test.ts</code>) drive all four patterns headlessly, including the kill: no DOM, no network, no mocking framework.</p>
+</aside>
+</div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

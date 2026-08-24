@@ -29,6 +29,7 @@
   "dependencies": {
     "@nonchalant/core": "workspace:*",
     "@nonchalant/dom": "workspace:*",
+    "@nonchalant/durable": "workspace:*",
     "@nonchalant/host": "workspace:*",
     "@nonchalant/wire": "workspace:*"
   },

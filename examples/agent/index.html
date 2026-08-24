@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .tag { display: inline-block; min-width: 4.5rem; margin-right: 0.5rem; color: var(--muted);
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ok { color: var(--ok); }
+  .answer { min-height: 1.5em; margin: 0.75rem 0; }
+  .card + .card { margin-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>An agent <span class="muted">— the same primitive as the counter</span></h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>The model is stubbed and runs in this tab, so the demo is deterministic: ask about a <em>process</em>, a <em>patch</em>, a <em>worker</em> or <em>durable</em> and it searches; give it arithmetic and it calculates; say <em>refund 20</em> and it has to ask you first.</p>
+
+<p>An agent loop is a process. Not "a process under the hood" — the same one the counter demo uses. State is a <code>let</code>, the mailbox is <code>for await</code>, every change is a <code>yield</code>, and the page binds to it the way it binds to a todo list:</p>
+<pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+  <span class="k">for</span> (<span class="k">let</span> turn = 0; turn &lt; MAX_TURNS; turn++) {
+    <span class="k">const</span> plan = <span class="k">await</span> d.step(<span class="s">`plan-${turn}`</span>, () =&gt; model.plan(transcript, SPECS, { signal: self.signal }))
+    <span class="k">if</span> (<span class="s">'answer'</span> <span class="k">in</span> plan) { <span class="c">/* stream it, one yield per chunk */</span> <span class="k">break</span> }
+    <span class="k">const</span> result = <span class="k">await</span> d.step(<span class="s">`tool-${turn}`</span>, () =&gt; callTool(tools, plan.tool, plan.args))
+    transcript.push(<span class="s">`${plan.tool}(${plan.args}) → ${result}`</span>)
+    <span class="k">yield</span> s
+  }
+}</code></pre>
+
+<h2>Tools are processes</h2>
+<p>A tool call is <code>ask()</code>. That is why the counters above are live — each tool is a running process with state of its own — and why a tool could just as well be on a server: it is reached by a registry lookup, and a registry lookup does not care about distance.</p>
+<p>It is also why <strong>human-in-the-loop needs no mechanism</strong>. The approval tool simply does not reply until you click:</p>
+<pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+  <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'request'</span>) waiting = [...waiting, { ...msg, reply: msg.reply }]  <span class="c">// parked</span>
+  <span class="k">else</span> { waiting[0]?.reply(msg.ok); waiting = waiting.slice(1) }              <span class="c">// a person decided</span>
+  <span class="k">yield</span> state()
+}</code></pre>
+<p>The agent's side of that is an ordinary <code>await</code> that takes as long as it takes. The queue is ordinary state, so the buttons above are an ordinary view of it.</p>
+
+<h2>Durability is a wrapper</h2>
+<p>The agent is wrapped in <code>durable()</code>: each message is journaled before it is handled, each <code>d.step</code> is journaled as it completes, and the state and the cursor are committed together when the process asks for its next message. Press <strong>kill the machine</strong> in the middle of a question — the process is disposed, the next lookup activates a new one, and it carries on from the journal instead of asking the model again.</p>
+<p>Two honest details. An effect that was <em>in flight</em> when the process died runs again, because its result never landed: journaled steps are exactly-once, everything else is at-least-once. And the store is a port: the adapter here keeps everything in a <code>Map</code>, and a real one implements the same eight methods over whatever it is built on, with the process above it unchanged.</p>
+<pre><code><span class="k">const</span> run = durable(agent, { store, key: (args) =&gt; args.id })</code></pre>
+<p>The tests (<code>agent.test.ts</code>) run all of this with no DOM and no network: the model is an argument, the tools are processes, and the run reads as a transcript of yields.</p>
+</aside>
+</div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

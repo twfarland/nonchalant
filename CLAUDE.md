@@ -101,9 +101,17 @@ Structure:
 - `packages/dom` — `h.ts`/`tags.ts` constructors, `render.ts` sink.
 - `packages/wire` — `protocol.ts` codec, transports, `client.ts` (connect),
   `host.ts` (expose), `spec/` conformance vectors.
+- `packages/durable` — `durable(proc)`: a message journal, an effect journal
+  (`step`), durable calls (`call`), and the eight-method `Store` port. The
+  in-memory adapter is the only one in this repo, deliberately — a real store
+  belongs wherever its driver does.
+  Backend-facing but isomorphic; `docs/server.md` is its front page.
 - `packages/host` — the Node WebSocket host.
-- `examples/` — the demo ladder (see its README); `mario/` and `7guis/cells`
-  carry their own test files.
+- `examples/` — the demo ladder (see its README); `mario/`, `7guis/cells`,
+  `worker/`, and `agent/` carry their own test files. `agent/` is the
+  full-stack claim in miniature: an agent loop, its tools, and a human-approval
+  gate, all processes, all durable, rendered by the same bindings as the
+  counter.
 - `docs/internals/` — contributor notes on core's mechanisms and invariants
   (reconcile, track, graph, process, registry), with an architecture overview
   in its README. Update these when you change how a mechanism works.

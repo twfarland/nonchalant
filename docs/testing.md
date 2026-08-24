@@ -68,17 +68,19 @@ sharing, granularity.
   `disconnect()` / `reconnect()` / `settle()` — partition tests are three
   lines: `packages/wire/test/wire.test.ts`. The conformance vectors in
   `packages/wire/spec/` are the same idea across languages.
-- **Properties where a contract is universally quantified.** Four claims are
-  about *every* state, patch, or message rather than the cases we thought of,
-  so they are fast-check properties:
+- **Properties where a contract is universally quantified.** Five claims are
+  about *every* state, patch, message, or crash schedule rather than the cases
+  we thought of, so they are fast-check properties:
   `reconcile(prev, next)` round-trips and never mutates its inputs
   (`reconcile.test.ts`); a reader wakes whenever what it read changed and never
   for a write that landed elsewhere (`graph.test.ts`); a decoded message is
   always well formed and never decodes as the other direction
   (`wire.test.ts`); and the client ends up holding exactly the host's state
-  whatever the order of messages and partitions (`wire.test.ts`). When you add
-  one, mutate the implementation to check the property actually fails — a
-  property that cannot fail is decoration.
+  whatever the order of messages and partitions (`wire.test.ts`); and a durable
+  workflow lands where the uninterrupted run landed no matter where it was
+  killed (`packages/durable/test/durable.test.ts`). When you add one, mutate the
+  implementation to check the property actually fails — a property that cannot
+  fail is decoration.
 
 ## Views are data
 
