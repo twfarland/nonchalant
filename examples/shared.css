@@ -15,6 +15,9 @@
 
 * { box-sizing: border-box; }
 
+/* an author style that sets display beats the browser's [hidden] rule */
+[hidden] { display: none !important; }
+
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--ink);

@@ -317,7 +317,117 @@ const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // 
 <section id="backend">
   <div class="sec-head"><span class="sec-num">07</span><h2>The same primitive on the server</h2></div>
 
-  <p class="lede">An agent loop is a process that takes a question, calls out, looks at what came back, and yields as it goes. That is the same sentence as the one describing a todo list. So the agent below is not a second framework with a shared vocabulary — it is the primitive from section 03, running on this page.</p>
+  <p class="lede">Nothing in the core package is about the browser. A process is a mailbox, a generator, and a supervisor — the shape an actor has had since Erlang. What follows is that same primitive at three depths: state that lives on a server, state that survives the server restarting, and state that decides what to do next.</p>
+
+  <h3>One: a room on a server</h3>
+
+  <p>The chat example is the plainest version. A room is a process that folds posts into a capped history — no sockets in it, no sessions, no idea it is a chat server:</p>
+
+<pre><code data-ts>
+export const room: Proc&lt;RoomState, RoomMsg, { name: string }&gt; = async function* (self) {
+  let lines: ChatLine[] = []
+  let nextId = 1
+  yield { lines }
+  for await (const msg of self) {
+    lines = [...lines.slice(-49), { id: nextId++, from: msg.from, text: msg.text }]
+    yield { lines }
+  }
+}
+</code></pre>
+
+  <p>Hosting it is one line, and reaching it from a tab is the lookup you already know. The <em>name</em> is the address: same name, same room, for everyone.</p>
+
+<pre><code data-ts>
+// the server
+const host = await serve({ room: define(room, { evict: 3_600_000 }) }, { port: 4322 })
+
+// a tab
+const conn = connect&lt;ChatSchema&gt;(webSocketTransport('ws://127.0.0.1:4322/'))
+const lobby = conn.lookup('room', { name: 'lobby' })   // get-or-spawn, on the server
+</code></pre>
+
+  <details class="diagram">
+    <summary>Architecture — tabs, one host, a process per room</summary>
+    <div class="diagram-body"><pre data-mermaid>flowchart LR
+  T1["tab A"] -- "lookup room lobby" --> H
+  T2["tab B"] -- "lookup room lobby" --> H
+  T3["tab C"] -- "lookup room dev" --> H
+  H["the host: one wire session per socket"] --> REG["registry: a name plus its args is the address"]
+  REG --> P1[["room lobby"]]
+  REG --> P2[["room dev"]]
+  P1 -- "yield, diffed to a patch" --> H
+  H -- "patch" --> T1
+  H -- "patch" --> T2</pre></div>
+  </details>
+
+  <p>The registry is the room lifecycle: a room is spawned by the first lookup, shared by every later one, and evicted an hour after the last tab leaves. A suspended generator is kilobytes, so one node holds thousands of them. Kill the server mid-conversation and the tabs keep their last value with <code>stale: true</code> until the transport reconnects and the re-lookup answers with a full snapshot.</p>
+
+  <div class="note"><b>Run it in a terminal, not a deployment.</b> <code>pnpm chat-server</code>, then open <code>/examples/chat/</code> in a few tabs. Before putting a host on the internet, read <a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a> — origin policy, authorization, per-connection scoping, and the limits that are not on by default.</div>
+
+  <h3>Two: state that outlives the process</h3>
+
+  <p>A chat room can afford to be forgotten. An order, a job, a long-running task cannot. <code>@nonchalant/durable</code> wraps a process and writes it down; what comes back out is an ordinary <code>Proc</code>, so it still goes in a registry, over the wire, and under a view.</p>
+
+<pre><code data-ts>
+const orders = registry({
+  order: define(durable(order, { store, key: (args) => args.id })),
+})
+</code></pre>
+
+  <p>The transaction boundary is <strong>one message</strong>. It is journaled before it is handled; each effect inside <code>d.step</code> is journaled as it completes; and when the process asks for its <em>next</em> message, the state it produced and the cursor past the handled one are committed together. Crash in between and the message is delivered again with its finished effects already answered — the generator re-runs, the effects do not.</p>
+
+  <details class="diagram">
+    <summary>Architecture — what gets written down, and when</summary>
+    <div class="diagram-body"><pre data-mermaid>sequenceDiagram
+  participant C as caller
+  participant D as durable wrapper
+  participant S as store (a port)
+  participant P as your process
+  C->>D: send, or ask with a callId
+  D->>S: append(message)
+  D->>P: deliver
+  P->>D: step("charge")
+  D->>S: putStep(result)
+  P->>D: yield state
+  P->>D: ask for the next message
+  D->>S: commit(state, cursor) - together, or not at all
+  Note over D,S: a crash before that commit delivers the message again
+  Note over D,S: recorded steps answer from the journal instead of running</pre></div>
+  </details>
+
+  <p><strong>Calls are durable too</strong>, which is what makes a durable process worth calling. An <code>ask</code> into one carries an idempotency key; the answer is recorded under it, and a retry is answered from the record. <code>d.call</code> derives that key from the caller, the message it is handling, and the name, so a replay asks with the same one:</p>
+
+<pre><code data-ts>
+const receipt = await d.call('reserve', (callId) =>
+  vault.ask({ type: 'reserve', amount: 100, callId }))
+</code></pre>
+
+  <p>So a repeated call does no work twice; two callers on one id wait on one answer; a caller that died after the answer landed retries and gets that answer back; and a callee that answered but died before acknowledging does not handle the message again.</p>
+
+  <p>The store is a <strong>port</strong> — eight methods, no base class, no registration, and the wrapper knows nothing else about storage. This repo ships the in-memory adapter only: it is the reference implementation and the rig the crash-consistency property runs against. An adapter for a real store belongs in the repo that owns that driver.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>How durable execution is usually done</th><th>The trade</th></tr></thead>
+    <tbody>
+      <tr><td><b>Temporal</b> replays workflow code against an event history</td><td>Exact replay — at the price of code that must stay deterministic, with every effect behind an activity.</td></tr>
+      <tr><td><b>DBOS</b> and <b>Restate</b> journal each step of ordinary code</td><td>Ordinary code — at the price of at-least-once on the step that was in flight.</td></tr>
+      <tr><td><b>Here:</b> journal the message, journal the steps, commit the snapshot with the cursor</td><td>The same trade as DBOS and Restate, plus the snapshot: recovery reads one state instead of replaying a history. Journaled steps are exactly-once; an effect in flight when the process died runs again.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>What is deliberately absent: a worker fleet, a scheduler, a cron, a retry-policy language, and an execution console. A mailbox is also a single writer only while one node owns the name — several hosts activating the same id need a lease in the store, which is a distributed-systems problem no API removes.</p>
+
+  <h4>What is at the edges</h4>
+
+  <p>A backend eventually talks to something that fans out and something that hands out work. Both go behind a port, and <a href="./examples/messaging/">the messaging demo</a> has the two that matter with in-memory adapters. What is worth noticing is what happens on this side of them: <strong>a subscription is a process</strong> — subscribe on the way in, <code>self.send</code> each event, and let disposal be the unsubscribe — so an external stream becomes ordinary state that a view binds to. Look one up by topic and the registry becomes the subscription cache, one per topic however many readers there are.</p>
+
+  <p>A queue worker is a process too: reserve under a lease, handle, acknowledge, release on failure. Press <b>kill</b> in that demo while a worker holds a job — nothing acknowledges it, the lease expires, and the other worker picks it up with <code>attempts</code> one higher. At-least-once lives in the queue rather than in the worker, which is the same guarantee <code>durable()</code> gives inside a process, arriving from the other direction.</p>
+
+  <h3>Three: a process that decides what to do next</h3>
+
+  <p>An agent loop takes a question, calls out, looks at what came back, and yields as it goes. That is the same sentence as the one describing a todo list — so the agent below is not a second framework that happens to share a vocabulary. It is the primitive from section 03, wrapped in the durability just described, running on this page.</p>
 
   <div class="demo" data-demo="agent">
     <div class="demo-head">
@@ -328,11 +438,9 @@ const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // 
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
 
-  <h3>Tools are processes, so a tool call is <code>ask()</code></h3>
+  <p><strong>Tools are processes, so a tool call is <code>ask()</code>.</strong> A tool has state you can watch — the search tool counts its own calls — and it can be reached from anywhere, because reaching it is a registry lookup and a lookup does not care about distance.</p>
 
-  <p>Nothing above is a tool-calling runtime. A tool is a process with state — the search tool counts its own calls — and calling one is the typed request/reply that every other process gets. Which means a tool can live on a server without the agent noticing, because reaching it is a registry lookup, and a lookup does not care about distance.</p>
-
-  <p>It also means <strong>human-in-the-loop needs no mechanism at all</strong>. Say <em>refund 20</em> to the demo: the approval tool receives the request and simply does not reply until you click. The agent's side is an ordinary <code>await</code>; the queue of waiting requests is ordinary state, which is why the buttons that answer it are an ordinary view.</p>
+  <p>It also means <strong>human-in-the-loop needs no mechanism</strong>. Say <em>refund 20</em> to the demo: the approval tool receives the request and does not reply until you click. The agent's side is an ordinary <code>await</code>; the queue of waiting requests is ordinary state, which is why the buttons that answer it are an ordinary view.</p>
 
 <pre><code data-ts>
 for await (const msg of self) {
@@ -342,64 +450,41 @@ for await (const msg of self) {
 }
 </code></pre>
 
-  <h3>Durability is a wrapper, not a runtime</h3>
+  <p>Press <b>kill it</b> in the middle of a question: the process is disposed, the next lookup activates a new one, and it carries on from the journal instead of asking the model again.</p>
 
-  <p><code>@nonchalant/durable</code> wraps a process and writes it down. Each message is journaled before it is handled; each effect inside <code>step()</code> is journaled as it completes; and the state and the cursor past that message are committed together when the process asks for its next one. Crash anywhere in between and the message is redelivered with its finished effects already answered — the generator re-runs, the effects do not.</p>
+  <h4>Several agents</h4>
 
-<pre><code data-ts>
-const run = durable(agent, { store, key: (args) => args.id })   // an ordinary Proc comes back out
+  <p>The patterns the agent frameworks name are, here, ordinary process code. <a href="./examples/multi-agent/">The multi-agent demo</a> runs all of them: a supervisor briefs a researcher, hands what comes back to a writer, and stops for a person before publishing.</p>
 
-const plan = await d.step(`plan-${turn}`, () => model.plan(transcript, SPECS, { signal: self.signal }))
-const result = await d.step(`tool-${turn}`, () => callTool(tools, plan.tool, plan.args))
-</code></pre>
-
-  <h3>Calls are durable too, which is what makes delegation safe</h3>
-
-  <p>A durable process is only worth calling if the call survives as well. An <code>ask</code> into one carries an idempotency key, the answer is recorded under it, and a retry is answered from the record rather than doing the work again. <code>d.call</code> derives the key from the caller, the message it is handling, and the name — so a replay asks with the same one:</p>
-
-<pre><code data-ts>
-const notes = await d.call('research', (callId) =>
-  crew.researcher.ask({ type: 'research', topic, callId }))
-</code></pre>
-
-  <p>That is the difference between a durable process and a process that merely saves its state. In <a href="./examples/multi-agent/">the multi-agent demo</a> a supervisor briefs a researcher, hands the result to a writer, and stops for a person before publishing. Kill the supervisor while it is writing: the brief replays, and the researcher's run count does not move.</p>
-
-  <h3>The patterns the agent frameworks name</h3>
+  <details class="diagram">
+    <summary>Architecture — a supervisor, two delegates, one budget</summary>
+    <div class="diagram-body"><pre data-mermaid>flowchart TB
+  V["the page: bindings on the supervisor's state"] --- B
+  B["supervisor (durable)"] -- "d.call research" --> R["researcher (durable)"]
+  B -- "d.call write" --> W["writer (durable)"]
+  B -- "d.step approve" --> A["approvals: a reply parked until a person clicks"]
+  R -- "ask" --> SR["search tool"]
+  R -- "ask" --> M["budget: one limit for the whole system"]
+  W -- "ask" --> M
+  W -- "ask" --> MO["the model"]</pre></div>
+  </details>
 
   <div class="scroll">
   <table>
     <thead><tr><th>The pattern</th><th>What it is here</th></tr></thead>
     <tbody>
       <tr><td>Single agent</td><td>One process.</td></tr>
-      <tr><td>Agent delegation</td><td>The tool is another agent, so the delegation is a durable call.</td></tr>
+      <tr><td>Agent delegation</td><td>The tool is another agent, so the delegation is a durable call. Kill the supervisor mid-pipeline and the researcher does not run again.</td></tr>
       <tr><td>Programmatic hand-off</td><td>The supervisor passes one agent's output to the next as an argument. No shared blackboard, no history object.</td></tr>
       <tr><td>Graph-based control flow</td><td><code>stage</code> is a field, the code between yields is the edge — and the graph renders, because it is data.</td></tr>
       <tr><td>Usage limits across the system</td><td>One budget process everybody asks, inside a <code>step</code> so a replay does not spend twice.</td></tr>
       <tr><td>Shared dependencies</td><td>Arguments, or a registry lookup for anything shared.</td></tr>
+      <tr><td>Streaming a run to a UI</td><td>Not a separate API: the run <em>is</em> state, so a view binds to it and a wire sends it as patches.</td></tr>
     </tbody>
   </table>
   </div>
 
-  <p>Press <b>kill it</b> in the middle of a question. The process is disposed, the next lookup activates a new one, and it continues from the journal instead of asking the model again. The store is a port: the adapter here keeps everything in a <code>Map</code>, and a real one implements the same eight methods over whatever it is built on, with the process above it unchanged.</p>
-
-  <p>Two things stay true and are worth saying plainly. An effect that was <em>in flight</em> when the process died runs again, because its result never landed: journaled steps are exactly-once, everything else is at-least-once. And a mailbox is a single writer only while one node owns the name — several hosts activating the same id need a lease in the store, which is a distributed-systems problem no amount of API design removes.</p>
-
-  <h3>What this is, next to what you may be comparing it with</h3>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>Elsewhere</th><th>Here</th></tr></thead>
-    <tbody>
-      <tr><td>An agent graph with nodes, edges, and a runtime to walk them</td><td>A loop in a generator. Control flow is <code>if</code> and <code>for</code>, because it is control flow.</td></tr>
-      <tr><td>A streaming API so a UI can watch a run</td><td>The run <em>is</em> state. A view binds to it; over a wire it arrives as patches.</td></tr>
-      <tr><td>An interrupt protocol for human approval</td><td>A reply that has not been sent yet.</td></tr>
-      <tr><td>Workflow code that must be deterministic so history can replay it</td><td>Ordinary code; the effects are journaled instead. You pay for that with at-least-once on the effect that was in flight.</td></tr>
-      <tr><td>A worker fleet, a scheduler, a queue, and a console</td><td>Not included. This is a durability wrapper and a store interface, not an orchestration platform.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <p>The tests are the honest part: <code>examples/agent/agent.test.ts</code> drives the whole loop with no DOM and no network — the model is an argument and the run reads as a transcript of yields — and <code>packages/durable</code> proves crash consistency as a property, running every crash schedule a generator can produce and checking the workflow lands where the uninterrupted run landed.</p>
+  <p>The tests are the honest part. <code>examples/agent/agent.test.ts</code> and <code>examples/multi-agent/multi-agent.test.ts</code> drive every one of these with no DOM and no network — the model is an argument, the tools are processes, and a run reads as a transcript of yields — while <code>packages/durable</code> proves crash consistency as a property, running generated crash schedules and checking the workflow lands where the uninterrupted run landed.</p>
 </section>
 
 <section id="more">

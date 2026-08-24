@@ -111,7 +111,9 @@ Structure:
   `worker/`, and `agent/` carry their own test files. `agent/` is the
   full-stack claim in miniature: an agent loop, its tools, and a human-approval
   gate, all processes, all durable, rendered by the same bindings as the
-  counter.
+  counter. `multi-agent/` adds delegation, hand-off, and a shared budget;
+  `messaging/` puts a bus and a work queue behind ports with in-memory
+  adapters.
 - `docs/internals/` — contributor notes on core's mechanisms and invariants
   (reconcile, track, graph, process, registry), with an architecture overview
   in its README. Update these when you change how a mechanism works.

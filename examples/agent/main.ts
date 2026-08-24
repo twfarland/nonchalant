@@ -77,16 +77,19 @@ function Ask(): VNode {
 }
 
 function Transcript(): VNode {
-  const line = (step: NonNullable<AgentState['steps']>[number]): VNode => {
-    if (step.kind === 'question') return div({}, span({ class: 'tag' }, 'you'), step.text)
-    if (step.kind === 'answer') return div({}, span({ class: 'tag' }, 'agent'), step.text)
-    return div({},
-      span({ class: 'tag' }, step.name),
+  const line = (step: AgentState['steps'][number]): VNode => {
+    if (step.kind === 'question') return span({ class: 'said' }, step.text)
+    if (step.kind === 'answer') return span({ class: 'said' }, step.text)
+    return span({ class: 'said mono' },
       `${step.args} → `,
-      span({ class: step.result === null ? 'muted' : 'ok' }, step.result ?? 'running…'))
+      span({ class: step.result === null ? 'muted' : 'ok' }, step.result ?? 'working…'))
   }
+  const who = (step: AgentState['steps'][number]): string =>
+    step.kind === 'tool' ? step.name : step.kind === 'question' ? 'you' : 'agent'
 
-  return ul({ class: 'list' }, () => (state()?.steps ?? []).map((step, i) => li({ key: i }, line(step))))
+  return ul({ class: 'turns' }, () =>
+    (state()?.steps ?? []).map((step, i) =>
+      li({ key: i, class: `turn ${step.kind}` }, span({ class: 'who' }, who(step)), line(step))))
 }
 
 function Answer(): VNode {
@@ -96,16 +99,20 @@ function Answer(): VNode {
   })
 }
 
-function Approvals(queue: Process<ApprovalState | undefined, ApprovalMsg>): VNode {
+// the panel exists only while somebody is being asked. `hidden` is not enough:
+// any class that sets `display` beats the browser's [hidden] rule
+function Approvals(queue: Process<ApprovalState | undefined, ApprovalMsg>): () => VNode | null {
   const decide = (ok: boolean) => (): void => queue.send({ type: 'decide', ok })
 
-  return div({ class: 'card', hidden: () => (queue()?.pending.length ?? 0) === 0 },
-    div({}, 'The agent is waiting on you: ',
-      span({ class: 'tag' }, () => queue()?.pending[0]?.tool ?? ''),
-      () => queue()?.pending[0]?.args ?? ''),
-    div({ class: 'row' },
-      button({ onclick: decide(true) }, 'approve'),
-      button({ onclick: decide(false) }, 'refuse')))
+  return () => {
+    const asking = queue()?.pending[0]
+    if (asking === undefined) return null
+    return div({ class: 'gate' },
+      div({}, 'The agent is waiting on you: ', span({ class: 'tag' }, asking.tool), asking.args),
+      div({ class: 'row' },
+        button({ onclick: decide(true) }, 'approve'),
+        button({ onclick: decide(false) }, 'refuse')))
+  }
 }
 
 function ToolUse(name: string, tool: Process<ToolState | undefined, never>): VNode {

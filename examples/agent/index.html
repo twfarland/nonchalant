@@ -6,11 +6,23 @@
 <title>Agent — nonchalant</title>
 <link rel="stylesheet" href="../shared.css">
 <style>
+  .turns { list-style: none; margin: 0.75rem 0; padding: 0; }
+  .turn { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.35rem 0.6rem;
+    border-left: 2px solid var(--line); }
+  .turn .who { flex: none; width: 5rem; font-size: 0.7rem; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.07em; }
+  .turn.question { border-left-color: var(--ink); background: var(--paper); }
+  .turn.question .who { color: var(--ink); }
+  .turn.question .said { font-weight: 500; }
+  .turn.answer { border-left-color: var(--accent); }
+  .turn.answer .who { color: var(--accent); }
+  .said.mono { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.85rem; }
   .tag { display: inline-block; min-width: 4.5rem; margin-right: 0.5rem; color: var(--muted);
     font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
   .ok { color: var(--ok); }
-  .answer { min-height: 1.5em; margin: 0.75rem 0; }
-  .card + .card { margin-top: 1rem; }
+  .answer { min-height: 1.5em; margin: 0.75rem 0; font-size: 1.05rem; }
+  .gate { border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.75rem 0;
+    max-width: 34rem; }
 </style>
 </head>
 <body>

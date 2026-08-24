@@ -31,6 +31,7 @@ const pages = [
   'examples/worker/index.html',
   'examples/agent/index.html',
   'examples/multi-agent/index.html',
+  'examples/messaging/index.html',
   'examples/shared-cart/index.html',
   'examples/mario/index.html',
   'examples/js-framework-benchmark/index.html',
@@ -81,6 +82,8 @@ const chatIsLocalOnly = (): Plugin => ({
 
 export default defineConfig({
   build: {
+    // mermaid is a lazy chunk: only readers who expand a diagram pay for it
+    chunkSizeWarningLimit: 1_500,
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: { input: pages.map((p) => resolve(root, p)) },

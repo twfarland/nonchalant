@@ -48,8 +48,20 @@ export function run(host: Element): Disposable {
     return status !== undefined && status !== 'idle' && status !== 'done' && status !== 'failed'
   }
 
-  const step = (s: AgentState['steps'][number]): string =>
-    s.kind === 'tool' ? `${s.name}(${s.args}) → ${s.result ?? '…'}` : s.text
+  const said = (s: AgentState['steps'][number]): string =>
+    s.kind === 'tool' ? `${s.args} → ${s.result ?? 'working…'}` : s.text
+  const who = (s: AgentState['steps'][number]): string => (s.kind === 'tool' ? s.name : s.kind === 'question' ? 'you' : 'agent')
+
+  // the gate exists only while somebody is being asked: `hidden` loses to any
+  // class that sets display, and a row that is not needed should not be there
+  const Gate = (): VNode | null => {
+    const asking = queue()?.pending[0]
+    if (asking === undefined) return null
+    return div({ class: 'row gate' },
+      span({}, `approve ${asking.tool} ${asking.args}?`),
+      button({ onclick: () => queue.send({ type: 'decide', ok: true }) }, 'yes'),
+      button({ onclick: () => queue.send({ type: 'decide', ok: false }) }, 'no'))
+  }
 
   return mount(host, div({ class: 'stack' },
     div({ class: 'row' },
@@ -62,17 +74,16 @@ export function run(host: Element): Disposable {
       button({ onclick: kill }, 'kill it'),
       span({ class: 'muted' }, () => state()?.status ?? '…')),
 
-    ul({ class: 'list' }, () =>
+    ul({ class: 'turns' }, () =>
       (state()?.steps ?? []).map((s, i) =>
-        li({ key: i }, span({ class: 'demo-title' }, s.kind === 'tool' ? s.name : s.kind), step(s)))),
+        li({ key: i, class: `turn ${s.kind}` },
+          span({ class: 'who' }, who(s)),
+          span({ class: 'said' }, said(s))))),
 
     div({ class: 'readout' }, () => {
       const chunks = state()?.answer ?? []
       return chunks.length === 0 ? 'no answer yet' : chunks.join(' ')
     }),
 
-    div({ class: 'row', hidden: () => (queue()?.pending.length ?? 0) === 0 },
-      span({}, () => `approve ${queue()?.pending[0]?.tool ?? ''} ${queue()?.pending[0]?.args ?? ''}?`),
-      button({ onclick: () => queue.send({ type: 'decide', ok: true }) }, 'yes'),
-      button({ onclick: () => queue.send({ type: 'decide', ok: false }) }, 'no'))))
+    Gate))
 }

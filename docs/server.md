@@ -178,6 +178,45 @@ Honest limits: no built-in fleet, queue, scheduler, retry policies beyond
 data before they can be state. Long CPU work belongs on another thread
 (`examples/worker`).
 
+## Brokers, at the edge
+
+A backend eventually talks to something that fans out and something that hands
+out work. Both belong behind a port, and `examples/messaging` shows the two
+that matter, with in-memory adapters:
+
+```ts
+export interface Bus {
+  publish(topic: string, event: Json): Promise<void>
+  subscribe(topic: string, onEvent: (event: Json) => void): () => void
+}
+
+export interface Queue {
+  push(body: Json): Promise<string>
+  reserve(leaseMs: number): Promise<Job | undefined>   // hidden from others until the lease ends
+  ack(id: string): Promise<void>
+  release(id: string): Promise<void>
+}
+```
+
+**A subscription is a process.** Subscribe on the way in, `self.send` each
+event, and let disposal be the unsubscribe. The external stream becomes
+ordinary state, so a view binds to it exactly as it binds to a counter — and if
+you look one up by topic, the registry is the subscription cache: one
+subscription per topic however many readers there are, released when the last
+one leaves.
+
+**A worker is a process too.** Reserve, handle, acknowledge; release on a
+failure instead of losing the job. Poll with a timer rather than a bare
+`self.send` — a mailbox loop that re-sends synchronously never lets the event
+loop turn again.
+
+**At-least-once lives in the queue, not in the worker.** A worker that dies
+holding a lease acknowledges nothing, the lease expires, and somebody else gets
+the job with `attempts` one higher. That is the same guarantee `durable()`
+gives inside a process, arriving from the other direction — and the two compose:
+a durable process consuming a queue journals the job as a message, so a
+redelivered job that was already handled is recognised rather than repeated.
+
 ## Multi-agent wiring
 
 The patterns the agent frameworks name are, here, four ways of writing ordinary

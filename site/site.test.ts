@@ -5,8 +5,10 @@
 // and drives the interactions the captions promise.
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { flush } from '@nonchalant/core'
 import { highlight } from './highlight.ts'
+import { showSources } from './sources.ts'
 import { run as counter } from './demos/counter.ts'
 import { run as todos } from './demos/todos.ts'
 import { run as typeahead } from './demos/typeahead.ts'
@@ -179,6 +181,7 @@ describe('site demos', () => {
       if (!ready()) throw new Error(`never reached: ${what}`)
     }
     expect(readout()).toBe('no answer yet')
+    expect(el.querySelector('.gate')).toBeNull() // nobody is being asked anything yet
 
     const press = (label: string): void => {
       const b = [...el.querySelectorAll('button')].find((x) => x.textContent === label)
@@ -196,8 +199,10 @@ describe('site demos', () => {
     await settle() // the field's cell takes a turn to publish, like any process
     press('ask')
     await waitFor(() => el.textContent?.includes('approve refund 20?') === true, 'the approval request')
+    expect(el.querySelector('.gate')).not.toBeNull()
     press('yes')
     await waitFor(() => readout().includes('approved'), 'the decision to reach the agent')
+    expect(el.querySelector('.gate')).toBeNull() // and it goes away again
 
     demo[Symbol.dispose]()
   }, 20_000) // a stubbed model still takes its time, on purpose
@@ -224,6 +229,55 @@ describe('site demos', () => {
     expect(sprite()).toContain('stand/right')
     demo[Symbol.dispose]()
   })
+})
+
+// The page draws these with mermaid the first time a reader expands one, which
+// means a syntax error would show up as an empty box in production and nowhere
+// else. Parsing them here is the cheapest possible guard.
+describe('source listings', () => {
+  const slot = (): Element => {
+    const root = document.createElement('div')
+    root.innerHTML = '<details><summary>source</summary><pre><code data-src></code></pre></details>'
+    document.body.appendChild(root)
+    return root
+  }
+
+  it('one file gets no tabs', () => {
+    const root = slot()
+    showSources(root, [{ label: 'only.ts', src: 'const a = 1' }])
+    expect(root.querySelector('.src-tabs')).toBeNull()
+    expect(root.querySelector('[data-src]')?.textContent).toBe('const a = 1')
+  })
+
+  it('several files get tabs, and clicking one shows it', () => {
+    const root = slot()
+    showSources(root, [
+      { label: 'demo.ts', src: 'const mounted = true' },
+      { label: 'process.ts', src: 'const interesting = true' },
+    ])
+    const tabs = [...root.querySelectorAll('.src-tab')] as HTMLButtonElement[]
+    expect(tabs.map((t) => t.textContent)).toStrictEqual(['demo.ts', 'process.ts'])
+    expect(tabs[0]?.className).toContain('on')
+    expect(root.querySelector('[data-src]')?.textContent).toContain('mounted')
+
+    tabs[1]?.click()
+    expect(root.querySelector('[data-src]')?.textContent).toContain('interesting')
+    expect(tabs[1]?.className).toContain('on')
+    expect(tabs[0]?.className).not.toContain('on')
+  })
+})
+
+describe('the architecture diagrams', () => {
+  it('are valid mermaid', async () => {
+    const html = readFileSync('index.html', 'utf8')
+    const sources = [...html.matchAll(/<pre data-mermaid>([\s\S]*?)<\/pre>/g)].map((m) => (m[1] ?? '').trim())
+    expect(sources.length).toBeGreaterThan(0)
+
+    const { default: mermaid } = await import('mermaid')
+    mermaid.initialize({ startOnLoad: false })
+    for (const source of sources) await mermaid.parse(source) // throws on a bad one
+    await expect(mermaid.parse('flowchart LR; A[[[broken')).rejects.toBeTruthy() // and a bad one fails
+  }, 30_000)
 })
 
 describe('the plain highlighter', () => {

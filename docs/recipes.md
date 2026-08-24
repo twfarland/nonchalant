@@ -150,6 +150,15 @@ Two things to keep in mind when a process grinds on its own:
 
 `examples/worker`.
 
+## Brokers behind a port
+
+A bus and a work queue are two interfaces and two adapters; the processes that
+face them are ordinary. A subscription is a process (subscribe on the way in,
+dispose is the unsubscribe), and looking one up by topic makes the registry the
+subscription cache. A queue worker reserves under a lease, handles, and
+acknowledges — so a worker that dies loses its lease and the job comes back to
+someone else. `examples/messaging`, and [Processes on the server](server.md).
+
 ## Where are the operators?
 
 If you're arriving from RxJS or an FRP library: there's deliberately no

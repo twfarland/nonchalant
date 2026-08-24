@@ -107,12 +107,18 @@ function Meter(meter: Process<BudgetState | undefined, BudgetMsg>): VNode {
     button({ onclick: () => meter.send({ type: 'reset', limit: 600 }) }, 'refill'))
 }
 
-function Gate(): VNode {
+// only while a person is actually being asked — a row that is not needed
+// should not be in the document at all
+function Gate(): () => VNode | null {
   const queue = crew.approvals
-  return div({ class: 'row', hidden: () => (queue()?.pending.length ?? 0) === 0 },
-    span({}, () => `publish "${queue()?.pending[0]?.args ?? ''}"?`),
-    button({ onclick: () => queue.send({ type: 'decide', ok: true }) }, 'publish'),
-    button({ onclick: () => queue.send({ type: 'decide', ok: false }) }, 'hold'))
+  return () => {
+    const asking = queue()?.pending[0]
+    if (asking === undefined) return null
+    return div({ class: 'row gate' },
+      span({}, `publish "${asking.args}"?`),
+      button({ onclick: () => queue.send({ type: 'decide', ok: true }) }, 'publish'),
+      button({ onclick: () => queue.send({ type: 'decide', ok: false }) }, 'hold'))
+  }
 }
 
 // ---------- the app ----------

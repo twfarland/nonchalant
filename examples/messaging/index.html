@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pub/sub and a queue — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .panels { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.75rem; }
+  .panel { flex: 1 1 14rem; border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.9rem; }
+  .panel .list li { font-size: 0.9rem; }
+  .tag { display: inline-block; min-width: 4.5rem; color: var(--muted); font-size: 0.75rem;
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  .status { font-size: 0.85rem; }
+  .status.working { color: var(--accent); font-weight: 600; }
+  .status.paused { color: var(--danger); }
+  .card { max-width: 46rem; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>A bus and a queue <span class="muted">— through ports, with in-memory adapters</span></h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>Two ports, in <code>ports.ts</code>. A <code>Bus</code> publishes and subscribes; a <code>Queue</code> pushes, reserves under a lease, acknowledges, and releases. Neither mentions a process, and no process mentions a broker. <code>memory.ts</code> is the only adapter this repo ships — an adapter over SQS, Redis Streams, NATS or pg-boss is a translation of the same shapes.</p>
+
+<h2>A subscription is a process</h2>
+<p>Which is the whole trick: an external stream becomes ordinary state, so a view binds to it exactly as it binds to a counter. Subscribing happens on the way in, and the unsubscribe is the disposal.</p>
+<pre><code><span class="k">const</span> stop = bus.subscribe(topic, (event) =&gt; self.send({ <span class="k">type</span>: <span class="s">'event'</span>, text: String(event) }))
+self.signal.addEventListener(<span class="s">'abort'</span>, stop, { once: <span class="k">true</span> })
+
+<span class="k">yield</span> { topic, events, received }
+<span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
+  events = [...events.slice(-5), msg.text]
+  <span class="k">yield</span> { topic, events, received: ++received }
+}</code></pre>
+<p>Look one up by topic and the registry becomes the subscription cache: one subscription per topic however many views want it, and the unsubscribe when the last one leaves. That is the same <code>lookup</code> that dedupes queries and addresses remote processes.</p>
+
+<h2>A worker is a process too</h2>
+<p>Reserve, handle, acknowledge — and if the handler throws, release the job instead of losing it. Nothing here is a framework hook; the retry count above is what the queue reports.</p>
+<pre><code><span class="k">const</span> job = <span class="k">await</span> queue.reserve(leaseMs)
+<span class="k">if</span> (job === <span class="k">undefined</span>) { soon(() =&gt; self.send({ <span class="k">type</span>: <span class="s">'poll'</span> }), idleMs); <span class="k">continue</span> }
+<span class="k">try</span> {
+  done = [...done, <span class="k">await</span> handle(job, self.signal)]
+  <span class="k">await</span> queue.ack(job.id)
+} <span class="k">catch</span> {
+  <span class="k">await</span> queue.release(job.id)   <span class="c">// failed, not died: give it back now</span>
+}</code></pre>
+
+<h2>Press kill while a worker is holding a job</h2>
+<p>The process is disposed, its handler is aborted through <code>self.signal</code>, and nothing acknowledges the job — so it stays invisible until its lease runs out, and then the other worker takes it. That is what at-least-once looks like when the queue, rather than the worker, is the thing that guarantees it. The <code>attempts</code> count in the <code>#jobs</code> feed goes up on the redelivery.</p>
+
+<p>The poll loop uses a timer, not a bare <code>self.send</code>: a mailbox loop that re-sends synchronously resolves in microtasks and the event loop never turns again, so no timer, no I/O and no <em>pause</em> would ever be heard.</p>
+
+<p><code>messaging.test.ts</code> drives all of it headlessly. The queue takes its clock as an argument, so the test expires a lease by assigning to a number instead of waiting four seconds.</p>
+</aside>
+</div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>
