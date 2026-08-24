@@ -1,4 +1,4 @@
-# reconcile.ts — the structural diff
+# reconcile.ts: the structural diff
 
 `packages/core/src/reconcile.ts`. No internal imports; everything else in core
 sits on top of it.
@@ -26,11 +26,11 @@ is one diff in the system, and this is it.
 Paths are RFC 6901 JSON pointers (`/items/3/done`), with `~` escaped as `~0`
 and `/` as `~1`. The root is the empty string.
 
-This is not RFC 6902 JSON Patch. `splice` is the deliberate addition: a
+This format differs from RFC 6902 JSON Patch by including `splice`, which lets a
 JSON Patch representation of "insert one row at the front of a 10,000-item
 list" is 10,000 index rewrites, while `splice` is one op whose size is the
 inserted slice. Since the wire carries these ops verbatim, the op set is a
-protocol decision, not just an implementation detail — changing it means
+protocol decision rather than only an implementation detail. Changing it means
 changing `packages/wire/spec/`.
 
 ## Identity is the base case
@@ -45,7 +45,7 @@ The mutate-then-clone anti-pattern defeats exactly this: a deep clone shares
 no identity, so every node is "changed" and the diff walks the whole tree.
 That is the ~4,900 µs row in [concepts.md](../concepts.md).
 
-Path strings are only built along the changed spine — `${path}/${key}` is
+Path strings are built only along the changed spine. `${path}/${key}` is
 constructed after the identity check fails, never for the untouched
 neighbours (measured ~5× on 10k items).
 
@@ -57,7 +57,7 @@ it is new.
 
 The membership test is `Object.hasOwn`, never `in`. With `in`, a key like
 `toString` would find `Object.prototype`'s method and the diff would conclude
-the key already existed — corrupting the patch for any state that uses
+the key already existed, which would corrupt the patch for state that uses
 prototype-shadowing key names. `applyPatch` guards the mirror image by writing
 through `Object.defineProperty` rather than assignment, so a `__proto__` key
 in the data cannot reach the prototype chain.
@@ -79,15 +79,15 @@ flowchart TD
 
 Three outcomes after trimming, in the order the code tests them:
 
-- **Prefix window empty in `prev`** (`start === pEnd`) — pure insertion. One
+- **Prefix window empty in `prev`** (`start === pEnd`): pure insertion. One
   `splice` inserting the middle of `next`.
-- **Window empty in `next`** (`start === nEnd`) — pure removal. One `splice`
+- **Window empty in `next`** (`start === nEnd`): pure removal. One `splice`
   removing that range.
-- **Both windows non-empty** — indices agree in both coordinate systems across
+- **Both windows non-empty:** indices agree in both coordinate systems across
   the overlap, so the overlap is walked per index, and one trailing `splice`
   accounts for any length difference.
 
-The consequence worth knowing when reading a patch: an edit *and* a length
+When reading a patch, note that an edit *and* a length
 change in the same yield produce per-index ops plus one splice, not a single
 fused op. Minimality is asserted per-shape in `reconcile.test.ts`, not claimed
 in general.
@@ -97,7 +97,7 @@ in general.
 `applyPatch` copies every container it descends through and never touches the
 input document, the patch, or the values inside the patch. That purity is what
 makes it safe on the client, where the previous snapshot is still being read
-by live bindings while the next one is being built — this is the same
+by live bindings while the next one is being built. This is the same
 structural-sharing discipline the docs ask of application code, applied
 internally.
 
@@ -115,8 +115,8 @@ Round-tripping is the property test: for random `prev`/`next` pairs,
 
 1 change in a 10,000-item list must diff in ≤ 100 µs, asserted in
 `packages/core/test/reconcile.perf.test.ts`. It is a CI assertion, not a
-guideline — tighten it if you make the diff faster, never loosen it to make a
+guideline. Tighten it if you make the diff faster; do not loosen it to make a
 change fit.
 
-Next: [tracking.md](tracking.md) — how a reader records what it read, so a
+Next: [tracking.md](tracking.md) explains how a reader records what it read so a
 patch can be matched against it.

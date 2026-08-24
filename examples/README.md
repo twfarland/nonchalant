@@ -1,22 +1,23 @@
 # Examples
 
-The teaching ladder, in order. Everything is type-checked in CI (`pnpm check`);
-the entries marked ⏱ carry their own CI-asserted tests or budgets. All demos
-are self-contained — no backends required.
+The examples are ordered from introductory to advanced. CI type-checks all of
+them with `pnpm check`, and entries marked ⏱ have dedicated tests or performance
+budgets. Most run entirely in the browser; the chat example uses the included
+local server.
 
 | example | shows |
 |---|---|
 | `counter/` | widget state as a closed-over `cell`; a Process as a live slot |
 | `todomvc/` | ⏱ one state process + one view; the keyed list patches one row at a time |
 | `typeahead/` | `latest()` queue conflation, lifetime abort via `self.signal` |
-| `form/` | `ask()` — a submit that learns its own outcome (try someone@taken.com) |
+| `form/` | a submission that receives its result through `ask()` (try someone@taken.com) |
 | `router/` | pages as view processes over the userland router in `lib/router.ts` |
 | `undo-redo/` | middleware as function composition over `channel` |
 | `query/` | ⏱ server state the process way: queries as definitions, mutations as `ask()` |
-| `drag/` | a gesture with a lifetime: born on pointerdown, dead on pointerup |
-| `bounce/` | one physics process, two renderers at once — the DOM sink and a canvas effect |
+| `drag/` | a process that lasts from pointerdown to pointerup |
+| `bounce/` | one physics process rendered through both DOM and canvas output |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
-| `worker/` | ⏱ the wire over a Web Worker port — heavy state off the UI thread |
+| `worker/` | ⏱ the wire over a Web Worker port, keeping expensive work off the UI thread |
 | `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable |
 | `multi-agent/` | ⏱ delegation, hand-off, a state-machine supervisor, shared usage limits |
 | `messaging/` | ⏱ pub/sub and a work queue as ports, with in-memory adapters |
@@ -26,11 +27,10 @@ are self-contained — no backends required.
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | the standard krausest benchmark app, keyed |
 
-`lib/` holds constructs written as if they were libraries — currently the
-router (hash and History-API flavors, replace-by-default navigation) — to
-show what defining your own costs here: no plugin API, no framework hooks,
-just processes. Every demo page explains its own mechanism inline, with the
-load-bearing code readable next to the running thing.
+`lib/` contains reusable code built from the public primitives. It currently
+includes hash and History API routers with replace-by-default navigation.
+There is no separate plugin API or set of framework hooks. Each demo explains
+its implementation beside the running example and links to its source.
 
 ## Running them
 
@@ -40,40 +40,40 @@ pnpm dev          # vite; opens the gallery at /examples/
 
 Notes:
 
-- **mario** — arrow keys to walk, up to jump. The golden test
+- **mario:** Use the arrow keys to walk and press up to jump. The golden test
   (`mario/mario.golden.test.ts`) also pins the classic input bug: holding a
   key down must never double-step the physics.
-- **bounce** — click either panel; both renderers read the same process, so
+- **bounce:** Click either panel. Both renderers read the same process, so
   they stay in lockstep.
-- **multi-tab** — open several tabs of the same page; one automatically
+- **multi-tab:** Open several tabs of the same page. One automatically
   becomes the host. Close it and the job moves to another tab.
-- **worker** — press Start, then move the grinder between the worker and this
+- **worker:** Press Start, then move the calculation between the worker and the main
   thread. The numbers are identical; the frame meter is not. Its tests run
   both halves of the wire over a `MessageChannel`
   (`worker/primes.test.ts`) and assert that the bindings follow the grinder
   across the switch (`worker/switch.test.ts`).
-- **agent** — the backend claim, running in a tab: the agent loop, its tools,
-  and the human-approval gate are all processes, and the page binds to them
-  the way every other demo binds to its state. Press *kill the machine*
-  mid-question to watch `durable()` bring it back from its journal.
-- **multi-agent** — brief the team, then press *kill the supervisor* while it
+- **agent:** The agent loop, tools, and human approval queue all run as
+  processes in the tab. The page binds to their state like any other demo.
+  Press *kill the machine* during a question to see `durable()` recover the
+  process from its journal.
+- **multi-agent:** Brief the team, then press *kill the supervisor* while it
   is writing: the brief replays and the researcher's run count does not move,
   because the delegated call is answered from its record. Drop the budget to
   watch the pipeline stop at *out of budget* instead of half-finishing.
-- **messaging** — publish to a topic and watch the subscriptions (which are
+- **messaging:** Publish to a topic and watch the subscription processes
   processes) update; push jobs and watch two workers share them. Press *kill*
   while a worker holds a job: its lease expires and the other one finishes it,
-  which is at-least-once made visible.
-- **chat** — run `pnpm chat-server`, then open the page in several tabs (or
+  to see at-least-once delivery in practice.
+- **chat:** Run `pnpm chat-server`, then open the page in several tabs or
   browsers) and hop between rooms. Each room is one server-side process,
-  spawned on first lookup and evicted when idle — one node process holds
+  started by the first lookup and evicted when idle. One Node process can hold
   thousands of them. Kill the server mid-conversation to watch stale reads
   and the reconnect.
-- **shared-cart** — works standalone. For the server version: run
+- **shared-cart:** The default version runs by itself. To use the server, run
   `pnpm cart-server` in another terminal, then swap the one commented line at
   the top of `shared-cart/main.ts`.
-- **7guis/cells** — type `=A1+1` into B1, `=B1*2` into C1, then edit A1.
-  Only the dependents recompute — the same thing its test asserts by counting
+- **7guis/cells:** Type `=A1+1` into B1, `=B1*2` into C1, then edit A1.
+  Only dependent cells recompute, which its test verifies by counting
   evaluations.
-- **js-framework-benchmark** — the app is implemented here; submitting it to
+- **js-framework-benchmark:** The app is implemented here. Submitting it to
   the benchmark harness repo is a separate, external step.

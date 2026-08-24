@@ -52,6 +52,18 @@ export function run(host: Element): Disposable {
     s.kind === 'tool' ? `${s.args} → ${s.result ?? 'working…'}` : s.text
   const who = (s: AgentState['steps'][number]): string => (s.kind === 'tool' ? s.name : s.kind === 'question' ? 'you' : 'agent')
 
+  // one place shows the conversation, streaming included: while the answer is
+  // arriving it is the last line, and the finished step takes the same slot
+  const turns = (): { key: string; kind: string; who: string; said: string }[] => {
+    const now = state()
+    const rows = (now?.steps ?? []).map((step, i) => ({
+      key: `t${i}`, kind: step.kind, who: who(step), said: said(step),
+    }))
+    if (now?.status === 'answering')
+      rows.push({ key: `t${rows.length}`, kind: 'answer', who: 'agent', said: `${now.answer.join(' ')}▌` })
+    return rows
+  }
+
   // the gate exists only while somebody is being asked: `hidden` loses to any
   // class that sets display, and a row that is not needed should not be there
   const Gate = (): VNode | null => {
@@ -75,15 +87,12 @@ export function run(host: Element): Disposable {
       span({ class: 'muted' }, () => state()?.status ?? '…')),
 
     ul({ class: 'turns' }, () =>
-      (state()?.steps ?? []).map((s, i) =>
-        li({ key: i, class: `turn ${s.kind}` },
-          span({ class: 'who' }, who(s)),
-          span({ class: 'said' }, said(s))))),
+      turns().map((turn) =>
+        li({ key: turn.key, class: `turn ${turn.kind}` },
+          span({ class: 'who' }, turn.who),
+          span({ class: 'said' }, turn.said)))),
 
-    div({ class: 'readout' }, () => {
-      const chunks = state()?.answer ?? []
-      return chunks.length === 0 ? 'no answer yet' : chunks.join(' ')
-    }),
+    div({ class: 'muted', hidden: () => turns().length > 0 }, 'nothing asked yet'),
 
     Gate))
 }

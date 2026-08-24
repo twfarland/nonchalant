@@ -30,13 +30,12 @@ opening a socket with a visitor's ambient credentials. `authorize` should
 validate the session, bearer token, client certificate information supplied by
 your proxy, or another real credential. It also protects `GET /schema`.
 
-Authorization has another layer. `authorize` accepts or rejects a connection
-but does not pass an identity into a process, and a schema is only a whitelist
-of lookup names — an authenticated client could still ask for another user's
-arguments. The `scope` option is the seam that closes this gap: it runs once
-per accepted connection and returns the gateway that connection's lookups go
-through, so the server — never the client — decides which processes a session
-can reach:
+Connection authorization is only the first layer. `authorize` accepts or
+rejects a connection, but it does not pass an identity to individual processes.
+The schema only limits available lookup names, so an authenticated client could
+still submit arguments that refer to another user's data. Use `scope` to create
+a gateway for each accepted connection. The server then controls which
+processes the session can reach:
 
 ```ts
 const host = await serve(definitions, {
@@ -49,7 +48,7 @@ const host = await serve(definitions, {
     return {
       lookup: (name: string) => {
         if (name !== 'cart') throw new Error(`not exposed: ${name}`)
-        // the server supplies the arguments — a client cannot name another
+        // the server supplies the arguments, so a client cannot name another
         // user's cart, whatever it sends
         return reg.lookup('cart', { userId: session.userId })
       },
@@ -58,20 +57,18 @@ const host = await serve(definitions, {
 })
 ```
 
-The gateway is one interception point for tenancy, quotas, and auditing: count
-lookups before delegating, log what a session touched, or wrap the returned
-process to gate `send` and `ask`. It can itself delegate to a process, making
-the session a single writer for its own policy. The framework never learns
-what a user, role, or token is. Without `scope`, every accepted connection
-shares the host registry, and exposed processes must validate tenant, record,
-and operation access themselves.
+The gateway provides one place to enforce tenancy, quotas, and auditing. It can
+count lookups, record which resources a session accessed, or wrap returned
+processes to control `send` and `ask`. It may also delegate policy decisions to
+a process. Nonchalant does not define users, roles, or tokens. Without `scope`,
+all accepted connections share the host registry, so exposed processes must
+validate tenant, record, and operation access themselves.
 
-Two connection-level limits are built in. `maxWatchesPerConnection` caps how
-many refs one connection may watch at once — past the cap a lookup answers
-with an error instead of retaining another process. `heartbeatMs` pings each
-socket on an interval and terminates it after a missed pong, so half-open
-connections (a peer that vanished without closing) release their watches
-instead of holding them until the OS notices.
+Two limits apply at the connection level. `maxWatchesPerConnection` caps the
+number of refs a connection may watch; lookups beyond the cap return an error.
+`heartbeatMs` pings each socket at an interval and terminates it after a missed
+pong. This releases watches from half-open connections instead of waiting for
+the operating system to detect them.
 
 For an internet-facing service, also terminate TLS (`wss://`), set request and
 connection limits at the reverse proxy, keep `maxPayloadBytes` appropriate for

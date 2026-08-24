@@ -1,10 +1,9 @@
 # Processes on the server
 
-Nothing in [`@nonchalant/core`](../packages/core) is about the browser. A
-process is a mailbox, a generator, and a supervisor: the same shape an actor
-has had since Erlang. This page is about using that on the server — as a
-virtual actor, as an agent loop, and as a durable workflow — and about what the
-library deliberately does not do for you.
+[`@nonchalant/core`](../packages/core) has no browser dependency. Its processes
+combine a mailbox, generator, and supervision in a model influenced by Erlang
+actors. This guide covers server-side use as virtual actors, durable workflows,
+and agent loops, along with the library's current limits.
 
 Read [Concepts](concepts.md) first; this assumes processes, the registry, and
 the wire.
@@ -13,24 +12,24 @@ the wire.
 
 | you want | what it is here |
 |---|---|
-| a mailbox, in order | `for await (const msg of self)` — sequential by default, so a double-submit queues instead of racing |
+| a mailbox, in order | `for await (const msg of self)` handles messages sequentially, so repeated submissions queue instead of racing |
 | cast and call | `send` and `ask`, kept apart by the type system |
 | supervision | `restart: 'on-crash'` with a budget; a terminal crash leaves `error` readable |
-| cancellation | `self.signal` — thread it into every fetch; disposal aborts it |
+| cancellation | pass `self.signal` to fetches; disposal aborts it |
 | a linked lifetime | children spawned inside a process die with it |
 | addressing by name | `registry.lookup(name, args)` is get-or-spawn |
 | activation / deactivation | that lookup activates; `evict` deactivates after idle |
 
-That last pair is the virtual-actor lifecycle (Orleans grains, Dapr actors)
-without a new noun: an entry is spawned on first lookup, shared by every later
-one, and reclaimed when the last watcher leaves and the idle timer expires.
+The last two rows describe the lifecycle used by virtual actors such as Orleans
+grains and Dapr actors. The first lookup starts an entry, later lookups share
+it, and the registry reclaims it after its last watcher leaves and its idle
+timer expires.
 
 ## Durability
 
-[`@nonchalant/durable`](../packages/durable) wraps a process and writes it
-down. It adds no runtime and no scheduler: `durable(proc, opts)` returns an
-ordinary `Proc`, so it goes into a registry, over the wire, and under a view
-like anything else.
+[`@nonchalant/durable`](../packages/durable) records process state for recovery.
+It does not add a runtime or scheduler. `durable(proc, opts)` returns a regular
+`Proc` that can be registered, accessed through the wire, and bound to a view.
 
 ```ts
 import { durable, memoryStore } from '@nonchalant/durable'
@@ -63,11 +62,11 @@ const order: DurableProc<Order, OrderMsg, { id: string }> = async function* (sel
 3. When the process asks for its **next** message, the state it produced and the
    cursor past the handled message are committed together.
 
-Crash anywhere in between and the message is redelivered with its finished
-effects already answered: the generator re-runs, and those effects do not.
+If the process crashes before the commit, the message is delivered again.
+Completed effects are read from the journal instead of running again.
 
-This is why `Self` being an interface matters. The process iterates a mailbox
-that acknowledges, and cannot tell the difference.
+This works because `Self` is an interface. The durable wrapper supplies a
+mailbox with acknowledgement behavior without changing the process code.
 
 ### What it guarantees, and what it does not
 
@@ -75,7 +74,7 @@ that acknowledges, and cannot tell the difference.
   replaced by that result on replay; `fn` is not called.
 - **Everything else is at-least-once.** An effect that was *in flight* when the
   process died runs again, because its result never landed. Give the outside
-  world an idempotency key — that is what `{ key: args.id }` is doing above.
+  world an idempotency key, as `{ key: args.id }` does above.
 - **The step sequence within one message must be stable.** On replay the
   wrapper checks the name recorded at each index and throws if it drifted,
   rather than pairing the wrong result with the wrong effect.
@@ -84,16 +83,15 @@ that acknowledges, and cannot tell the difference.
   redelivered, and a call without an idempotency key cannot be answered twice
   safely. See [Durable calls](#durable-calls).
 - **A refused write crashes the process.** Handling a message that could not be
-  written down is the one thing durability cannot survive, so it is loud.
+  recorded cannot be recovered safely, so the process fails immediately.
 - **A mailbox is a single writer only while one node owns the name.** Several
   hosts activating the same id need a lease or fencing token in the store.
   That is a distributed-systems problem, and it is outside the library.
 
 ### Durable calls
 
-A durable process is only worth calling if the call is durable too. `ask` into
-one carries a `callId`, the answer is recorded under that id, and a retry with
-the same id is answered from the record:
+Calls into durable processes use a `callId`. The response is recorded under
+that ID, and retries with the same ID receive the recorded response:
 
 ```ts
 // the caller's side: journaled, and the id is derived from (key, message, name)
@@ -102,13 +100,13 @@ const receipt = await d.call('reserve', (callId) =>
   vault.ask({ type: 'reserve', amount: 100, callId }))
 ```
 
-Which gives four behaviours worth naming:
+This provides four behaviors:
 
-- **A repeated call does no work twice.** The callee replies from its record.
-- **Two callers on one id wait on one answer.** The second attaches instead of
+- **A repeated call reuses completed work.** The callee replies from its record.
+- **Two callers with one ID wait for one response.** The second attaches instead of
   queueing a duplicate.
 - **A caller that dies after the answer landed retries and gets the same
-  answer** — the case that matters when one agent delegates to another.
+  answer.** This matters when one agent delegates to another.
 - **A callee that answered but died before acknowledging does not re-handle the
   message.** The recorded answer acknowledges it on the next activation.
 
@@ -120,16 +118,16 @@ done (an order number, a request id), not from a random.
 
 Eight methods, in [`store.ts`](../packages/durable/src/store.ts): `load`,
 `append`, `pending`, `putStep`, `steps`, `commit`, `result`, `putResult`. The
-wrapper knows nothing about storage beyond them, and an adapter is a plain
-object — no base class, no registration.
+wrapper knows nothing about storage beyond them. An adapter is a plain object
+with no required base class or registration step.
 
 The one ordering rule an adapter must honour is that `commit` writes the
 snapshot and the cursor together or writes neither. The one retention rule is
 that call results outlive the message that produced them, so a real adapter
 needs a window after which it forgets them.
 
-This repo ships `memoryStore()` only — the reference implementation and the
-test rig the crash-consistency property runs against. An adapter for a real
+This repository ships only `memoryStore()`, which serves as the reference
+implementation and the target of crash-consistency tests. An adapter for a real
 store belongs in the repo that owns that driver: `commit` as one transaction,
 `append` as one insert, `result`/`putResult` as a keyed table with a TTL.
 
@@ -140,16 +138,16 @@ uninterrupted run landed.
 
 ## Agents
 
-An agent loop is a process that takes a question, calls out, looks at what came
-back, and yields as it goes. `examples/agent` is the whole thing — the loop, a
-stubbed model, three tools, and a page bound to it.
+An agent process receives a question, calls tools, evaluates their responses,
+and publishes progress. `examples/agent` includes the loop, a stub model, three
+tools, and a page bound to their state.
 
-**Tools are processes; a tool call is `ask()`.** A tool has state you can watch,
-can be reached by name from anywhere, and — since a process replies when it
-feels like it — can wait for a person:
+**Tools can be processes, with `ask()` used for calls.** Their state can be
+observed, and the registry makes them available by name. A tool can also hold a
+request until a person responds:
 
 ```ts
-// the approval tool: the reply is simply not sent until somebody decides
+// the approval tool holds the reply until somebody decides
 for await (const msg of self) {
   if (msg.type === 'request') waiting = [...waiting, { ...msg, reply: msg.reply }]
   else { waiting[0]?.reply(msg.ok); waiting = waiting.slice(1) }
@@ -157,8 +155,8 @@ for await (const msg of self) {
 }
 ```
 
-The agent's side is an ordinary `await` that takes as long as it takes. There
-is no interrupt protocol, because a pending reply already is one.
+The agent waits with a regular `await`. The pending response represents the
+pause, so no separate interrupt protocol is needed.
 
 **Streaming is a yield per chunk.** Keep the growing text as `string[]` and
 append: one array append is one splice op, where re-sending a growing string is
@@ -169,20 +167,20 @@ wire.
 aborts `self.signal`, which aborts the request in flight. A durable agent's
 unfinished message is then redelivered on the next activation.
 
-**Observability is free.** The run *is* state, so a view binds to it locally
-and `connect()` streams it as patches remotely. There is no separate streaming
-API, because there is no separate representation.
+**Runs are observable state.** A view can bind to the run locally, while
+`connect()` sends remote changes as patches. This uses the standard process API
+rather than a separate streaming representation.
 
-Honest limits: no built-in fleet, queue, scheduler, retry policies beyond
-`restart`, or execution console. Model SDK objects have to be mapped to plain
+The library does not provide a built-in worker fleet, queue, scheduler, retry
+policies beyond `restart`, or an execution console. Model SDK objects must be mapped to plain
 data before they can be state. Long CPU work belongs on another thread
 (`examples/worker`).
 
-## Brokers, at the edge
+## Brokers and work queues
 
-A backend eventually talks to something that fans out and something that hands
-out work. Both belong behind a port, and `examples/messaging` shows the two
-that matter, with in-memory adapters:
+Backends commonly use pub/sub systems and work queues. Both can sit behind
+ports. `examples/messaging` defines these interfaces and provides in-memory
+adapters:
 
 ```ts
 export interface Bus {
@@ -198,49 +196,46 @@ export interface Queue {
 }
 ```
 
-**A subscription is a process.** Subscribe on the way in, `self.send` each
-event, and let disposal be the unsubscribe. The external stream becomes
-ordinary state, so a view binds to it exactly as it binds to a counter — and if
-you look one up by topic, the registry is the subscription cache: one
-subscription per topic however many readers there are, released when the last
-one leaves.
+**A subscription can be a process.** Subscribe during setup, pass each event to
+`self.send`, and unsubscribe during disposal. The external stream becomes state
+that a view can bind to. Looking up the process by topic also allows the
+registry to share one subscription among all readers of that topic and release
+it when the last reader leaves.
 
 **A worker is a process too.** Reserve, handle, acknowledge; release on a
 failure instead of losing the job. Poll with a timer rather than a bare
-`self.send` — a mailbox loop that re-sends synchronously never lets the event
+`self.send`. A mailbox loop that re-sends synchronously never lets the event
 loop turn again.
 
 **At-least-once lives in the queue, not in the worker.** A worker that dies
 holding a lease acknowledges nothing, the lease expires, and somebody else gets
 the job with `attempts` one higher. That is the same guarantee `durable()`
-gives inside a process, arriving from the other direction — and the two compose:
+gives inside a process. The two mechanisms can be combined:
 a durable process consuming a queue journals the job as a message, so a
 redelivered job that was already handled is recognised rather than repeated.
 
 ## Multi-agent wiring
 
-The patterns the agent frameworks name are, here, four ways of writing ordinary
-process code. `examples/multi-agent` runs all four in one page and tests them
-headlessly.
+`examples/multi-agent` implements common orchestration patterns with process
+code and tests them without a browser.
 
 | the pattern | what it is here |
 |---|---|
 | single agent | one process (`examples/agent`) |
 | agent delegation | the tool is another agent: `d.call('research', (callId) => researcher.ask({ …, callId }))` |
-| programmatic hand-off | the supervisor passes one agent's output to the next as an argument — no shared blackboard, no history object |
+| programmatic handoff | the supervisor passes one agent's output to the next as an argument, without a shared blackboard or history object |
 | graph-based control flow | `stage` is a field in the state, the code between yields is the edge, and the graph is renderable because it is data |
 | usage limits | one budget process everybody asks, inside a `d.step` so a replay does not spend twice |
-| shared dependencies | arguments. A registry lookup for anything shared |
+| shared dependencies | arguments, or a registry lookup for shared resources |
 | message history | whatever the supervisor kept in its own state, which is already durable |
 
-The property this arrangement has, and a graph runtime usually does not: kill
-the supervisor mid-pipeline and the agents it already delegated to do not
-redo their work, because the delegation was a durable call.
+Because delegation uses durable calls, restarting the supervisor during a
+pipeline does not repeat work already completed by other agents.
 
-Two limits worth stating. Fan-out is `Promise.all` over several `d.call`s —
-fine, but the step journal records them in completion order, so give each one
-its own name. And there is no scheduler: a supervisor is a process, and if the
-node holding it is gone, something has to look it up again for it to continue.
+Two limits apply. Fan-out uses `Promise.all` over several `d.call`s, and the
+step journal records them in completion order, so each call needs a distinct
+name. There is also no scheduler. If the node hosting a supervisor stops,
+something must look it up again before it can continue.
 
 ## Hosting
 

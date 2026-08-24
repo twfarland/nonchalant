@@ -1,9 +1,9 @@
 # Recipes
 
-Common patterns, each a few lines over the primitives — no special APIs, no
-privileged access. Most exist as runnable code in `examples/`.
+These recipes build common patterns from the public primitives. Most have a
+runnable version in `examples/`.
 
-## Widget state — `cell`
+## Widget state with `cell`
 
 ```ts
 function cell<T>(initial: T): Process<T, T> {
@@ -13,10 +13,10 @@ function cell<T>(initial: T): Process<T, T> {
 }
 ```
 
-Five lines, shipped as sugar because everyone needs it. A cell created inside
-a view belongs to that view and disappears with it. `examples/counter`.
+`cell` is a convenience wrapper for this common pattern. A cell created inside
+a view belongs to that view and is disposed with it. See `examples/counter`.
 
-## Typeahead — conflate queued input to the latest
+## Typeahead with the latest queued input
 
 `self.latest()` reads the mailbox in "skip to newest" mode: while a search is
 in flight the loop isn't listening, and when it comes back it picks up the
@@ -33,14 +33,14 @@ for await (const { q } of self.latest()) {
 }
 ```
 
-This prevents a backlog, but it does not cancel the request already in flight:
-that request completes — and its yield publishes — before the newest queued
+This prevents a backlog, but it does not cancel the request already in flight.
+That request completes and publishes its yield before the newest queued
 query begins, which is why each yield carries its own `q`. If even a transient
 stale result matters, don't await in the loop: stamp each request with an
 epoch, run it in the background, `self.send` the result back, and ignore
 results whose epoch is old. `examples/typeahead`.
 
-## Forms — ask for the outcome
+## Forms that wait for a result
 
 Make the submit a `Call` message. The form gets a typed promise for its own
 result instead of watching status fields go by. `examples/form`.
@@ -57,29 +57,29 @@ const users = registry({
 users.lookup('user', { id: 1 })   // deduped by key, shared, evicted when idle
 ```
 
-Same key → same fetch, shared by everyone. Last watcher leaves → 30 seconds →
-gone. Next lookup → fresh fetch. That's the useful core of a query library,
-and it's a passing test: `packages/core/test/registry.test.ts`.
+Lookups with the same key share one fetch. The entry is removed 30 seconds
+after its last watcher leaves, and the next lookup starts a new fetch.
+`packages/core/test/registry.test.ts` verifies this lifecycle.
 
-The full story — loading and error states, retry, stale-while-refetch, and
-mutations as `ask()` on the query itself (write-through, one explicit ripple
-instead of an invalidation graph) — is `examples/query`, with the schema
+`examples/query` adds loading and error states, retries, stale-while-refetch,
+and mutations implemented as `ask()` calls on the query. The example uses
+write-through updates instead of an invalidation graph, with the schema
 tested headlessly in `examples/query/shop.test.ts` and the reasoning written
 up right on the demo page.
 
-## Routing — the URL is a process
+## Routing with a URL process
 
 The current route is state like any other, and pages can be view processes:
 the router iterates the route, disposes the outgoing page (tearing down its
 whole scope), yields a loading state, `await import()`s the chunk, and yields
 the new page. Navigation, loading states, code splitting, and teardown in a
-dozen lines of ordinary code. The router itself — route process, `navigate`,
-spreadable `link()` attrs that replace history by default — is a forty-line
-userland construct: `examples/lib/router.ts`, used by `examples/router`. It
+small amount of process code. The router includes the route process,
+`navigate`, and spreadable `link()` attributes that replace history by default.
+It is defined in `examples/lib/router.ts` and used by `examples/router`. It
 ships in two flavors, `hashRouter` and `historyRouter` (real paths via
 pushState/popstate; needs history-fallback hosting).
 
-## Undo/redo — wrap the process
+## Undo and redo by wrapping a process
 
 A process is a function, so middleware is function composition: wrap a proc,
 give the inner one a private `channel`, keep the history in the wrapper. The
@@ -87,10 +87,10 @@ same shape gives you logging, persistence, and replay. `examples/undo-redo`;
 a variant that groups a whole slider drag into one undo step is in
 `examples/7guis/circle-drawer.ts`.
 
-## Drag — a gesture with a lifetime
+## A process for a drag gesture
 
-Spawn a process on pointerdown; it yields offsets; dispose it on pointerup.
-The gesture's whole footprint — subscriptions included — ends when it does.
+Start a process on pointerdown, yield offsets while the pointer moves, and
+dispose it on pointerup. Disposal also removes the gesture's subscriptions.
 
 ```ts
 el.addEventListener('pointerdown', (down: PointerEvent) => {
@@ -113,28 +113,28 @@ el.addEventListener('pointerdown', (down: PointerEvent) => {
 
 Runnable version, with a draggable box: `examples/drag`.
 
-## A spreadsheet — derives reading derives
+## A spreadsheet built from derives
 
 Give every cell a derive that parses its formula and reads the cells it
-references. Dependency tracking falls out automatically: edit A1 and only
+references. Dependency tracking is automatic: edit A1 and only
 formulas that (indirectly) mention A1 recompute; a formula whose result didn't
 change wakes nobody downstream; a reference cycle comes back as `#CYCLE`
 instead of a hang. `examples/7guis/cells.ts`, with the test to prove each of
 those claims.
 
-## Multi-tab — the wire without a server
+## Using the wire between tabs
 
 One tab wins a Web Lock and hosts over a `BroadcastChannel` transport; every
-tab connects as a client. Close the hosting tab and the lock — and the hosting
-job — moves to another. The protocol never assumed a server, just a transport.
+tab connects as a client. When the hosting tab closes, another tab acquires the
+lock and takes over. The protocol requires a transport, not a server.
 `examples/multi-tab`.
 
-## A Web Worker — the wire between threads
+## Using the wire with a Web Worker
 
 A transport carries ordered, reliable strings; the port to a worker is one. The
 worker calls `expose(registry({...}), portTransport(workerEndpoint()))`, the tab
 calls `connect(portTransport(new Worker(...)))`, and a heavy process runs off
-the thread that draws while its state arrives as ordinary patches. `portTransport`
+the thread that draws while its state arrives as data patches. `portTransport`
 takes a port rather than making one, so a `MessagePort` or worker_threads'
 `parentPort` works the same way, and it needs no reconnect story: a port does
 not drop.
@@ -142,7 +142,7 @@ not drop.
 Two things to keep in mind when a process grinds on its own:
 
 - Chunk the work and drive the next chunk with a **timer**, not a bare
-  `self.send` — a mailbox loop that re-sends synchronously resolves in
+  `self.send`. A mailbox loop that re-sends synchronously resolves in
   microtasks, and the event loop never turns again, so nothing else is heard.
 - Yield the small thing. Keep the working set in the process (a plain local
   array) and let `ask()` fetch it when someone actually wants it; every yield
@@ -152,21 +152,21 @@ Two things to keep in mind when a process grinds on its own:
 
 ## Brokers behind a port
 
-A bus and a work queue are two interfaces and two adapters; the processes that
-face them are ordinary. A subscription is a process (subscribe on the way in,
-dispose is the unsubscribe), and looking one up by topic makes the registry the
-subscription cache. A queue worker reserves under a lease, handles, and
-acknowledges — so a worker that dies loses its lease and the job comes back to
-someone else. `examples/messaging`, and [Processes on the server](server.md).
+A bus and work queue can each be defined as an interface with an adapter. A
+subscription process subscribes during setup and unsubscribes on disposal.
+Looking it up by topic allows the registry to cache one subscription per topic.
+A queue worker reserves a job under a lease, handles it, and acknowledges it.
+If the worker dies, the lease expires and another worker can receive the job.
+See `examples/messaging` and [Processes on the server](server.md).
 
 ## Where are the operators?
 
-If you're arriving from RxJS or an FRP library: there's deliberately no
-operator zoo here, because the classics dissolve into the primitives —
+Nonchalant does not define a large operator API. Common RxJS and FRP operations
+map to the existing primitives:
 
 | operator | here |
 |---|---|
-| `map` / `filter` / `scan` over values | `derive(() => f(p()))` — or just code in the loop |
+| `map` / `filter` / `scan` over values | `derive(() => f(p()))` or code in the process loop |
 | `combineLatest` | one derive reading several processes |
 | `fold` / reducers | the `for await` loop *is* the fold |
 | queued-input conflation | `self.latest()` |
@@ -208,15 +208,15 @@ function debounced<T>(source: Process<T>, ms: number): Process<T | undefined> {
 }
 ```
 
-(One honest caveat: a pump loop notices disposal on the *next* source value —
-fine for UI streams; break out via `it.return()` from an abort listener if a
-source may go silent forever.)
+A pump loop notices disposal when the source next produces a value. This is
+usually sufficient for UI streams. If a source may remain silent indefinitely,
+call `it.return()` from an abort listener.
 
-## A chat room — the wire doing what it's for
+## A chat room over the wire
 
 A room is a process that reduces posts into a capped history. Host it with
 `serve`, look it up by name from every tab, and the whole client-server chat
-is the same code you'd write for local state — posts are casts, history
+uses the same process code as local state. Posts are casts, history
 arrives as patches, a dead server shows as `stale: true` until the
 reconnecting transport finds it again. `examples/chat`.
 
@@ -228,7 +228,7 @@ the same, but deployment adds JSON boundaries, latency, disconnection,
 authentication, and authorization. `examples/shared-cart` shows the code
 change; [Hosting safely](hosting.md) covers the operational boundary.
 
-## Durable processes — load, checkpoint, evict
+## Durable processes with loading, checkpoints, and eviction
 
 Process state lives in generator locals, so durability is a contract you
 write, not a feature you enable: load before the first yield, checkpoint at
@@ -248,26 +248,26 @@ const accounts = registry({
 })
 ```
 
-That is the virtual-actor lifecycle in userland: `lookup('account', { id })`
-is activation, the load is hydration, and `evict` is deactivation — the next
-lookup reactivates and rehydrates. When you want the rest of it — the message
-journaled before it is handled, effects that do not run twice, state and cursor
-committed together — that recipe is packaged as `@nonchalant/durable`; see
+This implements a virtual-actor lifecycle in application code:
+`lookup('account', { id })` activates the process, loading hydrates it, and
+`evict` deactivates it. The next lookup starts and hydrates it again.
+`@nonchalant/durable` adds message and effect journals plus an atomic commit of
+state and its cursor; see
 [Processes on the server](server.md). Because the mailbox is the single writer,
 checkpoints are ordered with no application-level locking; the same shape
 gives event sourcing (append the message instead of saving the snapshot,
 replay to hydrate). To keep persistence out of the domain code, wrap the proc,
-the same shape as [undo/redo](#undoredo--wrap-the-process).
+using the same wrapping approach as [undo and redo](#undo-and-redo-by-wrapping-a-process).
 
-The honest limit: a mailbox is only a single writer while one node owns the
-name. Several hosts activating the same id need leases or fencing in the
-store — deliberately outside the framework. [Hosting safely](hosting.md)
+The mailbox has a single writer only while one node owns its name. If several
+hosts can activate the same ID, the store needs leases or fencing. The library
+does not provide that coordination. [Hosting safely](hosting.md)
 covers the boundary.
 
 ## A deadline on `ask`
 
 A pending remote call already rejects on crash, completion, disconnect, and
-dispose — the one way it can hang is a host handler that never replies. A
+dispose. A host handler that never replies can still leave it pending. A
 deadline is a race, not a protocol feature:
 
 ```ts
@@ -284,17 +284,17 @@ function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
 const receipt = await withDeadline(cart.ask({ type: 'checkout' }), 5_000)
 ```
 
-## Connection status — read the facade
+## Reading connection status
 
-Disconnection is not a separate channel to subscribe to: when the transport
-drops, every remote facade goes `stale` (keeping its last value) and carries
-the error, and the reconnect re-lookup clears both. `stale` and `error` are
-reactive metadata, so an indicator is one derive:
+Connection state uses the existing process metadata. When the transport drops,
+each remote handle retains its last value, sets `stale`, and records the error.
+A successful re-lookup clears both fields. Because `stale` and `error` are
+reactive, a connection indicator can be one derive:
 
 ```ts
 const status = derive(() => (cart.stale ? 'reconnecting…' : 'live'))
 ```
 
-Readers of unchanged paths sleep straight through the reconnect — the full
-snapshot diffs against the retained value (`packages/wire/test/wire.test.ts`,
+Readers of unchanged paths are not notified during reconnection because the
+full snapshot is compared with the retained value (`packages/wire/test/wire.test.ts`,
 "reconnect is a re-lookup").

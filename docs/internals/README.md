@@ -1,9 +1,8 @@
 # Internals
 
-Dev-facing notes on how core is built and why. For what the library *promises*,
-read [concepts.md](../concepts.md); this is the layer beneath — the mechanisms,
-their invariants, and the places where a plausible-looking change breaks
-something subtle.
+These notes explain the core implementation. For the public contract, read
+[concepts.md](../concepts.md). This section covers internal mechanisms,
+invariants, and changes that can break them.
 
 | doc | module | what it covers |
 |---|---|---|
@@ -31,14 +30,14 @@ flowchart LR
     P -.->|"same patch, JSON-encoded"| W["wire → a remote reader"]
 ```
 
-Two consequences worth internalising before changing anything:
+Keep two consequences in mind when changing this code:
 
 - **The diff is the contract.** The patch a local binding reacts to is the
   patch that crosses the socket. `packages/wire/spec/` certifies external hosts
   against those op shapes, so a change to the op vocabulary is a protocol
   change, not an implementation detail.
 - **Precision is a property of reads, not writes.** Application code writes
-  ordinary immutable updates and never declares dependencies. Everything
+  immutable updates and never declares dependencies. Everything
   fine-grained comes from the reader side recording what it touched.
 
 ## Module map
@@ -49,7 +48,7 @@ flowchart TD
         TY["types.ts<br/>the Process type surface"]
         RC["reconcile.ts<br/>diff + apply"]
         TR["track.ts<br/>read recording"]
-        SY["system.ts<br/>alien-signals port — do not layer here"]
+        SY["system.ts<br/>alien-signals port; do not layer here"]
         GR["graph.ts<br/>source / gate / effect / flush"]
         PR["process.ts<br/>mailbox + drive loop + ownership"]
         RG["registry.ts<br/>get-or-spawn by name"]
@@ -101,13 +100,13 @@ the full list.
 
 | symptom | start here |
 |---|---|
-| a reader wakes too often, or not at all | [tracking.md](tracking.md) — precision rules; then `affects` |
-| a reader misses an update that landed mid-run | [graph.md](graph.md) — deferred ops and `finalizeGates` |
-| a patch is wrong, or an apply throws | [reconcile.md](reconcile.md) — array trimming, path escaping |
-| a process outlives its parent, or dies early | [process.md](process.md) — the ambient ownership window |
-| shared state respawns or lingers | [registry.md](registry.md) — watcher counting and the idle timer |
-| effects run in the wrong order or too late | [graph.md](graph.md) — scheduling and `flush` |
-| a remote handle behaves unlike a local one | `wire/client.ts` — each remote ref is a local pump process |
+| a reader wakes too often, or not at all | [tracking.md](tracking.md) for precision rules, then `affects` |
+| a reader misses an update that landed mid-run | [graph.md](graph.md) for deferred operations and `finalizeGates` |
+| a patch is wrong, or an apply throws | [reconcile.md](reconcile.md) for array trimming and path escaping |
+| a process outlives its parent, or dies early | [process.md](process.md) for the ambient ownership window |
+| shared state respawns or lingers | [registry.md](registry.md) for watcher counting and the idle timer |
+| effects run in the wrong order or too late | [graph.md](graph.md) for scheduling and `flush` |
+| a remote handle behaves unlike a local one | `wire/client.ts`; each remote ref is a local pump process |
 
 ## Budgets
 

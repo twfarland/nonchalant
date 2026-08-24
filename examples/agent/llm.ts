@@ -33,15 +33,16 @@ export const delay = (ms: number, signal: AbortSignal): Promise<void> =>
     signal.addEventListener('abort', onAbort, { once: true })
   })
 
-const used = (transcript: readonly string[], tool: string): boolean =>
-  transcript.some((line) => line.startsWith(`${tool}(`))
-
 const arithmetic = /^[\d\s+*/().-]+$/
 
+/** "what is 2 + 3 * 4?" is arithmetic; "refund 20" is not, whatever digits it contains. */
+const sumIn = (question: string): string => question.replace(/^\s*(what\s+is\s+)?/i, '').replace(/[?\s]+$/, '')
+
 /**
- * The rules are a stand-in for a model's judgement, chosen so the transcript is
- * legible: reach for the obvious tool once, ask permission before anything that
- * spends money, then answer from what came back.
+ * A stand-in for a model's judgement, and the judgement is: pick the one tool
+ * this question needs, then answer from what it said. A model that reached for
+ * every tool it had would be a bad model, and a demo of one would be a bad
+ * demo — the loop below can run several turns, but nothing here needs two.
  */
 export function stubModel(opts: { latency?: number } = {}): Model {
   const latency = opts.latency ?? 260
@@ -50,17 +51,19 @@ export function stubModel(opts: { latency?: number } = {}): Model {
     async plan(transcript, _tools, { signal }) {
       await delay(latency, signal)
       const question = transcript[0] ?? ''
-      const sum = question.match(/[-\d][\d\s+*/().-]*[\d)]/)
+      const answers = transcript.slice(1)
 
-      if (question.toLowerCase().includes('refund') && !used(transcript, 'refund'))
-        return { tool: 'refund', args: question.replace(/[^\d.]/g, '') || '20' }
-      if (sum !== null && arithmetic.test(sum[0]) && !used(transcript, 'calc'))
-        return { tool: 'calc', args: sum[0].trim() }
-      if (!used(transcript, 'search')) return { tool: 'search', args: question }
+      if (answers.length === 0) {
+        if (/refund/i.test(question))
+          return { tool: 'refund', args: question.replace(/[^\d.]/g, '') || '20' }
+        const sum = sumIn(question)
+        if (sum !== '' && arithmetic.test(sum)) return { tool: 'calc', args: sum }
+        return { tool: 'search', args: question }
+      }
 
-      // the transcript keeps `tool(args) → result` so the rules above can see
-      // what has been tried; the answer only wants the results
-      const findings = transcript.slice(1).map((line) => line.split(' → ')[1] ?? line)
+      // the transcript keeps `tool(args) → result` so a rule can see what was
+      // tried; the answer only wants what came back, without the tool's voice
+      const findings = answers.map((line) => (line.split(' → ')[1] ?? line).replace(/^\w+ says: /, ''))
       return { answer: findings.length === 0 ? `I have nothing on "${question}".` : findings.join('; ') }
     },
 

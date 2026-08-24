@@ -12,7 +12,7 @@ import { cell, define, derive, registry } from '@nonchalant/core'
 import type { Process, VNode } from '@nonchalant/core'
 import { durable, memoryStore } from '@nonchalant/durable'
 import { mount } from '@nonchalant/dom'
-import { button, div, h2, input, li, p, span, ul } from '@nonchalant/dom/tags'
+import { button, div, h2, input, li, span, ul } from '@nonchalant/dom/tags'
 import { agent, type AgentArgs, type AgentMsg, type AgentState, type Tools } from './agent.ts'
 import { stubModel } from './llm.ts'
 import { approvals, calc, search, type ApprovalMsg, type ApprovalState, type ToolState } from './tools.ts'
@@ -76,27 +76,30 @@ function Ask(): VNode {
     span({ class: 'muted' }, () => state()?.status ?? 'starting…'))
 }
 
+// The transcript is the whole conversation, the streaming answer included: while
+// it arrives it is the last line, and the finished step lands in the same slot.
 function Transcript(): VNode {
-  const line = (step: AgentState['steps'][number]): VNode => {
-    if (step.kind === 'question') return span({ class: 'said' }, step.text)
-    if (step.kind === 'answer') return span({ class: 'said' }, step.text)
-    return span({ class: 'said mono' },
-      `${step.args} → `,
-      span({ class: step.result === null ? 'muted' : 'ok' }, step.result ?? 'working…'))
+  type Turn = { key: string; kind: string; who: string; said: string; pending: boolean }
+
+  const turns = (): Turn[] => {
+    const now = state()
+    const rows: Turn[] = (now?.steps ?? []).map((step, i) => ({
+      key: `t${i}`,
+      kind: step.kind,
+      who: step.kind === 'tool' ? step.name : step.kind === 'question' ? 'you' : 'agent',
+      said: step.kind === 'tool' ? `${step.args} → ${step.result ?? 'working…'}` : step.text,
+      pending: step.kind === 'tool' && step.result === null,
+    }))
+    if (now?.status === 'answering')
+      rows.push({ key: `t${rows.length}`, kind: 'answer', who: 'agent', said: `${now.answer.join(' ')}▌`, pending: false })
+    return rows
   }
-  const who = (step: AgentState['steps'][number]): string =>
-    step.kind === 'tool' ? step.name : step.kind === 'question' ? 'you' : 'agent'
 
   return ul({ class: 'turns' }, () =>
-    (state()?.steps ?? []).map((step, i) =>
-      li({ key: i, class: `turn ${step.kind}` }, span({ class: 'who' }, who(step)), line(step))))
-}
-
-function Answer(): VNode {
-  return p({ class: 'answer' }, () => {
-    const chunks = state()?.answer ?? []
-    return chunks.length === 0 ? '' : `${chunks.join(' ')}${state()?.status === 'answering' ? '▌' : ''}`
-  })
+    turns().map((turn) =>
+      li({ key: turn.key, class: `turn ${turn.kind}` },
+        span({ class: 'who' }, turn.who),
+        span({ class: `said${turn.kind === 'tool' ? ' mono' : ''}${turn.pending ? ' muted' : ''}` }, turn.said))))
 }
 
 // the panel exists only while somebody is being asked. `hidden` is not enough:
@@ -132,7 +135,6 @@ function App(): VNode {
   return div({ class: 'card' },
     Ask(),
     Transcript(),
-    Answer(),
     Approvals(tools.approvals),
     div({ class: 'row' }, ToolUse('search', tools.search), ToolUse('calc', tools.calc)),
     h2({}, 'The machine'),

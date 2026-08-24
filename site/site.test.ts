@@ -172,7 +172,10 @@ describe('site demos', () => {
     const el = host()
     const demo = agent(el)
     await settle()
-    const readout = (): string => el.querySelector('.readout')?.textContent ?? ''
+    const answer = (): string => {
+      const answers = [...el.querySelectorAll('.turn.answer .said')]
+      return answers[answers.length - 1]?.textContent ?? ''
+    }
     const waitFor = async (ready: () => boolean, what: string): Promise<void> => {
       for (let i = 0; i < 500 && !ready(); i++) {
         await new Promise((resolve) => setTimeout(resolve, 4))
@@ -180,7 +183,7 @@ describe('site demos', () => {
       }
       if (!ready()) throw new Error(`never reached: ${what}`)
     }
-    expect(readout()).toBe('no answer yet')
+    expect(el.querySelectorAll('.turn').length).toBe(0)
     expect(el.querySelector('.gate')).toBeNull() // nobody is being asked anything yet
 
     const press = (label: string): void => {
@@ -188,9 +191,11 @@ describe('site demos', () => {
       b?.click()
     }
     press('ask') // the field starts on "what is a patch?"
-    await waitFor(() => el.querySelectorAll('li').length >= 2, 'the tool call')
-    expect(el.querySelectorAll('li')[1]?.textContent).toContain('search')
-    await waitFor(() => readout().includes('patches'), 'the streamed answer')
+    await waitFor(() => el.querySelectorAll('.turn').length >= 2, 'the tool call')
+    expect(el.querySelectorAll('.turn')[1]?.textContent).toContain('search')
+    await waitFor(() => answer().includes('patches'), 'the streamed answer')
+    // exactly one tool: a question that is a lookup is not also arithmetic
+    expect(el.querySelectorAll('.turn.tool').length).toBe(1)
 
     // and the tool that waits for a person: no reply, no progress
     const field = el.querySelector('input') as HTMLInputElement
@@ -201,7 +206,7 @@ describe('site demos', () => {
     await waitFor(() => el.textContent?.includes('approve refund 20?') === true, 'the approval request')
     expect(el.querySelector('.gate')).not.toBeNull()
     press('yes')
-    await waitFor(() => readout().includes('approved'), 'the decision to reach the agent')
+    await waitFor(() => answer().includes('approved'), 'the decision to reach the agent')
     expect(el.querySelector('.gate')).toBeNull() // and it goes away again
 
     demo[Symbol.dispose]()

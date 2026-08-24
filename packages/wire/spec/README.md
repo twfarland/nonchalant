@@ -8,8 +8,8 @@ same files.
 
 ## patches.json
 
-Patch-application semantics — what `applyPatch(prev, patch)` must do. The file
-is an envelope holding the cases:
+`patches.json` defines the required behavior of `applyPatch(prev, patch)`. The
+file contains an envelope around the cases:
 
 ```json
 { "description": "...", "cases": [ <case>, ... ] }
@@ -31,10 +31,10 @@ Each case is one of:
 - `error: true` cases MUST be rejected: malformed escapes, paths that are
   neither `""` nor `/`-prefixed, non-integer or negative splice numbers,
   invalid array indices/ranges, and splices on non-arrays. Rejecting means
-  refusing the patch — not applying a prefix of it. Rejection may happen at
-  either layer — the reference codec refuses unprefixed paths and bad splice
+  refusing the entire patch rather than applying a prefix. Rejection may happen at
+  either layer. The reference codec refuses unprefixed paths and bad splice
   numbers at decode time (`decodeHost` returns null) and the rest at apply
-  time — but a malformed patch MUST NOT be applied.
+  time, but a malformed patch MUST NOT be applied.
 
 ## session-*.json
 
@@ -65,7 +65,7 @@ Step forms:
 
 Ordering is per-ref FIFO. Yields assert resulting state, not patch bytes,
 because a host may diff differently; replies are exact. The first yield after
-any lookup — including a re-lookup after reconnect — must be a full snapshot:
+any lookup, including a re-lookup after reconnect, must be a full snapshot:
 ops against an empty previous state. A yield step with `"full": true`
 additionally asserts that property: the patch must reconstruct `state` when
 applied to nothing.

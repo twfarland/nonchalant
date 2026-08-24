@@ -100,6 +100,24 @@ describe('the agent loop', () => {
     kit.dispose()
   })
 
+  it('picks the one tool the question needs, not every tool it has', async () => {
+    const kit = tools()
+    const p = run(memoryStore(), 'a6', stubModel({ latency: 4 }), kit)
+    p.send({ type: 'ask', question: 'please refund 20' })
+
+    await waitFor(() => p()?.status === 'waiting', 'the approval request')
+    kit.approvals.send({ type: 'decide', ok: true })
+    await waitFor(() => p()?.status === 'done', 'the answer')
+
+    expect(p()!.steps.map((s) => s.kind)).toStrictEqual(['question', 'tool', 'answer'])
+    expect(kit.calc()?.calls).toBe(0) // a refund is not arithmetic
+    expect(kit.search()?.calls).toBe(0) // and it is not a lookup either
+    expect(p()!.answer.join(' ')).toBe('refund of 20 approved')
+
+    p[Symbol.dispose]()
+    kit.dispose()
+  })
+
   it('killed mid-run, it comes back and does not ask the model again', async () => {
     const store = memoryStore()
     const kit = tools()

@@ -1,9 +1,9 @@
-# registry.ts — naming, sharing, eviction
+# registry.ts: naming, sharing, and eviction
 
 `packages/core/src/registry.ts`. Imports `process.ts`. The smallest module with
 the largest design claim: `lookup(name, args)` is get-or-spawn, and that one
-operation is simultaneously dependency injection, a query cache, and — once a
-transport is involved — remote addressing.
+operation provides dependency injection, process caching, and remote addressing
+when a transport is involved.
 
 The new-concept bar in `CLAUDE.md` says a public concept must dissolve at least
 two existing problems. This is the one that earned its place by dissolving
@@ -17,7 +17,7 @@ flowchart TD
     K --> E{"entry cached?"}
     E -->|yes| RET["return the same handle"]
     E -->|no| D{"name in schema?"}
-    D -->|no| T["throw — the schema is the whitelist"]
+    D -->|no| T["throw; the schema is the whitelist"]
     D -->|yes| S["spawn, unscoped"]
     S --> W["start the idle timer<br/>(only if the definition declares evict)"]
     W --> RET
@@ -25,19 +25,19 @@ flowchart TD
 
 Two properties fall out of the cache being keyed on `name + args`:
 
-- Same key, same handle — every caller shares one process, which is what makes
+- The same key returns the same handle, so every caller shares one process. This makes
   it dependency injection without prop drilling.
-- Different args, different process — which is what makes it a query cache
+- Different arguments return a different process, providing query-cache
   (`name + args` is the queryKey).
 
 The schema lookup doubles as the security whitelist: a name that isn't in
-`defs` throws, so nothing outside the schema can be spawned — locally or by a
+`defs` throws, so nothing outside the schema can be spawned locally or by a
 remote peer through `expose()`.
 
 Registry spawns are wrapped in `unscoped()`. Shared state must not be owned by
 whichever process happened to look it up first, or the second caller's handle
 would die when the first caller did. This is the one place ambient ownership is
-deliberately suspended (see [process.md](process.md)).
+suspended (see [process.md](process.md)).
 
 ## Key encoding
 
@@ -54,26 +54,26 @@ all matter:
 | a cycle | `cycle:<id>` | encoding must terminate |
 | class instance, `Map`, `Date`, function | identity id from a `WeakMap` | no structural identity to rely on |
 
-The identity fallback is the honest part: two structurally identical `Date`
+The identity fallback means that two structurally identical `Date`
 arguments are *different* cache keys, because the encoder cannot know whether
 a non-plain type's structure defines its identity. Plain-data arguments are the
-supported path — the same rule the rest of the library follows, and the reason
+supported path. This matches the rule used by the rest of the library and explains why
 the same key works over the wire.
 
 The separator between name and encoded args is a NUL character, which no
-realistic schema name contains — so one name/args pair cannot collide with a
+realistic schema name contains, preventing one name/args pair from colliding with a
 differently-split one.
 
 ## Lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Live: lookup — spawn + idle timer starts
+    [*] --> Live: lookup; spawn and start idle timer
     Live --> Watched: a watcher subscribes<br/>(timer cleared)
     Watched --> Watched: more watchers come and go
     Watched --> Idle: last watcher leaves<br/>(timer restarts)
     Idle --> Watched: a watcher subscribes
-    Idle --> [*]: timer fires — dispose + forget
+    Idle --> [*]: timer fires; dispose and forget
     Live --> [*]: process returns (onSettled)<br/>or evict(name, args)
 ```
 
@@ -85,13 +85,13 @@ respawns on the next lookup, so a caller who only pulls occasionally is not
 holding a process open.
 
 The idle timer, when there is one, **starts at lookup** rather than when the
-first watcher leaves — so a process that is looked up and never watched still
+first watcher leaves. A process that is looked up and never watched therefore still
 evicts. It is cleared when the count goes above zero and restarted when it
 returns to zero.
 
 There is a timer only when the definition declares `evict`. Without it the
 entry has no idle timeout at all and stays resident until the process ends or
-someone calls `evict()` — which is the right default for state that should
+someone calls `evict()`. This is the appropriate default for state that should
 outlive its watchers, and a leak for state that shouldn't. It is also what a
 remote `exit` does *not* do: releasing the last watch reclaims the process only
 if its definition opted in (see [PROTOCOL.md](../PROTOCOL.md)).
@@ -109,14 +109,14 @@ Both dispose immediately rather than waiting for the timer.
 
 `RegistryHandle` and the remote `Connection` implement the same `Registry`
 interface, which is what "a name resolves identically at every distance" means
-in practice — `connect(transport)` substitutes the transport and keeps the
+in practice. `connect(transport)` substitutes the transport and keeps the
 interface. The remote side's cache is keyed the same way (canonicalised JSON
 args in `wire/client.ts`), so client-side get-or-spawn behaves like the local
 one.
 
 `expose(reg, transport)` accepts anything with a `lookup` method, not a
 `RegistryHandle` specifically. That is the seam the Node host's `scope` option
-uses to give each connection its own gateway — see
+uses to give each connection its own gateway; see
 [hosting.md](../hosting.md).
 
 Tests: `packages/core/test/registry.test.ts` (key equivalence, sharing,

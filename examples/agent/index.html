@@ -20,7 +20,6 @@
   .tag { display: inline-block; min-width: 4.5rem; margin-right: 0.5rem; color: var(--muted);
     font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
   .ok { color: var(--ok); }
-  .answer { min-height: 1.5em; margin: 0.75rem 0; font-size: 1.05rem; }
   .gate { border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.75rem 0;
     max-width: 34rem; }
 </style>
@@ -35,7 +34,7 @@
 <h2>How it works</h2>
 <p>The model is stubbed and runs in this tab, so the demo is deterministic: ask about a <em>process</em>, a <em>patch</em>, a <em>worker</em> or <em>durable</em> and it searches; give it arithmetic and it calculates; say <em>refund 20</em> and it has to ask you first.</p>
 
-<p>An agent loop is a process. Not "a process under the hood" — the same one the counter demo uses. State is a <code>let</code>, the mailbox is <code>for await</code>, every change is a <code>yield</code>, and the page binds to it the way it binds to a todo list:</p>
+<p>An agent loop is a process. Not "a process under the hood" — the same one the counter demo uses. State is a <code>let</code>, the mailbox is <code>for await</code>, every change is a <code>yield</code>, and the page binds to it the way it binds to a todo list. The transcript above is that state: the streaming answer is its last line while it arrives, and the finished step lands in the same place.</p>
 <pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
   <span class="k">for</span> (<span class="k">let</span> turn = 0; turn &lt; MAX_TURNS; turn++) {
     <span class="k">const</span> plan = <span class="k">await</span> d.step(<span class="s">`plan-${turn}`</span>, () =&gt; model.plan(transcript, SPECS, { signal: self.signal }))

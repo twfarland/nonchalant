@@ -1,8 +1,9 @@
 # The Nonchalant wire protocol (rev 2)
 
-Transport-agnostic (WebSocket, BroadcastChannel, a worker port, in-memory —
-anything ordered and reliable). Carries **state patches of plain data — never markup, never code**.
-Any language can implement the host half; this file plus the conformance vectors
+The protocol works over any ordered, reliable transport, including WebSocket,
+BroadcastChannel, worker ports, and in-memory channels. It carries **plain-data
+state patches rather than markup or code**. Any language can implement a host;
+this file and the conformance vectors
 (`packages/wire/spec/vectors/*.json`, format in `packages/wire/spec/README.md`)
 are the contract. External hosts certify against the same vectors the reference
 implementation runs in CI (`packages/wire/test/vectors.test.ts`).
@@ -21,7 +22,7 @@ Host → client:
     { op: "yield",  ref, patch }        // reconcile(prev, next) since the previous yield
     { op: "reply",  ref, id, value }
     { op: "done",   ref, value? }       // normal completion
-    { op: "raise",  ref, error }        // failure — see the error shape below
+    { op: "raise",  ref, error }        // failure; see the error shape below
 
 `ref` is a client-chosen opaque string. On shared-bus transports, clients make
 refs globally unique (the reference implementation prefixes a per-session id).
@@ -78,11 +79,11 @@ sequenceDiagram
 The reference implementation emits `{ message, id? }`; hosts may add fields.
 A lookup for a name outside the schema MUST answer with a process-level raise,
 and a lookup a host refuses for resource reasons (a per-session watch cap, for
-example) answers the same way — the ref simply never becomes watched.
+example) answers the same way. The ref never becomes watched.
 
 ## Semantics
 
-- `lookup` is get-or-spawn against the host's **published schema** — the schema
+- `lookup` is get-or-spawn against the host's **published schema**. The schema
   is simultaneously the type contract and the security whitelist. Nothing
   outside it can be spawned remotely.
 - `exit` releases the client's watch, not the process. Whether the process is
@@ -108,12 +109,12 @@ where every peer hears every message:
 - Peers MUST ignore anything that does not decode as a message addressed to
   their side (the codec's direction filtering makes a bus safe).
 - The literal string `nonchalant:announce` is not a message: a host posts it
-  when it (re)starts serving, and peers treat it as a transport `open` —
+  when it starts or restarts, and peers treat it as a transport `open`.
   clients respond by re-issuing their lookups. This is how a replacement host
   picks up existing tabs.
 
 The Node host (`@nonchalant/host`) additionally serves `GET /schema` over
-HTTP: `{ "protocol": 2, "names": [...] }` — the whitelist, for discovery.
+HTTP: `{ "protocol": 2, "names": [...] }`, which exposes the whitelist for discovery.
 
 The protocol does not define identity or grant access. A published schema only
 limits process names; it does not prove who the client is or whether that

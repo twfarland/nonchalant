@@ -1,18 +1,18 @@
 # Concepts
 
-The reference. For each concept: what it promises, and where the test lives
-that holds it to the promise.
+This reference describes each concept, its behavior, and the tests that enforce
+that behavior.
 
 ## Process (from the outside)
 
-You *write* a process as an async generator; `spawn` *runs* it and returns
-`Process<T, In>` — a handle to the running instance that owns its mailbox,
+Write a process as an async generator and run it with `spawn`. It returns
+`Process<T, In>`, a handle to the instance that owns its mailbox,
 its published snapshots, and its lifecycle. The handle is what you hold after
 `spawn` or `lookup`:
 
 | member | what it does |
 |---|---|
-| `p()` | Read the latest value, synchronously. Inside a derive, effect, or view binding this also subscribes (by path); anywhere else it's just a read. |
+| `p()` | Read the latest value synchronously. Inside a derive, effect, or view binding, this also subscribes by path. |
 | `p.send(msg)` | Fire-and-forget message. Only exists if `In` has plain messages. |
 | `p.ask(msg)` | Request/response, typed. Only exists if `In` has `Call` messages. Rejects if the process crashes, finishes, or is disposed. |
 | `p.pending` | True while the process is working toward its next yield. |
@@ -23,16 +23,15 @@ its published snapshots, and its lifecycle. The handle is what you hold after
 | `await p[Symbol.asyncDispose]()` | Starts teardown and waits until this process and its owned-child finalizers have settled. |
 
 Tests: `packages/core/test/process.test.ts`; the type rules are in
-`types.check.ts`, where the `@ts-expect-error` lines are the point — if one
-stops erroring, the types regressed.
+`types.check.ts`. Its `@ts-expect-error` assertions detect regressions if an
+invalid operation starts compiling.
 
 ## Self (from the inside)
 
-What the generator receives: `for await (msg of self)` reads the mailbox in
-order (messages queue while you're busy — sequential handling by default);
-`self.latest()` skips to the newest message and drops the rest (what a
-typeahead wants); `self.signal` is an AbortSignal that fires on dispose or
-crash — pass it to your fetches; `self.send` posts to your own mailbox.
+The generator receives `Self`. `for await (msg of self)` reads queued messages
+in order. `self.latest()` drops older queued messages and returns the newest,
+which is useful for typeahead input. `self.signal` is an AbortSignal triggered
+by disposal or a crash, and `self.send` posts to the process's own mailbox.
 `channel(signal?)` gives you a disposable standalone mailbox for middleware
 and tests.
 
@@ -40,16 +39,16 @@ and tests.
 
 `spawn(proc, args, opts?)`. Options:
 
-- `initial` — the first readable value. With it, `p()` is `T`; without,
+- `initial`: the first readable value. With it, `p()` is `T`; without,
   `T | undefined` until the first yield.
-- `restart: 'on-crash'` — rerun the generator from `args` after a throw, up to
+- `restart: 'on-crash'`: rerun the generator from `args` after a throw, up to
   `maxRestarts` times. Queued messages replay; pending asks reject.
-- `mailbox: n` — cap the queue; overflow drops the oldest (and warns).
+- `mailbox: n`: cap the queue; overflow drops the oldest and logs a warning.
 
 Ownership: whatever a process spawns belongs to it and dies with it. The
-attachment happens during the synchronous part of each step — spawn before
-you `await`, or the child ends up unowned. Registry processes are deliberately
-unowned: shared state shouldn't die with whichever caller happened to start it.
+attachment happens during the synchronous part of each step. Spawn before
+you `await`, or the child ends up unowned. Registry processes are unowned
+because shared state should not end with the caller that happened to start it.
 
 Disposal is cooperative. The synchronous symbol establishes the teardown
 point but cannot make an awaited promise settle. Use the async symbol when a
@@ -58,18 +57,18 @@ finished. In either case, pass `self.signal` to long-running operations; if an
 operation ignores abort and never settles, asynchronous disposal must wait for
 it.
 
-One consequence worth internalizing: **a process that returns is over**, and
+When a process returns, it has finished, and
 its children are disposed with it. A view process that spawns page-local state
-must therefore stay alive after its yield — idle on the mailbox
+must therefore stay alive after its yield. It can wait on the mailbox
 (`for await (const _ of self) void _`) and let whoever disposes you end the
 wait. `examples/router/about.ts` shows the pattern.
 
 ## derive
 
-`derive(fn)` — a memoised computation with the full Process face (readable,
+`derive(fn)` creates a memoized computation with the full Process interface (readable,
 iterable, disposable, `error`). It recomputes when something it read changes,
-and tells its own readers only if its *result* changed. That last part — the
-equality cut — is what keeps chains of derivations quiet.
+and notifies its readers only when its *result* changes. This equality check
+prevents unchanged results from propagating through a chain of derivations.
 
 ## The graph (why updates are exact)
 
@@ -89,23 +88,23 @@ flowchart LR
 
 The propagation engine is a faithful port of alien-signals
 (`core/src/system.ts`). The path tracking sits on top: reads inside a tracked
-context go through a short-lived read-only proxy that records what was looked
-at — a number read here, a list iterated there — and the diff is matched
+context go through a short-lived read-only proxy that records which paths were
+used, and the diff is matched
 against that record.
 
-State is plain data. Yields should be JSON-shaped — objects, arrays,
-primitives. Anything else (a `Date`, a `Map`, a class instance) is handled as
+State should be JSON-shaped: objects, arrays, and primitives. Other values such
+as a `Date`, a `Map`, or a class instance are handled as
 an *atomic leaf*: reads return it untouched and changes compare by identity,
-so it works locally — but there is no path tracking inside it, and only JSON
+so it works locally. There is no path tracking inside it, however, and only JSON
 crosses a transport, so such values don't survive a remote `lookup`.
 
-Effects run in a batch once per microtask; `flush()` runs them now. Derives
-don't need either — reading one always gives a consistent answer (the diamond
+Effects run in a batch once per microtask; `flush()` runs them immediately.
+Derives do not need either mechanism. Reading one always gives a consistent answer (the diamond
 test proves no half-updated values are ever visible).
 
 Tests: `graph.test.ts` (exact wake counts, glitch freedom), `reconcile.test.ts`
 (property-based round-trips, minimal splices), `reconcile.perf.test.ts`
-(1 change in 10k items diffs in ≤ 100 µs — a CI assertion), `process.test.ts`
+(1 change in 10k items diffs in ≤ 100 µs, enforced in CI), `process.test.ts`
 ("non-plain immutable values are tracked as atomic leaves").
 
 ## Views and sinks
@@ -113,37 +112,36 @@ Tests: `graph.test.ts` (exact wake counts, glitch freedom), `reconcile.test.ts`
 A view is a function call producing plain data (`VNode`); a sink turns it into
 something real. The DOM sink renders static structure once; each thunk or
 process in the tree becomes a small live region with its own effect. Lists
-reconcile by key — that's the one diff this library keeps, it's local to the
-list, and it's honest about it: same key patches in place, `key: 0` counts,
-identical vnodes are skipped entirely, removals can wait for an `exit`
+reconcile by key within the list. Matching keys patch existing nodes,
+`key: 0` is valid, identical vnodes are skipped entirely, and removals can wait for an `exit`
 transition. A promise in a slot occupies only its own slot while pending;
-a binding that throws keeps its previous content and reports the failure —
+a binding that throws keeps its previous content and reports the failure.
 `onRenderError(handler)` routes those reports to your error reporting instead
 of the console.
 
-Strings are never parsed as markup, so injected HTML in your data is inert
-text — asserted, along with tables, SVG, and the other classic string-renderer
+Strings are never parsed as markup, so HTML in application data remains inert
+text. Tests also cover tables, SVG, and other common string-renderer
 failure modes, in `packages/dom/test/dom.test.ts`.
 
-The headline numbers are CI budgets: one text write for one changed label in a
+CI limits these paths to one text write for one changed label in a
 50-row list; one view yield and ≤ 3 DOM writes per frame for Mario
 (`examples/mario/mario.golden.test.ts`).
 
 ## Registry
 
 `registry(defs)` + `define(proc, opts)` + `lookup(name, args)`. Lookup is
-get-or-spawn, keyed by name plus the arguments (order-independent — `{a, b}`
+get-or-spawn, keyed by name plus the arguments. Argument order is ignored, so `{a, b}`
 and `{b, a}` are the same key). Subscribers to values or lifecycle metadata
 count as watchers; plain reads don't. The idle timer starts at lookup and
 restarts when the last watcher leaves; after eviction the next lookup starts
 fresh. One mechanism, three jobs: dependency
-injection, query cache, and — over the wire — remote addressing.
+injection, query caching, and remote addressing over a transport.
 Tests: `registry.test.ts`.
 
 ## Wire
 
 Eight JSON ops (`lookup/send/call/exit` from the client, `yield/reply/done/
-raise` from the host), carrying state patches — never markup, never code.
+raise` from the host), carrying state patches rather than markup or code.
 
 ```mermaid
 flowchart LR
@@ -160,15 +158,14 @@ flowchart LR
     end
     T <--> T2
 ```
-`expose(reg, transport, opts?)` serves a registry — in fact anything with a
+`expose(reg, transport, opts?)` serves a registry or any object with a
 `lookup` method, which is the seam per-connection scoping uses, and `opts`
 carries `maxWatches` to cap how many refs one session may hold open.
 `connect(transport)` gives you the same lookup interface backed by the other
 side. Under the hood each remote process is a local process that applies
-incoming patches, which is why remote reads are just as fine-grained as local
-ones, a crash on the host shows up as `stale: true` here, and reconnecting is
-nothing special: look the name up again, get the full state, diff it against
-what you kept. The WebSocket transport redials on its own, with exponential
+incoming patches. Remote reads therefore keep the same path-level precision as
+local reads. A host crash appears as `stale: true`; reconnecting repeats the
+lookup, receives the full state, and compares it with the retained value. The WebSocket transport redials automatically with exponential
 backoff jittered to 50–100% of each step so a fleet of clients doesn't
 stampede a restarting host; `retryDelay` tunes the base. A transport is only
 `send` plus `subscribe`, so the port to a Web Worker is one as well:
@@ -176,8 +173,8 @@ stampede a restarting host; `retryDelay` tunes the base. A transport is only
 and a heavy process is on another thread with the calling code unchanged
 (`examples/worker`).
 
-The format is documented for other languages in `packages/wire/spec/` — the
-JSON vectors there are the contract, and this repo's CI runs them too.
+The format is documented for other languages in `packages/wire/spec/`. Its JSON
+vectors define the contract and also run in this repository's CI.
 `@nonchalant/host` puts it on real WebSockets; each connection is its own
 session and cleans up after itself. This interface similarity does not erase
 network constraints: wire values are JSON, requests can fail, and access must

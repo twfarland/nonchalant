@@ -1,26 +1,26 @@
-# graph.ts — sources, gates, and scheduling
+# graph.ts: sources, gates, and scheduling
 
 `packages/core/src/graph.ts`, sitting on `system.ts`, `reconcile.ts`, and
 `track.ts`. This is where path precision becomes actual subscriptions.
 
-Two layers, deliberately separated:
+The graph has two separate layers:
 
 - **`system.ts`** is a faithful port of [alien-signals](https://github.com/stackblitz/alien-signals)
   (MIT, Johnson Chu): intrusive doubly-linked dependency lists, integer
   bitflags, no recursion, no `Array`/`Set`/`Map` in the hot path. It knows
-  nothing about paths, patches, or processes. **Keep it 1:1 with upstream** —
+  nothing about paths, patches, or processes. **Keep it 1:1 with upstream**;
   layer changes belong in `graph.ts`.
 - **`graph.ts`** adds the thing alien-signals has no notion of: `source`, a
   state root that wakes readers *per path*.
 
 ## The gate mechanism
 
-A signal wakes all its readers. A `source` must wake only the readers whose
-recorded paths a patch touched — but without teaching the ported propagation
-core about paths.
+A signal wakes all its readers. A `source` must wake only readers whose recorded
+paths a patch touched, without adding path awareness to the ported propagation
+core.
 
 The trick is indirection: each **(source, reader) pair** gets a hidden **gate**
-— an ordinary signal node whose value is a change epoch (an integer). The
+implemented as a signal node whose value is a change epoch (an integer). The
 reader subscribes to the gate, never to the source. `publish()` decides which
 gates to bump; everything after that is stock alien-signals propagation, with
 its equality cuts intact.
@@ -38,7 +38,7 @@ flowchart LR
 ```
 
 A publish of `['set', '/total', 9]` bumps only gate 1. Effects B and D are
-never notified, never re-run, and never even compared — the propagation core
+is not notified, rerun, or compared. The propagation core
 does not see them as dirty, because their gates did not change.
 
 Gate bookkeeping:
@@ -59,11 +59,11 @@ currently running (`activeSub`):
 ```mermaid
 flowchart TD
     R["source() called"] --> A{"activeSub set?<br/>(inside derive/effect)"}
-    A -->|no| RAW["return the raw snapshot<br/>— a plain pull, no subscription"]
+    A -->|no| RAW["return the raw snapshot<br/>a direct read without subscription"]
     A -->|yes| G["get or create this reader's gate"]
-    G --> L["link(gate, reader) — the subscription"]
+    G --> L["link(gate, reader): create the subscription"]
     L --> REC["open a Recorder if none<br/>push onto openGates"]
-    REC --> P["return recorder.wrap(snapshot)<br/>— the recording proxy"]
+    REC --> P["return recorder.wrap(snapshot)<br/>the recording proxy"]
 ```
 
 That top branch is the "reads outside tracked contexts are snapshots" rule
@@ -95,18 +95,18 @@ sequenceDiagram
 ```
 
 Note the ordering: the snapshot is assigned *before* any reader wakes, so a
-woken reader always observes the new state. And an empty patch returns early —
+woken reader always observes the new state. An empty patch returns early, so
 publishing a value that diffs to nothing wakes nobody, which is what makes
 "yield the same shape again" cheap.
 
 ## The mid-run publish problem
 
-This is the subtlest part of the module, and the reason `Gate` carries
+This is the most subtle part of the module and explains why `Gate` carries
 `deferredOps`.
 
 A reader's dependency set is not known until its run finishes. If a publish
 lands *while* a reader is running, the question "did this reader read a path
-this patch touched?" has no answer yet — reads still to come in that run will
+this patch touched?" does not yet have an answer because later reads in that run will
 see the pre-publish snapshot through the already-open recorder, and any of them
 might touch the changed path.
 
@@ -124,12 +124,12 @@ sequenceDiagram
     participant G as gate
     participant P as publish
 
-    E->>G: first read — recorder opens
+    E->>G: first read; recorder opens
     P->>G: publish lands mid-run
     G->>G: park ops (deferredOps)
     E->>E: more reads (still the old snapshot)
     E->>G: run ends
-    G->>G: finalize() — paths sealed
+    G->>G: finalize(); paths sealed
     G->>G: affects(sealed paths, parked ops)?
     G-->>E: yes → wake now
     G-->>E: no → sleep
@@ -137,8 +137,8 @@ sequenceDiagram
 
 `openGates` is a stack and `finalizeGates(mark)` pops down to a mark, so nested
 runs (an effect inside an effect, a derive read by a derive) finalize only
-their own recordings. Every path that runs a reader body — `updateComputed`,
-the cold-read branch of `computedOper`, `effect`, and `run` — takes a mark
+their own recordings. Every path that runs a reader body, including `updateComputed`,
+the cold-read branch of `computedOper`, `effect`, and `run`, takes a mark
 before and finalizes in a `finally`.
 
 Callers clear `RECURSED_CHECK` before finalizing so a wake raised from
@@ -148,7 +148,7 @@ running effect *through a computed* sets `PENDING` without queueing, and is
 picked up once the run is over.
 
 The four "publishes during a reader run" tests in `graph.test.ts` are the
-regression suite for all of this — including the one that matters most, "a
+regression suite for all of this, including "a
 path read only after the mid-run publish still wakes the reader".
 
 ## Scheduling
@@ -156,7 +156,7 @@ path read only after the mid-run publish still wakes the reader".
 Upstream alien-signals flushes synchronously on write. Here, writes never do:
 
 - `scheduleFlush()` schedules one drain per burst on the microtask queue, via
-  `Promise.resolve().then(...)` rather than `queueMicrotask` — pure ES, keeping
+  `Promise.resolve().then(...)` rather than `queueMicrotask`, keeping the code
   core free of host-specific globals.
 - `flush()` is exported for a synchronous drain (what tests and the DOM golden
   budgets use).
@@ -165,7 +165,7 @@ Upstream alien-signals flushes synchronously on write. Here, writes never do:
 - One effect throwing must not strand the effects queued behind it: `flush`
   catches per effect, runs them all, and rethrows the first error afterwards.
 
-Derives (computeds) are pull-based and unaffected by flush timing — reading one
+Derives (computeds) are pull-based and unaffected by flush timing. Reading one
 always returns a consistent value, whether or not effects have run. That is the
 glitch-freedom guarantee; the diamond test in `graph.test.ts` holds it.
 
@@ -173,7 +173,7 @@ glitch-freedom guarantee; the diamond test in `graph.test.ts` holds it.
 
 `HAS_CHILD_EFFECT = 64` marks a parent whose deps include an owned child
 effect, gating the dispose-children slow path. It lives outside the flag range
-`system.ts` defines (which stops at `PENDING = 32`) — the upstream trick for
+`system.ts` defines, which stops at `PENDING = 32`. This is the upstream technique for
 extending the bitfield without editing the ported core.
 
 Effects created inside a running reader are *owned* by it: linked to the parent
@@ -187,7 +187,7 @@ detached before a re-run rather than purged as unread dependencies.
   and finalize in a `finally`, or gates leak recorders and stop waking.
 - `publish` assigns the snapshot before waking. Don't reorder it.
 - Adding a fast path to `affects` is fine; teaching `system.ts` about paths is
-  not — that is the layering rule the port depends on.
+  not. The port depends on this layering rule.
 
-Next: [process.md](process.md) — how a generator becomes a source with a
+Next: [process.md](process.md) explains how a generator becomes a source with a
 mailbox and a lifetime.
