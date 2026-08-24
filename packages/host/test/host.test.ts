@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { define, effect } from '@nonchalant/core'
-import type { Call, Definition, Proc } from '@nonchalant/core'
+import type { Call, Cast, Definition, Proc } from '@nonchalant/core'
 import { connect, webSocketTransport } from '@nonchalant/wire'
 import { WebSocket } from 'ws'
 import { serve } from '../src/index.ts'
@@ -17,7 +17,7 @@ const until = async (cond: () => boolean, tries = 200): Promise<void> => {
 
 type CartState = { items: string[]; total: number }
 type CartMsg =
-  | { type: 'add'; item: string; price: number }
+  | Cast<{ type: 'add'; item: string; price: number }>
   | Call<{ type: 'checkout' }, { ok: boolean; count: number }>
 
 const cart: Proc<CartState, CartMsg, { userId: string }> = async function* (self) {
@@ -127,12 +127,12 @@ describe('node host over real websockets', () => {
     expect(host.sessions()).toBe(2)
 
     // a cast from one tab is visible in the other — same named process
-    cartA.send({ type: 'add', item: 'boots', price: 120 })
+    cartA.cast({ type: 'add', item: 'boots', price: 120 })
     await until(() => cartB()?.total === 120)
     expect(cartB()?.items).toEqual(['boots'])
 
-    // ask round-trips over the socket
-    await expect(cartA.ask({ type: 'checkout' })).resolves.toStrictEqual({ ok: true, count: 1 })
+    // call round-trips over the socket
+    await expect(cartA.call({ type: 'checkout' })).resolves.toStrictEqual({ ok: true, count: 1 })
     await until(() => cartB()?.total === 0)
 
     // remote reads stay path-precise across a real socket
@@ -141,7 +141,7 @@ describe('node host over real websockets', () => {
       itemRuns++
       void cartB()?.items.length
     })
-    cartA.send({ type: 'add', item: 'hat', price: 5 }) // touches items AND total
+    cartA.cast({ type: 'add', item: 'hat', price: 5 }) // touches items AND total
     await until(() => cartB()?.total === 5)
     const runsAfterAdd = itemRuns
     expect(runsAfterAdd).toBeGreaterThan(1)
@@ -202,7 +202,7 @@ describe('node host over real websockets', () => {
     const cartA2 = c3.lookup('cart', { userId: 'ignored' })
     await until(() => cartA() !== undefined && cartB() !== undefined && cartA2() !== undefined)
 
-    cartA.send({ type: 'add', item: 'boots', price: 120 })
+    cartA.cast({ type: 'add', item: 'boots', price: 120 })
     await until(() => cartA2()?.total === 120) // same identity, same process
     expect(cartB()?.items).toEqual([]) // another identity never sees it
 

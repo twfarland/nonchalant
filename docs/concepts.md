@@ -13,14 +13,27 @@ its published snapshots, and its lifecycle. The handle is what you hold after
 | member | what it does |
 |---|---|
 | `p()` | Read the latest value synchronously. Inside a derive, effect, or view binding, this also subscribes by path. |
-| `p.send(msg)` | Fire-and-forget message. Only exists if `In` has plain messages. |
-| `p.ask(msg)` | Request/response, typed. Only exists if `In` has `Call` messages. Rejects if the process crashes, finishes, or is disposed. |
+| `p.cast(msg)` | Fire-and-forget message. Only exists if `In` has `Cast` messages. |
+| `p.call(msg)` | Request/response, typed. Only exists if `In` has `Call` messages. Rejects if the process crashes, finishes, or is disposed. |
 | `p.pending` | True while the process is working toward its next yield. |
 | `p.stale` | True when the value survived a crash or a lost connection; clears on the next good yield. |
 | `p.error` | The last failure, if any. |
 | `for await (v of p)` | A live stream of values. Lossy on purpose: you always get the latest, never a backlog. |
 | `p[Symbol.dispose]()` | Starts teardown immediately: closes the mailbox, aborts the signal, and requests generator return. Owned children are disposed after the generator settles. It does not wait for asynchronous `finally` work. |
 | `await p[Symbol.asyncDispose]()` | Starts teardown and waits until this process and its owned-child finalizers have settled. |
+
+`In` is a discriminated union whose members are spelled `Cast<Msg>` for a
+one-way message and `Call<Req, Res>` for one that expects an answer:
+
+```ts
+type CartMsg =
+  | Cast<{ type: 'add'; item: Item }>
+  | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>
+```
+
+`Call` adds the `reply` function the generator answers through; `Cast` marks
+its absence (`reply?: never`), which is what lets the compiler route each
+member to `cast` or to `call` and reject the other one.
 
 Tests: `packages/core/test/process.test.ts`; the type rules are in
 `types.check.ts`. Its `@ts-expect-error` assertions detect regressions if an
@@ -31,7 +44,7 @@ invalid operation starts compiling.
 The generator receives `Self`. `for await (msg of self)` reads queued messages
 in order. `self.latest()` drops older queued messages and returns the newest,
 which is useful for typeahead input. `self.signal` is an AbortSignal triggered
-by disposal or a crash, and `self.send` posts to the process's own mailbox.
+by disposal or a crash, and `self.cast` posts to the process's own mailbox.
 `channel(signal?)` gives you a disposable standalone mailbox for middleware
 and tests.
 
@@ -42,7 +55,7 @@ and tests.
 - `initial`: the first readable value. With it, `p()` is `T`; without,
   `T | undefined` until the first yield.
 - `restart: 'on-crash'`: rerun the generator from `args` after a throw, up to
-  `maxRestarts` times. Queued messages replay; pending asks reject.
+  `maxRestarts` times. Queued messages replay; pending calls reject.
 - `mailbox: n`: cap the queue; overflow drops the oldest and logs a warning.
 
 Ownership: whatever a process spawns belongs to it and dies with it. The
@@ -140,14 +153,14 @@ Tests: `registry.test.ts`.
 
 ## Wire
 
-Eight JSON ops (`lookup/send/call/exit` from the client, `yield/reply/done/
+Eight JSON ops (`lookup/cast/call/exit` from the client, `yield/reply/done/
 raise` from the host), carrying state patches rather than markup or code.
 
 ```mermaid
 flowchart LR
     subgraph client
         B["bindings and derives"] --> F["Process handle<br/>(a local patch-applying process)"]
-        F -->|"send / call"| T["transport"]
+        F -->|"cast / call"| T["transport"]
         T -->|"yield: patch"| F
     end
     subgraph host

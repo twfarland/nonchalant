@@ -55,8 +55,9 @@ the model; `README.md` is the front page.
 
 State:
 - One process owns one piece of state. Its message type is a discriminated
-  union (casts, plus `Call<Req, Res>` where the sender needs an answer); the
-  generator body is the reducer; one yield per state change.
+  union of `Cast<Msg>` and `Call<Req, Res>` members, matching the `cast` and
+  `call` methods on the handle; the generator body is the reducer; one yield
+  per state change.
 - Immutable updates, always: `let` + spread, sharing everything that didn't
   change. That sharing is what makes diffs O(changed).
 - Keep computation out of the loop: pure helpers (`step`, `visible`) in their

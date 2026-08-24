@@ -2,13 +2,13 @@
 // tab and the server import THIS file — the process does not know which side
 // of the wire it runs on.
 
-import type { Call, Definition, Proc } from '@nonchalant/core'
+import type { Call, Cast, Definition, Proc } from '@nonchalant/core'
 
 export type Item = { name: string; price: number }
 export type CartState = { items: Item[]; total: number }
 export type CartMsg =
-  | { type: 'add'; item: Item }
-  | { type: 'remove'; name: string }
+  | Cast<{ type: 'add'; item: Item }>
+  | Cast<{ type: 'remove'; name: string }>
   | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>
 
 export const cart: Proc<CartState, CartMsg, { userId: string }> = async function* (self) {

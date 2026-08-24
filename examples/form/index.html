@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Form (+ask) — nonchalant</title>
+<title>Form (+call) — nonchalant</title>
 <link rel="stylesheet" href="../shared.css">
 </head>
 <body>
 <div class="split">
 <main class="demo">
-<h1>Form (+ask)</h1>
+<h1>Form (+call)</h1>
 <div id="app"></div>
 </main>
 <aside class="explain">
@@ -21,7 +21,7 @@
 msg.reply(<span class="k">await</span> fakeSignup(msg.email))
 
 <span class="c">// in the view, the answer is just an awaited promise:</span>
-<span class="k">const</span> res = <span class="k">await</span> store.ask({ <span class="k">type</span>: <span class="s">'submit'</span>, email })</code></pre>
+<span class="k">const</span> res = <span class="k">await</span> store.call({ <span class="k">type</span>: <span class="s">'submit'</span>, email })</code></pre>
 </aside>
 </div>
 <script type="module" src="./main.ts"></script>

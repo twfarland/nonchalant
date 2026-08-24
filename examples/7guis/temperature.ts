@@ -10,15 +10,15 @@ const fahrenheit = cell('')
 
 const onCelsius = (e: Event): void => {
   const t = (e.target as HTMLInputElement).value
-  celsius.send(t)
+  celsius.cast(t)
   const c = Number.parseFloat(t)
-  if (Number.isFinite(c)) fahrenheit.send(String(Math.round(c * (9 / 5) + 32)))
+  if (Number.isFinite(c)) fahrenheit.cast(String(Math.round(c * (9 / 5) + 32)))
 }
 const onFahrenheit = (e: Event): void => {
   const t = (e.target as HTMLInputElement).value
-  fahrenheit.send(t)
+  fahrenheit.cast(t)
   const f = Number.parseFloat(t)
-  if (Number.isFinite(f)) celsius.send(String(Math.round((f - 32) * (5 / 9))))
+  if (Number.isFinite(f)) celsius.cast(String(Math.round((f - 32) * (5 / 9))))
 }
 
 mount(document.getElementById('app')!, div({ class: 'card' },

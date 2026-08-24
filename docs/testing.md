@@ -25,8 +25,8 @@ timers, or a DOM:
 
 ```ts
 const self = channel<Msg>()
-self.send({ type: 'add', title: 'milk' })   // script the mailbox up front
-self.send({ type: 'toggle', id: 1 })
+self.cast({ type: 'add', title: 'milk' })   // script the mailbox up front
+self.cast({ type: 'toggle', id: 1 })
 
 const it = todosProc(self, undefined)
 expect((await it.next()).value.todos).toEqual([{ id: 1, title: 'milk', done: false }])
@@ -52,7 +52,7 @@ sharing, granularity.
 
 - **Process state.** `p()`, `p.pending`, `p.stale`, and `p.error` are synchronous
   reads. Assert a loading state with `expect(p.pending).toBe(true)`, not a render
-  probe. `ask()` returns a promise, and its rejections are the
+  probe. `call()` returns a promise, and its rejections are the
   crash-behavior test: `packages/core/test/process.test.ts`.
 - **Exact wake counts.** Granularity is observable: count effect runs (or DOM
   writes) and assert the precise number, because the model promises exactness
@@ -94,7 +94,7 @@ await tick()                                            // the cast reaches the 
 expect(store().todos[0]!.done).toBe(true)               // the store moved
 ```
 
-The handler is a closure over `send`, so the assertion is about the state
+The handler is a closure over `cast`, so the assertion is about the state
 process, not the tree: one `await tick()` (`new Promise((r) => setTimeout(r, 0))`)
 lets the mailbox turn before the store publishes its next value.
 
@@ -108,9 +108,9 @@ budgets against it.
 |---|---|
 | the mailbox is injectable | `Self` is an interface; `channel()` implements it |
 | tests are transcripts | one yield per message is an assertable sequence |
-| no fake timers | time arrives as messages you send |
+| no fake timers | time arrives as messages you cast |
 | loading/error states are reads | `pending` / `stale` / `error` are the process face |
-| request/response is `await` | `ask()` returns a promise |
+| request/response is `await` | `call()` returns a promise |
 | views test without a DOM | trees are plain data; handlers are closures |
 | granularity is countable | wakes and DOM writes are exact, so assert exact numbers |
 | partitions are a method call | the in-memory transport can split and heal |

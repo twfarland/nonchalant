@@ -46,7 +46,7 @@
 }</code></pre>
 
 <h2>Tools are processes</h2>
-<p>A tool call is <code>ask()</code>. That is why the counters above are live — each tool is a running process with state of its own — and why a tool could just as well be on a server: it is reached by a registry lookup, and a registry lookup does not care about distance.</p>
+<p>A tool call is <code>call()</code>. That is why the counters above are live — each tool is a running process with state of its own — and why a tool could just as well be on a server: it is reached by a registry lookup, and a registry lookup does not care about distance.</p>
 <p>It is also why <strong>human-in-the-loop needs no mechanism</strong>. The approval tool simply does not reply until you click:</p>
 <pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
   <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'request'</span>) waiting = [...waiting, { ...msg, reply: msg.reply }]  <span class="c">// parked</span>

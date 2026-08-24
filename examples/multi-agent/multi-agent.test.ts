@@ -54,13 +54,13 @@ const crew = (limit = 10_000) => {
   }
 }
 
-const approve = (queue: Crew['approvals']) => (): void => queue.send({ type: 'decide', ok: true })
+const approve = (queue: Crew['approvals']) => (): void => queue.cast({ type: 'decide', ok: true })
 
 describe('multi-agent wiring', () => {
   it('delegates, hands the output on, and stops for a person before publishing', async () => {
     const team = crew()
     const boss = team.boss()
-    boss.send({ type: 'brief', topic: 'what is a worker?' })
+    boss.cast({ type: 'brief', topic: 'what is a worker?' })
 
     await waitFor(() => boss()?.stage === 'approving', 'the approval gate')
     const state = boss()!
@@ -78,7 +78,7 @@ describe('multi-agent wiring', () => {
   it('killing the supervisor mid-pipeline does not re-run the agents it delegated to', async () => {
     const team = crew()
     const first = team.boss()
-    first.send({ type: 'brief', topic: 'what is a patch?' })
+    first.cast({ type: 'brief', topic: 'what is a patch?' })
 
     await waitFor(() => first()?.stage === 'writing', 'the hand-off to the writer')
     first[Symbol.dispose]() // gone, mid-pipeline, with the brief unacknowledged
@@ -100,7 +100,7 @@ describe('multi-agent wiring', () => {
   it('one budget governs every agent in the system', async () => {
     const team = crew(150) // enough for research (120), not for writing (200)
     const boss = team.boss()
-    boss.send({ type: 'brief', topic: 'what is a process?' })
+    boss.cast({ type: 'brief', topic: 'what is a process?' })
 
     await waitFor(() => boss()?.stage === 'broke', 'the budget to bite')
     expect(boss()?.notes).toContain('mailbox') // research happened
@@ -115,8 +115,8 @@ describe('multi-agent wiring', () => {
   it('briefs queue: the mailbox is the scheduler', async () => {
     const team = crew()
     const boss = team.boss()
-    boss.send({ type: 'brief', topic: 'what is a patch?' })
-    boss.send({ type: 'brief', topic: 'what is durable?' })
+    boss.cast({ type: 'brief', topic: 'what is a patch?' })
+    boss.cast({ type: 'brief', topic: 'what is durable?' })
 
     await waitFor(() => boss()?.stage === 'approving', 'the first gate')
     expect(boss()?.topic).toBe('what is a patch?')

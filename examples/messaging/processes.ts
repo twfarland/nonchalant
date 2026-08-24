@@ -8,13 +8,13 @@
 //
 // Neither knows which broker it is talking to, because neither imports one.
 
-import type { Json, Proc, Self } from '@nonchalant/core'
+import type { Cast, Json, Proc, Self } from '@nonchalant/core'
 import type { Bus, Job, Queue } from './ports.ts'
 
 // ---------- a subscription, as a process ----------
 
 export type Feed = { topic: string; events: string[]; received: number }
-export type FeedMsg = { type: 'event'; text: string }
+export type FeedMsg = Cast<{ type: 'event'; text: string }>
 
 const KEEP = 6
 
@@ -28,7 +28,7 @@ export const feed = (bus: Bus): Proc<Feed, FeedMsg, { topic: string }> =>
     let events: string[] = []
     let received = 0
 
-    const stop = bus.subscribe(topic, (event) => self.send({ type: 'event', text: String(event) }))
+    const stop = bus.subscribe(topic, (event) => self.cast({ type: 'event', text: String(event) }))
     self.signal.addEventListener('abort', stop, { once: true }) // the disposal is the unsubscribe
 
     yield { topic, events, received }
@@ -49,7 +49,7 @@ export type WorkerState = {
   failed: number
 }
 
-export type WorkerMsg = { type: 'poll' } | { type: 'pause' } | { type: 'resume' }
+export type WorkerMsg = Cast<{ type: 'poll' }> | Cast<{ type: 'pause' }> | Cast<{ type: 'resume' }>
 
 export interface WorkerOpts {
   queue: Queue
@@ -60,8 +60,8 @@ export interface WorkerOpts {
   handle: (job: Job, signal: AbortSignal) => Promise<string>
 }
 
-// The self-send goes through a timer, not straight into the mailbox: a loop
-// that re-sends synchronously resolves in microtasks and the event loop never
+// The self-cast goes through a timer, not straight into the mailbox: a loop
+// that casts to itself synchronously resolves in microtasks and the event loop never
 // turns again — no timer, no I/O, no pause message would ever be heard.
 const soon = (fn: () => void, ms: number): void => {
   setTimeout(fn, ms)
@@ -75,7 +75,7 @@ export const worker = (opts: WorkerOpts): Proc<WorkerState, WorkerMsg, { name: s
     let failed = 0
     const state = (): WorkerState => ({ name, status, holding, done: [...done], failed })
 
-    soon(() => self.send({ type: 'poll' }), 0)
+    soon(() => self.cast({ type: 'poll' }), 0)
     yield state()
 
     for await (const msg of self) {
@@ -85,12 +85,12 @@ export const worker = (opts: WorkerOpts): Proc<WorkerState, WorkerMsg, { name: s
       } else if (msg.type === 'resume') {
         if (status !== 'paused') continue
         status = 'idle'
-        soon(() => self.send({ type: 'poll' }), 0)
+        soon(() => self.cast({ type: 'poll' }), 0)
       } else {
         if (status === 'paused') continue
         const job = await opts.queue.reserve(opts.leaseMs)
         if (job === undefined) {
-          soon(() => self.send({ type: 'poll' }), opts.idleMs)
+          soon(() => self.cast({ type: 'poll' }), opts.idleMs)
           if (status === 'idle') continue // nothing happened worth publishing
           status = 'idle'
           holding = null
@@ -114,7 +114,7 @@ export const worker = (opts: WorkerOpts): Proc<WorkerState, WorkerMsg, { name: s
         }
         status = 'idle'
         holding = null
-        soon(() => self.send({ type: 'poll' }), 0)
+        soon(() => self.cast({ type: 'poll' }), 0)
       }
       yield state()
     }

@@ -4,14 +4,14 @@
 // implementation must satisfy.
 
 import { spawn, derive, cell, define, registry } from '../src/index.ts'
-import type { Call, Definition, Proc, Process, Registry, Self } from '../src/index.ts'
+import type { Call, Cast, Definition, Proc, Process, Registry, Self } from '../src/index.ts'
 
 type Item = { id: number; title: string; done: boolean }
 type CartState = { items: Item[]; total: number }
 
 type CartMsg =
-  | { type: 'add'; item: Item }
-  | { type: 'remove'; id: number }
+  | Cast<{ type: 'add'; item: Item }>
+  | Cast<{ type: 'remove'; id: number }>
   | Call<{ type: 'checkout' }, { ok: boolean; orderId?: string }>
 
 type MultiCallMsg =
@@ -30,35 +30,37 @@ const noInit = spawn(cartProc, { userId: 'u1' })
 const total1: CartState = noInit()
 
 // --- casts vs calls, separated by the compiler ---
-cart.send({ type: 'add', item: { id: 1, title: 'x', done: false } })
+cart.cast({ type: 'add', item: { id: 1, title: 'x', done: false } })
 // @ts-expect-error — checkout is a call, not a cast
-cart.send({ type: 'checkout' })
+cart.cast({ type: 'checkout' })
 // @ts-expect-error — unknown message shape
-cart.send({ type: 'nope' })
+cart.cast({ type: 'nope' })
+// @ts-expect-error — a cast carries no reply; that marker is what keeps it out of Calls
+cart.cast({ type: 'add', item: { id: 1, title: 'x', done: false }, reply: () => {} })
 
 async function checkout(): Promise<void> {
-  const res = await cart.ask({ type: 'checkout' })
+  const res = await cart.call({ type: 'checkout' })
   const ok: boolean = res.ok
   void ok
 }
 void checkout
 
 declare const multi: Process<null, MultiCallMsg>
-const found: Promise<{ name: string }> = multi.ask({ type: 'find', id: 1 })
-const counted: Promise<number> = multi.ask({ type: 'count' })
+const found: Promise<{ name: string }> = multi.call({ type: 'find', id: 1 })
+const counted: Promise<number> = multi.call({ type: 'count' })
 // @ts-expect-error — find requires its id
-multi.ask({ type: 'find' })
+multi.call({ type: 'find' })
 // @ts-expect-error — count has no id
-multi.ask({ type: 'count', id: 1 })
+multi.call({ type: 'count', id: 1 })
 
 // --- derivations have no mailbox ---
 const totals = derive(() => cart().total)
-// @ts-expect-error — no send on a Process<T, never>
-totals.send(1)
+// @ts-expect-error — no cast on a Process<T, never>
+totals.cast(1)
 
 // --- cell: transient widget state ---
 const open = cell(false)
-open.send(true)
+open.cast(true)
 const b: boolean = open()
 void b
 
@@ -66,6 +68,7 @@ void b
 declare const self: Self<CartMsg>
 self.signal satisfies AbortSignal
 self.latest() satisfies AsyncIterable<CartMsg>
+self.cast({ type: 'remove', id: 1 })
 
 // --- registry schema: typed lookup, arity-checked ---
 interface Shop {
@@ -76,7 +79,7 @@ interface Shop {
 const fakeDefinition: Definition<number, never, void> = {}
 declare const shop: Registry<Shop>
 const rcart = shop.lookup('cart', { userId: 'u1' })
-rcart.send({ type: 'remove', id: 1 })
+rcart.cast({ type: 'remove', id: 1 })
 shop.lookup('clock')
 // @ts-expect-error — clock takes no args
 shop.lookup('clock', {})
@@ -90,7 +93,7 @@ const local = registry({
   clock: define(clockProc),
 })
 const lc = local.lookup('cart', { userId: 'u1' })
-lc.send({ type: 'remove', id: 2 })
+lc.cast({ type: 'remove', id: 2 })
 local.lookup('clock')
 // @ts-expect-error — clock takes no args
 local.lookup('clock', {})
@@ -104,8 +107,8 @@ declare function withHistory<T, In, A>(
   proc: Proc<T, In, A>,
 ): Proc<T, In | { type: 'undo' } | { type: 'redo' }, A>
 const hist = spawn(withHistory(cartProc), { userId: 'u1' })
-hist.send({ type: 'undo' })
-hist.send({ type: 'add', item: { id: 2, title: 'y', done: false } })
+hist.cast({ type: 'undo' })
+hist.cast({ type: 'add', item: { id: 2, title: 'y', done: false } })
 
 // silence unused locals
 void total0; void total1; void rcart; void hist; void cart; void cartDisposed; void lc; void found; void counted; void fakeDefinition

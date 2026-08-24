@@ -4,16 +4,16 @@
 // row. Nothing else in the DOM is touched.
 
 import { spawn } from '@nonchalant/core'
-import type { Proc, Process, VNode } from '@nonchalant/core'
+import type { Cast, Proc, Process, VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, input, li, span, ul } from '@nonchalant/dom/tags'
 
 type Todo = { id: number; title: string; done: boolean }
 type State = { todos: Todo[]; nextId: number }
 type Msg =
-  | { type: 'add'; title: string }
-  | { type: 'toggle'; id: number }
-  | { type: 'remove'; id: number }
+  | Cast<{ type: 'add'; title: string }>
+  | Cast<{ type: 'toggle'; id: number }>
+  | Cast<{ type: 'remove'; id: number }>
 
 const initial: State = {
   todos: [
@@ -42,10 +42,10 @@ function Row(store: Process<State, Msg>, todo: Todo): VNode {
     input({
       type: 'checkbox',
       checked: todo.done,
-      onchange: () => store.send({ type: 'toggle', id: todo.id }),
+      onchange: () => store.cast({ type: 'toggle', id: todo.id }),
     }),
     span({ class: todo.done ? 'done' : '' }, todo.title),
-    button({ onclick: () => store.send({ type: 'remove', id: todo.id }) }, 'remove'))
+    button({ onclick: () => store.cast({ type: 'remove', id: todo.id }) }, 'remove'))
 }
 
 export function run(host: Element): Disposable {
@@ -59,7 +59,7 @@ export function run(host: Element): Disposable {
         const el = e.target as HTMLInputElement
         const title = el.value.trim()
         if (e.key === 'Enter' && title !== '') {
-          store.send({ type: 'add', title })
+          store.cast({ type: 'add', title })
           el.value = ''
         }
       },

@@ -107,7 +107,7 @@ describe.skipIf(gcNow === undefined)('leak suite (nothing retained after dispose
       { initial: -1 },
     )
     await tick()
-    p.send(1)
+    p.cast(1)
     await tick()
     p[Symbol.dispose]()
     await tick()
@@ -129,10 +129,10 @@ describe.skipIf(gcNow === undefined)('leak suite (nothing retained after dispose
     )
     await tick()
     const enqueue = (): void => {
-      p.send({ blob: new Array(10) }) // being processed (slowly) — not asserted
+      p.cast({ blob: new Array(10) }) // being processed (slowly) — not asserted
       const queued = { blob: new Array(10_000).fill(0) }
       refs.push(new WeakRef(queued))
-      p.send(queued) // still queued when we dispose
+      p.cast(queued) // still queued when we dispose
     }
     enqueue()
     p[Symbol.dispose]()

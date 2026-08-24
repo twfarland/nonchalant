@@ -96,13 +96,13 @@ describe('mario golden budgets', () => {
     const spy = spyDomWrites()
     try {
       // 120 frames of running right, jumping once mid-flight
-      world.send({ type: 'arrows', x: 1, y: 0 })
+      world.cast({ type: 'arrows', x: 1, y: 0 })
       let maxWritesPerFrame = 0
       for (let f = 0; f < 120; f++) {
-        if (f === 30) world.send({ type: 'arrows', x: 1, y: 1 })
-        if (f === 32) world.send({ type: 'arrows', x: 1, y: 0 })
+        if (f === 30) world.cast({ type: 'arrows', x: 1, y: 1 })
+        if (f === 32) world.cast({ type: 'arrows', x: 1, y: 0 })
         spy.reset()
-        world.send({ type: 'tick', delta: 0.8 })
+        world.cast({ type: 'tick', delta: 0.8 })
         await tick()
         maxWritesPerFrame = Math.max(maxWritesPerFrame, spy.attrs)
         expect(spy.structure).toBe(0) // bindings only — no node churn, ever
@@ -126,13 +126,13 @@ describe('mario golden budgets', () => {
 
   it('key-repeat cannot double-step: arrow messages alone move nothing', async () => {
     const world = spawn(mario, undefined, { initial: initialMario })
-    world.send({ type: 'arrows', x: 1, y: 0 })
-    world.send({ type: 'arrows', x: 1, y: 0 }) // key-repeat
-    world.send({ type: 'arrows', x: 1, y: 0 })
+    world.cast({ type: 'arrows', x: 1, y: 0 })
+    world.cast({ type: 'arrows', x: 1, y: 0 }) // key-repeat
+    world.cast({ type: 'arrows', x: 1, y: 0 })
     await tick()
     expect(world()).toStrictEqual(initialMario) // no tick, no movement, no yield
 
-    world.send({ type: 'tick', delta: 1 })
+    world.cast({ type: 'tick', delta: 1 })
     await tick()
     const one = step(1, { x: 1, y: 0 }, initialMario)
     expect(world()).toStrictEqual(one) // exactly one step, however many repeats arrived

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { spawn } from '@nonchalant/core'
+import type { Cast } from '@nonchalant/core'
 import { durable, memoryStore, type DurableProc, type Store } from '../src/index.ts'
 
 // setImmediate, not setTimeout: on Windows a 0ms timer costs ~15ms, which
@@ -10,7 +11,7 @@ const settle = async (): Promise<void> => {
   for (let i = 0; i < 40; i++) await tick()
 }
 
-type Msg = { type: 'order'; n: number }
+type Msg = Cast<{ type: 'order'; n: number }>
 type State = { done: string[]; total: number }
 
 interface Ledger {
@@ -69,7 +70,7 @@ describe('durable', () => {
     const opts = { store, key: (a: { id: string }) => a.id }
 
     const first = spawn(durable(workflow(log), opts), { id: 'w1' })
-    first.send({ type: 'order', n: 5 })
+    first.cast({ type: 'order', n: 5 })
     await settle()
     expect(first()?.total).toBe(16) // 10 charged + 6 shipped
     first[Symbol.dispose]()
@@ -97,7 +98,7 @@ describe('durable', () => {
     }
 
     const crashed = spawn(durable(workflow(log), { ...opts, store: flaky }), { id: 'w2' })
-    crashed.send({ type: 'order', n: 3 })
+    crashed.cast({ type: 'order', n: 3 })
     await settle()
     expect(crashed.error).toBeInstanceOf(Error)
     expect(log.count('charge')).toBe(1)
@@ -118,8 +119,8 @@ describe('durable', () => {
     const opts = { store, key: (a: { id: string }) => a.id }
 
     const p = spawn(durable(workflow(log), opts), { id: 'w3' })
-    p.send({ type: 'order', n: 1 })
-    p.send({ type: 'order', n: 2 })
+    p.cast({ type: 'order', n: 1 })
+    p.cast({ type: 'order', n: 2 })
     await tick() // journaled, not yet handled
     p[Symbol.dispose]()
     await settle()
@@ -134,7 +135,7 @@ describe('durable', () => {
     const store = memoryStore()
     const refuses: Store = { ...store, append: async () => { throw new Error('disk full') } }
     const p = spawn(durable(workflow(ledger()), { store: refuses, key: (): string => 'w5' }), { id: 'w5' })
-    p.send({ type: 'order', n: 1 })
+    p.cast({ type: 'order', n: 1 })
     await settle()
     expect(String(p.error)).toMatch(/disk full/)
     p[Symbol.dispose]()
@@ -161,7 +162,7 @@ describe('durable', () => {
     }
 
     const a = spawn(durable(before, opts), undefined)
-    a.send({ type: 'order', n: 1 })
+    a.cast({ type: 'order', n: 1 })
     await settle()
     a[Symbol.dispose]()
 
@@ -191,7 +192,7 @@ describe('durable: crash consistency', () => {
       const known = cursor + (await store.pending(key, cursor)).length
       const proc = durable(workflow(log), { store: failAfter(store, budget), key: (): string => key })
       const p = spawn(proc, { id: key })
-      for (const n of orders.slice(known)) p.send({ type: 'order', n }) // the sender retries what was not accepted
+      for (const n of orders.slice(known)) p.cast({ type: 'order', n }) // the sender retries what was not accepted
       await settle()
       const value = p()
       const failed = p.error !== undefined

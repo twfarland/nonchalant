@@ -9,13 +9,13 @@ the `examples/` directory.
 In Nonchalant, a **process** owns a piece of state. Processes are async
 generators: local variables hold state, the mailbox supplies input, and each
 `yield` publishes a snapshot. `spawn` runs the generator and returns the handle
-used to read it, send messages, and dispose it.
+used to read it, cast and call, and dispose it.
 
 ```ts
 import { spawn } from '@nonchalant/core'
-import type { Proc } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
 
-type CounterMsg = { type: 'add'; n: number }
+type CounterMsg = Cast<{ type: 'add'; n: number }>
 
 const counter: Proc<number, CounterMsg, void> = async function* (self) {
   let n = 0                       // local state
@@ -28,14 +28,14 @@ const counter: Proc<number, CounterMsg, void> = async function* (self) {
 
 const p = spawn(counter, undefined, { initial: 0 })
 p()                    // read the current value: 0
-p.send({ type: 'add', n: 5 })
+p.cast({ type: 'add', n: 5 })
 // a moment later: p() === 5
 ```
 
 No store setup or reducer registration is required. The generator preserves
 its local variables while suspended between messages, and `yield` publishes
 the result. The `initial` option determines whether reads can be `undefined`,
-while the message union determines what `send` accepts.
+while the message union determines what `cast` accepts.
 
 ## 2. Reading doesn't subscribe
 
@@ -105,7 +105,7 @@ function CartView(cart: Process<Cart, CartMsg>): VNode {
     ul({}, () => cart().items.map((it) =>
       li({ key: it.name }, it.name))),          // a keyed list
     span({}, () => String(cart().total)),        // wakes only when total changes
-    button({ onclick: () => cart.send({ type: 'add', item: pick() }) }, 'Add'))
+    button({ onclick: () => cart.cast({ type: 'add', item: pick() }) }, 'Add'))
 }
 
 mount(document.getElementById('app')!, CartView(cart))
@@ -116,25 +116,25 @@ they affect. A widget can close over its own process, as `examples/counter`
 does with `cell(0)`, a small wrapper around `spawn`. Cells created inside a view
 process belong to it and are disposed when it ends.
 
-## 5. When you need an answer, ask
+## 5. When you need an answer, call
 
-`send` does not wait for a response. When a caller needs the result, such as a
-form checking whether its submission succeeded, use a `Call` with `ask`.
-TypeScript prevents calls from being sent as casts and casts from being asked.
+`cast` does not wait for a response. When a caller needs the result, such as a
+form checking whether its submission succeeded, use a `Call` with `call`.
+TypeScript prevents a `Call` from being cast and a `Cast` from being called.
 
 ```ts
 type CartMsg =
-  | { type: 'add'; item: Item }
+  | Cast<{ type: 'add'; item: Item }>
   | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>
 
 // inside the generator, a call carries a reply function:
 if (msg.type === 'checkout') msg.reply({ ok: true, charged: total })
 
 // outside:
-const res = await cart.ask({ type: 'checkout' })   // the reply, typed
+const res = await cart.call({ type: 'checkout' })   // the reply, typed
 ```
 
-If a process crashes, pending asks reject and readers retain the last value
+If a process crashes, pending calls reject and readers retain the last value
 with `stale: true`. With `restart: 'on-crash'`, it restarts from its original
 arguments and replays queued messages. See
 `examples/form`.

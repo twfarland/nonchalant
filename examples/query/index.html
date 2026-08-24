@@ -28,21 +28,21 @@
 <li><strong>garbage collection</strong> — watcher refcounting plus an <code>evict</code> idle timer; the next lookup refetches</li>
 <li><strong>invalidation</strong> — an ordinary typed message, sent to the one place that actually depends on the change</li>
 </ul>
-<p>And mutations are an <code>ask()</code> on the query itself — write-through. It performs the write, replies, and yields the new state: no refetch round-trip, no cache-key dependency graph.</p>
+<p>And mutations are a <code>call()</code> on the query itself — write-through. It performs the write, replies, and yields the new state: no refetch round-trip, no cache-key dependency graph.</p>
 <pre><code>user: define&lt;User, UserMsg, { id: number }&gt;(<span class="k">async</span> <span class="k">function</span>* (self, { id }) {
   <span class="k">yield</span> <span class="k">await</span> getUser(id)
   <span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
     <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'refresh'</span>) {
       <span class="k">yield</span> <span class="k">await</span> getUser(id)
     } <span class="k">else</span> {
-      <span class="k">const</span> updated = <span class="k">await</span> renameUser(id, msg.name)  <span class="c">// a throw rejects the ask</span>
+      <span class="k">const</span> updated = <span class="k">await</span> renameUser(id, msg.name)  <span class="c">// a throw rejects the call</span>
       msg.reply(updated)
       <span class="k">yield</span> updated                                   <span class="c">// write-through</span>
-      shop.lookup(<span class="s">'users'</span>).send({ <span class="k">type</span>: <span class="s">'refresh'</span> })  <span class="c">// the one explicit ripple</span>
+      shop.lookup(<span class="s">'users'</span>).cast({ <span class="k">type</span>: <span class="s">'refresh'</span> })  <span class="c">// the one explicit ripple</span>
     }
   }
 }, { evict: 60_000, restart: <span class="s">'on-crash'</span> })</code></pre>
-<p>A failed write rejects the <code>ask</code> and the restart policy re-syncs from the server automatically — try the empty name. The schema lives in <code>shop.ts</code> and is tested headlessly in <code>shop.test.ts</code>.</p>
+<p>A failed write rejects the <code>call</code> and the restart policy re-syncs from the server automatically — try the empty name. The schema lives in <code>shop.ts</code> and is tested headlessly in <code>shop.test.ts</code>.</p>
 </aside>
 </div>
 <script type="module" src="./main.ts"></script>

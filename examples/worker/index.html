@@ -41,7 +41,7 @@ expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))</c
     subscribe: (h) =&gt; { handlers = h; queueMicrotask(() =&gt; h.open?.()); <span class="k">return</span> () =&gt; { handlers = <span class="k">null</span> } },
   }
 }</code></pre>
-<p>Only state crosses the port. The thousands of primes the process has found live in a plain array inside it; each yield carries the counters and the last six. The full list is one <code>ask()</code> away — a correlated request, answered over the same port.</p>
+<p>Only state crosses the port. The thousands of primes the process has found live in a plain array inside it; each yield carries the counters and the last six. The full list is one <code>call()</code> away — a correlated request, answered over the same port.</p>
 </aside>
 </div>
 <script type="module" src="./main.ts"></script>

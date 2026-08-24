@@ -7,7 +7,7 @@
 // a worker registry keeps a heavy process off the thread that draws.
 
 import { cell, define, derive, registry, spawn } from '@nonchalant/core'
-import type { Plain, Proc, Process, VNode } from '@nonchalant/core'
+import type { Casts, Proc, Process, VNode } from '@nonchalant/core'
 import { connect, portTransport } from '@nonchalant/wire'
 import { mount } from '@nonchalant/dom'
 import { button, div, li, span, ul } from '@nonchalant/dom/tags'
@@ -27,13 +27,13 @@ const grinder = derive<Grinder>(() =>
   onWorker() ? (there.lookup('primes') as Grinder) : (here.lookup('primes') as Grinder))
 const state = derive<PrimesState | undefined>(() => grinder()())
 
-const send = (msg: Plain<PrimesMsg>): void => grinder().send(msg)
+const cast = (msg: Casts<PrimesMsg>): void => grinder().cast(msg)
 
 // each registry has its own process, so leaving one running would grind in the
 // background: stop it on the way out, and it resumes where it left off
 const moveTo = (remote: boolean): void => {
-  send({ type: 'stop' })
-  onWorker.send(remote)
+  cast({ type: 'stop' })
+  onWorker.cast(remote)
 }
 
 // ---------- the frame meter (always on this thread) ----------
@@ -55,7 +55,7 @@ const meter = spawn(frames, undefined, { initial: { angle: 0, worst: 0 } })
 
 let previous = performance.now()
 const onFrame = (t: number): void => {
-  meter.send({ type: 'frame', dt: t - previous })
+  meter.cast({ type: 'frame', dt: t - previous })
   previous = t
   requestAnimationFrame(onFrame)
 }
@@ -75,9 +75,9 @@ function ThreadSwitch(where: Process<boolean, boolean>): VNode {
 
 function Controls(now: Process<PrimesState | undefined>): VNode {
   return div({},
-    button({ disabled: () => now()?.running === true, onclick: () => send({ type: 'start' }) }, 'Start'),
-    button({ disabled: () => now()?.running !== true, onclick: () => send({ type: 'stop' }) }, 'Stop'),
-    button({ onclick: () => send({ type: 'reset' }) }, 'Reset'))
+    button({ disabled: () => now()?.running === true, onclick: () => cast({ type: 'start' }) }, 'Start'),
+    button({ disabled: () => now()?.running !== true, onclick: () => cast({ type: 'stop' }) }, 'Stop'),
+    button({ onclick: () => cast({ type: 'reset' }) }, 'Reset'))
 }
 
 function Counters(now: Process<PrimesState | undefined>): VNode {
@@ -91,18 +91,18 @@ function Recent(now: Process<PrimesState | undefined>): VNode {
     (now()?.recent ?? []).map((p) => li({ key: p }, String(p))))
 }
 
-// everything found stays where it was found; ask() is the one message that
+// everything found stays where it was found; call() is the one message that
 // fetches the whole list, and the answer comes back over the same port
 function Export(at: Process<Grinder>): VNode {
   const note = cell('')
   const grab = (): void => {
-    void at().ask({ type: 'export' }).then(
-      (all) => note.send(all.length === 0 ? 'nothing found yet' : `${all.length} primes, up to ${all.at(-1)}`),
-      (e: unknown) => note.send(String(e)))
+    void at().call({ type: 'export' }).then(
+      (all) => note.cast(all.length === 0 ? 'nothing found yet' : `${all.length} primes, up to ${all.at(-1)}`),
+      (e: unknown) => note.cast(String(e)))
   }
 
   return div({},
-    button({ onclick: grab }, 'ask() for the full list'),
+    button({ onclick: grab }, 'call() for the full list'),
     span({ class: 'muted' }, note))
 }
 

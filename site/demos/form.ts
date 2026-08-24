@@ -1,17 +1,17 @@
-// A message that expects an answer is a `Call`. `ask()` hands the caller a
+// A message that expects an answer is a `Call`. `call()` hands the caller a
 // typed promise for its own outcome, so the submit button learns what happened
-// instead of watching status fields go by. The compiler refuses to `send` a
-// call or `ask` a cast.
+// instead of watching status fields go by. The compiler refuses to `cast` a
+// call or `call` a cast.
 
 import { cell, spawn } from '@nonchalant/core'
-import type { Call, Proc } from '@nonchalant/core'
+import type { Call, Cast, Proc } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, input, span } from '@nonchalant/dom/tags'
 
 type Outcome = { ok: true } | { ok: false; error: string }
 type State = { email: string; submitting: boolean }
 type Msg =
-  | { type: 'set'; value: string }
+  | Cast<{ type: 'set'; value: string }>
   | Call<{ type: 'submit' }, Outcome>
 
 const signup: Proc<State, Msg, void> = async function* (self) {
@@ -38,8 +38,8 @@ export function run(host: Element): Disposable {
   const outcome = cell('awaiting submit')
 
   const submit = async (): Promise<void> => {
-    const res = await form.ask({ type: 'submit' })      // res is typed Outcome
-    outcome.send(res.ok ? 'signed up' : res.error)
+    const res = await form.call({ type: 'submit' })      // res is typed Outcome
+    outcome.cast(res.ok ? 'signed up' : res.error)
   }
 
   return mount(host, div({ class: 'stack' },
@@ -47,7 +47,7 @@ export function run(host: Element): Disposable {
       input({
         type: 'email',
         placeholder: 'you@example.com',
-        oninput: (e: Event) => form.send({ type: 'set', value: (e.target as HTMLInputElement).value }),
+        oninput: (e: Event) => form.cast({ type: 'set', value: (e.target as HTMLInputElement).value }),
       }),
       button({ onclick: () => void submit(), disabled: () => form().submitting }, 'Sign up')),
     span({ class: 'readout' }, () => (form().submitting ? 'submitting…' : outcome()))))

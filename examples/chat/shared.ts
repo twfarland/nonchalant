@@ -2,11 +2,11 @@
 // it; every tab looks it up by name. The process is just a reducer over a
 // mailbox — it has no idea it's a chat server.
 
-import type { Definition, Proc } from '@nonchalant/core'
+import type { Cast, Definition, Proc } from '@nonchalant/core'
 
 export type ChatLine = { id: number; from: string; text: string }
 export type RoomState = { lines: ChatLine[] }
-export type RoomMsg = { type: 'post'; from: string; text: string }
+export type RoomMsg = Cast<{ type: 'post'; from: string; text: string }>
 
 export const room: Proc<RoomState, RoomMsg, { name: string }> = async function* (self) {
   let lines: ChatLine[] = []

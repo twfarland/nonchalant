@@ -1,6 +1,6 @@
 # Wire conformance vectors
 
-These JSON files are the language-agnostic contract for protocol rev 2
+These JSON files are the language-agnostic contract for protocol rev 3
 (docs/PROTOCOL.md). A host implementation in any language certifies by running
 them; the reference (Node) implementation runs them in CI
 (`packages/wire/test/vectors.test.ts`). A BEAM host certifies against the

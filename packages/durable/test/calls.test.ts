@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { spawn } from '@nonchalant/core'
-import type { Call } from '@nonchalant/core'
+import type { Call, Cast } from '@nonchalant/core'
 import { durable, memoryStore, type DurableProc, type Store } from '../src/index.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
@@ -15,7 +15,7 @@ const settle = async (): Promise<void> => {
 
 type Vault = { reserved: number; receipts: string[] }
 type VaultMsg =
-  | { type: 'clear' }
+  | Cast<{ type: 'clear' }>
   | Call<{ type: 'reserve'; amount: number; callId: string }, string>
 
 let worked = 0
@@ -48,8 +48,8 @@ describe('durable calls', () => {
     const store = memoryStore()
     const p = open(store, 'v1')
 
-    const first = await p.ask({ type: 'reserve', amount: 10, callId: 'order-7' })
-    const second = await p.ask({ type: 'reserve', amount: 10, callId: 'order-7' })
+    const first = await p.call({ type: 'reserve', amount: 10, callId: 'order-7' })
+    const second = await p.call({ type: 'reserve', amount: 10, callId: 'order-7' })
     await settle()
 
     expect(first).toBe('receipt-1')
@@ -63,8 +63,8 @@ describe('durable calls', () => {
     worked = 0
     const store = memoryStore()
     const p = open(store, 'v2')
-    expect(await p.ask({ type: 'reserve', amount: 1, callId: 'a' })).toBe('receipt-1')
-    expect(await p.ask({ type: 'reserve', amount: 1, callId: 'b' })).toBe('receipt-2')
+    expect(await p.call({ type: 'reserve', amount: 1, callId: 'a' })).toBe('receipt-1')
+    expect(await p.call({ type: 'reserve', amount: 1, callId: 'b' })).toBe('receipt-2')
     await settle() // a reply lands before the yield that follows it
     expect(p()?.reserved).toBe(2)
     p[Symbol.dispose]()
@@ -76,8 +76,8 @@ describe('durable calls', () => {
     const p = open(store, 'v3')
 
     const both = await Promise.all([
-      p.ask({ type: 'reserve', amount: 4, callId: 'same' }),
-      p.ask({ type: 'reserve', amount: 4, callId: 'same' }),
+      p.call({ type: 'reserve', amount: 4, callId: 'same' }),
+      p.call({ type: 'reserve', amount: 4, callId: 'same' }),
     ])
     await settle()
 
@@ -94,8 +94,8 @@ describe('durable calls', () => {
     const brittle: Store = { ...store, commit: async () => { throw new Error('CRASH') } }
 
     const dying = spawn(durable(vault, { store: brittle, key: (a: { id: string }) => a.id }), { id: 'v4' })
-    expect(await dying.ask({ type: 'reserve', amount: 3, callId: 'order-9' })).toBe('receipt-1')
-    dying.send({ type: 'clear' }) // provokes the commit, which crashes the process
+    expect(await dying.call({ type: 'reserve', amount: 3, callId: 'order-9' })).toBe('receipt-1')
+    dying.cast({ type: 'clear' }) // provokes the commit, which crashes the process
     await settle()
     expect(dying.error).toBeInstanceOf(Error)
     dying[Symbol.dispose]()
@@ -103,7 +103,7 @@ describe('durable calls', () => {
     const back = open(store, 'v4')
     await settle()
     expect(worked).toBe(1) // the unacknowledged call was answered already: not handled again
-    expect(await back.ask({ type: 'reserve', amount: 3, callId: 'order-9' })).toBe('receipt-1')
+    expect(await back.call({ type: 'reserve', amount: 3, callId: 'order-9' })).toBe('receipt-1')
     expect(worked).toBe(1)
     back[Symbol.dispose]()
   })
@@ -112,16 +112,16 @@ describe('durable calls', () => {
 // ---------- the caller's half ----------
 
 type Job = { stage: string; receipt: string }
-type JobMsg = { type: 'go'; amount: number }
+type JobMsg = Cast<{ type: 'go'; amount: number }>
 
 const caller = (bank: ReturnType<typeof open>, onStep: () => void): DurableProc<Job, JobMsg, { id: string }> =>
   async function* (self, _args, d) {
     let s: Job = d.restored ?? { stage: 'new', receipt: '' }
     yield s
     for await (const msg of self) {
-      // one journaled call: the id is derived, so a replay asks with the same one
+      // one journaled call: the id is derived, so a replay calls with the same one
       const receipt = await d.call('reserve', (callId) =>
-        bank.ask({ type: 'reserve', amount: msg.amount, callId }))
+        bank.call({ type: 'reserve', amount: msg.amount, callId }))
       onStep()
       s = { stage: 'reserved', receipt }
       yield s
@@ -149,7 +149,7 @@ describe('d.call across two durable processes', () => {
       durable(caller(bank, () => steps++), { store: brittle, key: (a: { id: string }) => a.id }),
       { id: 'job' },
     )
-    first.send({ type: 'go', amount: 5 })
+    first.cast({ type: 'go', amount: 5 })
     await settle()
     expect(first()?.receipt).toBe('receipt-1')
     expect(worked).toBe(1)

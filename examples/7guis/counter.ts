@@ -8,4 +8,4 @@ const count = cell(0)
 
 mount(document.getElementById('app')!, div({ class: 'card' },
   input({ readonly: true, value: () => String(count()) }),
-  button({ onclick: () => count.send(count() + 1) }, 'Count')))
+  button({ onclick: () => count.cast(count() + 1) }, 'Count')))

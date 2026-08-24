@@ -11,7 +11,7 @@
 // `d.call`. That is why killing the supervisor mid-pipeline does not re-run the
 // research: the delegated call is journaled on both sides.
 
-import type { Call, Proc, Process } from '@nonchalant/core'
+import type { Call, Cast, Proc, Process } from '@nonchalant/core'
 import type { DurableProc } from '@nonchalant/durable'
 import type { Model } from '../agent/llm.ts'
 import type { ApprovalMsg, ApprovalState, SearchMsg, ToolState } from '../agent/tools.ts'
@@ -20,12 +20,12 @@ import type { ApprovalMsg, ApprovalState, SearchMsg, ToolState } from '../agent/
 
 export type BudgetState = { spent: number; limit: number; refused: number }
 export type BudgetMsg =
-  | { type: 'reset'; limit: number }
+  | Cast<{ type: 'reset'; limit: number }>
   | Call<{ type: 'spend'; tokens: number }, { ok: boolean; left: number }>
 
 /**
  * A live meter, deliberately not durable: it is a resource limit for this
- * deployment, not a record of what happened. Callers wrap their `ask` in
+ * deployment, not a record of what happened. Callers wrap their `call` in
  * `d.step`, so a replay does not spend twice.
  */
 export const budget = (limit: number): Proc<BudgetState, BudgetMsg, void> =>
@@ -69,9 +69,9 @@ export const researcher: DurableProc<WorkerState, ResearchMsg, Shared & { id: st
     let s: WorkerState = d.restored ?? { runs: 0, last: '' }
     yield s
     for await (const msg of self) {
-      const allowance = await d.step('budget', () => meter.ask({ type: 'spend', tokens: 120 }))
+      const allowance = await d.step('budget', () => meter.call({ type: 'spend', tokens: 120 }))
       const notes = allowance.ok
-        ? await d.step('search', () => search.ask({ type: 'search', q: msg.topic }))
+        ? await d.step('search', () => search.call({ type: 'search', q: msg.topic }))
         : OUT_OF_BUDGET
       s = { runs: s.runs + 1, last: notes }
       msg.reply(notes)
@@ -86,7 +86,7 @@ export const writer: DurableProc<WorkerState, WriteMsg, Shared & { id: string }>
     let s: WorkerState = d.restored ?? { runs: 0, last: '' }
     yield s
     for await (const msg of self) {
-      const allowance = await d.step('budget', () => meter.ask({ type: 'spend', tokens: 200 }))
+      const allowance = await d.step('budget', () => meter.call({ type: 'spend', tokens: 200 }))
       const draft = allowance.ok
         ? await d.step('compose', () => model.compose(msg.topic, msg.notes, { signal: self.signal }))
         : OUT_OF_BUDGET
@@ -107,7 +107,7 @@ export type Pipeline = {
   draft: string
 }
 
-export type PipelineMsg = { type: 'brief'; topic: string }
+export type PipelineMsg = Cast<{ type: 'brief'; topic: string }>
 
 export interface Crew {
   researcher: Process<WorkerState | undefined, ResearchMsg>
@@ -127,9 +127,9 @@ export const supervisor: DurableProc<Pipeline, PipelineMsg, Crew & { id: string 
       yield s
 
       // delegation: the tool is another agent, and the call is journaled on
-      // both sides — a replay asks with the same id and gets the same answer
+      // both sides — a replay calls with the same id and gets the same answer
       const notes = await d.call('research', (callId) =>
-        crew.researcher.ask({ type: 'research', topic: msg.topic, callId }))
+        crew.researcher.call({ type: 'research', topic: msg.topic, callId }))
       if (notes === OUT_OF_BUDGET) {
         s = { ...s, stage: 'broke', notes }
         yield s
@@ -140,7 +140,7 @@ export const supervisor: DurableProc<Pipeline, PipelineMsg, Crew & { id: string 
       s = { ...s, stage: 'writing', notes }
       yield s
       const draft = await d.call('write', (callId) =>
-        crew.writer.ask({ type: 'write', topic: msg.topic, notes, callId }))
+        crew.writer.call({ type: 'write', topic: msg.topic, notes, callId }))
       if (draft === OUT_OF_BUDGET) {
         s = { ...s, stage: 'broke', draft }
         yield s
@@ -150,7 +150,7 @@ export const supervisor: DurableProc<Pipeline, PipelineMsg, Crew & { id: string 
       // a person is a step like any other: journaled, so a restart does not ask twice
       s = { ...s, stage: 'approving', draft }
       yield s
-      const ok = await d.step('approve', () => crew.approvals.ask({ type: 'request', tool: 'publish', args: msg.topic }))
+      const ok = await d.step('approve', () => crew.approvals.call({ type: 'request', tool: 'publish', args: msg.topic }))
 
       s = { ...s, stage: ok ? 'published' : 'held' }
       yield s

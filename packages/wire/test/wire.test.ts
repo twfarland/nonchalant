@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import fc from 'fast-check'
 import { define, effect, registry } from '@nonchalant/core'
-import type { Call, Definition, Json, Patch, Proc } from '@nonchalant/core'
+import type { Call, Cast, Definition, Json, Patch, Proc } from '@nonchalant/core'
 import { connect, WireError } from '../src/client.ts'
 import { expose } from '../src/host.ts'
 import { decodeClient, decodeHost, encode, type ClientMsg, type HostMsg } from '../src/protocol.ts'
@@ -16,9 +16,9 @@ const until = async (cond: () => boolean): Promise<void> => {
 
 type CartState = { items: { done: boolean }[]; total: number }
 type CartMsg =
-  | { type: 'toggle'; i: number }
-  | { type: 'total'; n: number }
-  | { type: 'boom' }
+  | Cast<{ type: 'toggle'; i: number }>
+  | Cast<{ type: 'total'; n: number }>
+  | Cast<{ type: 'boom' }>
   | Call<{ type: 'count' }, number>
 
 const cart: Proc<CartState, CartMsg, void> = async function* (self) {
@@ -86,7 +86,7 @@ const ref = fc.string({ maxLength: 8 })
 const clientMsg: fc.Arbitrary<ClientMsg> = fc.oneof(
   fc.tuple(ref, fc.string({ maxLength: 8 }), fc.option(json, { nil: undefined })).map(([r, name, args]) =>
     args === undefined ? { op: 'lookup' as const, ref: r, name } : { op: 'lookup' as const, ref: r, name, args }),
-  fc.tuple(ref, json).map(([r, msg]) => ({ op: 'send' as const, ref: r, msg })),
+  fc.tuple(ref, json).map(([r, msg]) => ({ op: 'cast' as const, ref: r, msg })),
   fc.tuple(ref, fc.integer(), json).map(([r, id, msg]) => ({ op: 'call' as const, ref: r, id, msg })),
   ref.map((r) => ({ op: 'exit' as const, ref: r })),
 )
@@ -105,7 +105,7 @@ const wellFormed = (msg: ClientMsg | HostMsg | null): boolean => {
   if (typeof msg.ref !== 'string') return false
   switch (msg.op) {
     case 'lookup': return typeof msg.name === 'string'
-    case 'send': return 'msg' in msg
+    case 'cast': return 'msg' in msg
     case 'call': return typeof msg.id === 'number' && 'msg' in msg
     case 'exit': return true
     case 'yield':
@@ -217,12 +217,12 @@ describe('codec', () => {
 })
 
 describe('connect / expose end to end', () => {
-  it('lookup arrives as a full snapshot; sends round-trip', async () => {
+  it('lookup arrives as a full snapshot; casts round-trip', async () => {
     const { conn, teardown } = setup()
     const rcart = conn.lookup('cart')
     await until(() => rcart() !== undefined)
     expect(rcart()).toStrictEqual({ items: [{ done: false }, { done: false }, { done: false }], total: 0 })
-    rcart.send({ type: 'total', n: 9 })
+    rcart.cast({ type: 'total', n: 9 })
     await until(() => rcart().total === 9)
     teardown()
   })
@@ -244,23 +244,23 @@ describe('connect / expose end to end', () => {
       effect(() => { itemRuns++; void rcart()?.items[1]?.done }),
     ]
     expect([totalRuns, itemRuns]).toEqual([1, 1])
-    rcart.send({ type: 'total', n: 5 })
+    rcart.cast({ type: 'total', n: 5 })
     await until(() => rcart().total === 5)
     expect([totalRuns, itemRuns]).toEqual([2, 1])
-    rcart.send({ type: 'toggle', i: 1 })
+    rcart.cast({ type: 'toggle', i: 1 })
     await until(() => rcart().items[1]!.done)
     expect([totalRuns, itemRuns]).toEqual([2, 2])
     for (const stop of stops) stop()
     teardown()
   })
 
-  it('ask round-trips as call/reply; a crash rejects pending asks and reads go stale', async () => {
+  it('a call round-trips as call/reply; a crash rejects pending calls and reads go stale', async () => {
     const { conn, teardown } = setup()
     const rcart = conn.lookup('cart')
     await until(() => rcart() !== undefined)
-    await expect(rcart.ask({ type: 'count' })).resolves.toBe(3)
-    rcart.send({ type: 'boom' })
-    const pending = rcart.ask({ type: 'count' })
+    await expect(rcart.call({ type: 'count' })).resolves.toBe(3)
+    rcart.cast({ type: 'boom' })
+    const pending = rcart.call({ type: 'count' })
     await expect(pending).rejects.toBeInstanceOf(WireError)
     await until(() => rcart.stale)
     expect(rcart()).toStrictEqual({ items: [{ done: false }, { done: false }, { done: false }], total: 0 }) // last value retained
@@ -293,13 +293,13 @@ describe('connect / expose end to end', () => {
     stop()
   })
 
-  it('an ask made while disconnected rejects immediately instead of hanging', async () => {
+  it('a call made while disconnected rejects immediately instead of hanging', async () => {
     const { link, conn, teardown } = setup()
     const rcart = conn.lookup('cart')
     await until(() => rcart() !== undefined)
     link.disconnect()
     await until(() => rcart.stale)
-    await expect(rcart.ask({ type: 'count' })).rejects.toBeInstanceOf(WireError)
+    await expect(rcart.call({ type: 'count' })).rejects.toBeInstanceOf(WireError)
     teardown()
   })
 
@@ -320,7 +320,7 @@ describe('connect / expose end to end', () => {
 
     // the host state moves while we are partitioned
     const hostCart = reg.lookup('cart')
-    hostCart.send({ type: 'total', n: 42 })
+    hostCart.cast({ type: 'total', n: 42 })
     await tick()
 
     const itemRunsBefore = itemRuns
@@ -434,9 +434,9 @@ describe('port transport', () => {
 
     const rcart = conn.lookup('cart')
     await until(() => rcart() !== undefined)
-    rcart.send({ type: 'total', n: 7 })
+    rcart.cast({ type: 'total', n: 7 })
     await until(() => rcart().total === 7)
-    expect(await rcart.ask({ type: 'count' })).toBe(3)
+    expect(await rcart.call({ type: 'count' })).toBe(3)
 
     conn.close()
     stop()
@@ -483,7 +483,7 @@ describe('broadcast channel transport', () => {
       const conn = connect<Shop>(clientT)
       const rcart = conn.lookup('cart')
       await until(() => rcart() !== undefined)
-      rcart.send({ type: 'total', n: 7 })
+      rcart.cast({ type: 'total', n: 7 })
       await until(() => rcart().total === 7)
       conn.close()
       stop()
@@ -521,8 +521,8 @@ describe('convergence', () => {
 
         try {
           for (const cmd of script) {
-            if (cmd.do === 'toggle') remote.send({ type: 'toggle', i: cmd.i })
-            else if (cmd.do === 'total') remote.send({ type: 'total', n: cmd.n })
+            if (cmd.do === 'toggle') remote.cast({ type: 'toggle', i: cmd.i })
+            else if (cmd.do === 'total') remote.cast({ type: 'total', n: cmd.n })
             else if (cmd.do === 'partition' && connected) { link.disconnect(); connected = false }
             else if (cmd.do === 'heal' && !connected) { link.reconnect(); connected = true }
             else await link.settle()

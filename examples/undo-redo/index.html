@@ -34,7 +34,7 @@
         current = future.pop() <span class="k">as</span> T
       } <span class="k">else</span> {
         past.push(current)
-        inner.send(msg <span class="k">as</span> In)
+        inner.cast(msg <span class="k">as</span> In)
         current = (<span class="k">await</span> it.next()).value <span class="k">as</span> T
       }
       <span class="k">yield</span> current

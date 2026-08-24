@@ -43,20 +43,20 @@ export function run(host: Element): Disposable {
   let frame = 0
   let last = 0
   const tick = (t: number): void => {
-    if (last !== 0) meter.send(t - last)
+    if (last !== 0) meter.cast(t - last)
     last = t
     frame = requestAnimationFrame(tick)
   }
 
   const start = (): void => {
-    grinder.send({ type: 'start' })
+    grinder.cast({ type: 'start' })
     if (frame === 0) {
       last = 0
       frame = requestAnimationFrame(tick)
     }
   }
   const stop = (): void => {
-    grinder.send({ type: 'stop' })
+    grinder.cast({ type: 'stop' })
     cancelAnimationFrame(frame)
     frame = 0
   }

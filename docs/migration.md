@@ -50,14 +50,14 @@ thunk such as `() => cart().total`.
 | a LiveView process | the nearest counterpart: state, messages, and a mailbox, but without BEAM isolation |
 | `handle_event` | a message arriving in `for await (msg of self)` |
 | assigns diffing → HTML over the wire | state diffing → **data patches** over the wire, never HTML |
-| `phx-click` | `onclick: () => proc.send(…)`; the handler may also remain local |
+| `phx-click` | `onclick: () => proc.cast(…)`; the handler may also remain local |
 | reconnect and re-render | re-lookup + full state, diffed against what the client kept |
 | PubSub | a shared named process that both sides look up |
 
-Some Erlang vocabulary transfers: `send` resembles a cast, `ask` resembles a
-call, `restart: 'on-crash'` restarts from the init args, and owned children
-are disposed with their parent. This remains cooperative JavaScript, not an
-OTP supervision system.
+The Erlang vocabulary transfers directly: `cast` is fire-and-forget, `call`
+waits for a reply, `restart: 'on-crash'` restarts from the init args, and owned
+children are disposed with their parent. This remains cooperative JavaScript,
+not an OTP supervision system.
 
 The wire carries state rather than rendered templates. The client handles DOM,
 canvas, or other rendering, local interactions require no network round trip,
@@ -71,7 +71,7 @@ not provide process isolation, escalation hierarchies, or OTP supervision trees.
 ## A migration path that works
 
 1. Port state first: processes with typed message unions, running under your
-   existing UI via plain reads and `send`.
+   existing UI via plain reads and `cast`.
 2. Move views over gradually. `mount` can manage a single island.
 3. Route shared or cached things through a registry as you touch them.
 4. Add the wire last. The registry substitution is small; authentication,

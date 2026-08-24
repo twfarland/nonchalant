@@ -54,7 +54,7 @@ describe('the agent loop', () => {
   it('reaches for a tool, then answers from what came back', async () => {
     const kit = tools()
     const p = run(memoryStore(), 'a1', stubModel({ latency: 4 }), kit)
-    p.send({ type: 'ask', question: 'what is a process?' })
+    p.cast({ type: 'ask', question: 'what is a process?' })
 
     await waitFor(() => p()?.status === 'done', 'an answer')
     const state = p()!
@@ -70,7 +70,7 @@ describe('the agent loop', () => {
   it('does arithmetic through the calculator process', async () => {
     const kit = tools()
     const p = run(memoryStore(), 'a2', stubModel({ latency: 4 }), kit)
-    p.send({ type: 'ask', question: '2 + 3 * 4' })
+    p.cast({ type: 'ask', question: '2 + 3 * 4' })
 
     await waitFor(() => p()?.status === 'done', 'an answer')
     expect(p()!.steps[1]).toMatchObject({ name: 'calc', result: 'calc says: 2 + 3 * 4 = 14' })
@@ -82,16 +82,16 @@ describe('the agent loop', () => {
   it('parks on the approval tool until a person decides', async () => {
     const kit = tools()
     const p = run(memoryStore(), 'a3', stubModel({ latency: 4 }), kit)
-    p.send({ type: 'ask', question: 'please refund 20' })
+    p.cast({ type: 'ask', question: 'please refund 20' })
 
     await waitFor(() => p()?.status === 'waiting', 'the approval request')
     expect(kit.approvals()?.pending).toStrictEqual([{ tool: 'refund', args: '20' }])
 
-    // nothing moves while the person thinks: the ask is parked inside the tool
+    // nothing moves while the person thinks: the call is parked inside the tool
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(p()?.status).toBe('waiting')
 
-    kit.approvals.send({ type: 'decide', ok: false })
+    kit.approvals.cast({ type: 'decide', ok: false })
     await waitFor(() => p()?.status === 'done', 'the run to finish')
     expect(p()!.steps[1]).toMatchObject({ name: 'refund', result: 'refund of 20 refused' })
     expect(kit.approvals()?.pending).toStrictEqual([])
@@ -103,10 +103,10 @@ describe('the agent loop', () => {
   it('picks the one tool the question needs, not every tool it has', async () => {
     const kit = tools()
     const p = run(memoryStore(), 'a6', stubModel({ latency: 4 }), kit)
-    p.send({ type: 'ask', question: 'please refund 20' })
+    p.cast({ type: 'ask', question: 'please refund 20' })
 
     await waitFor(() => p()?.status === 'waiting', 'the approval request')
-    kit.approvals.send({ type: 'decide', ok: true })
+    kit.approvals.cast({ type: 'decide', ok: true })
     await waitFor(() => p()?.status === 'done', 'the answer')
 
     expect(p()!.steps.map((s) => s.kind)).toStrictEqual(['question', 'tool', 'answer'])
@@ -124,7 +124,7 @@ describe('the agent loop', () => {
     const model = counted()
 
     const first = run(store, 'a4', model, kit)
-    first.send({ type: 'ask', question: 'what is a patch?' })
+    first.cast({ type: 'ask', question: 'what is a patch?' })
     await waitFor(() => first()?.status === 'calling', 'the tool call')
     first[Symbol.dispose]() // the machine goes away mid-question
     await new Promise((resolve) => setTimeout(resolve, 20))
@@ -149,7 +149,7 @@ describe('the agent loop', () => {
     const model = counted()
 
     const first = run(store, 'a5', model, kit)
-    first.send({ type: 'ask', question: 'what is a patch?' })
+    first.cast({ type: 'ask', question: 'what is a patch?' })
     await waitFor(() => first()?.status === 'answering', 'the answer to start')
     first[Symbol.dispose]() // every effect of this message has landed by now
     await new Promise((resolve) => setTimeout(resolve, 20))

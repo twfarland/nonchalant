@@ -1,19 +1,22 @@
 // The Process type surface, verified under tsc --strict (TS 7.0.2).
 // One noun, two faces: Process (outside) and Self (inside the generator).
 
+/** A one-way message. The `reply?: never` marker is what keeps a cast out of `Calls`. */
+export type Cast<Msg> = Msg & { readonly reply?: never }
+
 /** A message that expects an answer. Inside the generator it arrives with `reply`. */
 export type Call<Req, Res> = Req & { readonly reply: (res: Res) => void }
 
-export type Requests<In> = Extract<In, { reply: (res: never) => void }>
-export type Plain<In> = Exclude<In, { reply: (res: never) => void }>
+export type Calls<In> = Extract<In, { reply: (res: never) => void }>
+export type Casts<In> = Exclude<In, { reply: (res: never) => void }>
 export type Res<M> = M extends { reply: (res: infer R) => void } ? R : never
 type Request<M> = M extends unknown ? Omit<M, 'reply'> : never
-type MatchingRequest<In, Req> = Request<Requests<In>> extends infer R
+type MatchingRequest<In, Req> = Request<Calls<In>> extends infer R
   ? R extends object
     ? Req extends R ? R : never
     : never
   : never
-type ReplyFor<In, Req> = Requests<In> extends infer R
+type ReplyFor<In, Req> = Calls<In> extends infer R
   ? R extends { reply: (res: never) => void }
     ? Req extends Omit<R, 'reply'> ? Res<R> : never
     : never
@@ -37,11 +40,11 @@ export interface ProcessBase<T> {
 }
 
 export type Process<T, In = never> = ProcessBase<T> &
-  ([Plain<In>] extends [never] ? {} : { send(msg: Plain<In>): void }) &
-  ([Requests<In>] extends [never]
+  ([Casts<In>] extends [never] ? {} : { cast(msg: Casts<In>): void }) &
+  ([Calls<In>] extends [never]
     ? {}
     : {
-        ask<Req extends Request<Requests<In>>>(
+        call<Req extends Request<Calls<In>>>(
           msg: Req & Record<Exclude<keyof Req, keyof MatchingRequest<In, Req>>, never>,
         ): Promise<ReplyFor<In, Req>>
       })
@@ -52,8 +55,8 @@ export interface Self<In> extends AsyncIterable<In> {
   readonly signal: AbortSignal
   /** Skip to the newest queued message, dropping intermediate queued values. */
   latest(): AsyncIterable<In>
-  /** Post to own inbox — the actor self-send, for tasks reporting back. */
-  send(msg: In): void
+  /** Post to own inbox — the actor self-cast, for tasks reporting back. */
+  cast(msg: In): void
 }
 
 /** The generator shape `spawn` runs. Yield JSON-shaped plain data: non-plain

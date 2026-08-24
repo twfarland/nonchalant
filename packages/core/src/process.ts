@@ -5,16 +5,16 @@
 //
 // Lifecycle:
 //   - Self: FIFO sequential mailbox; `latest()` drops the queue and skips to
-//     the newest message; `signal` aborts per instance; `send` is self-send.
+//     the newest message; `signal` aborts per instance; `cast` is the self-cast.
 //   - Ownership: spawns during the synchronous window of a process resumption
 //     attach to that process and die with it. Dispose order: mailbox closes,
 //     `finally` blocks run, owned children die — in that order.
-//   - Crash: readers keep the last value with `stale: true`; pending asks
+//   - Crash: readers keep the last value with `stale: true`; pending calls
 //     REJECT; queued casts survive into the restarted instance and replay.
 //     `restart: 'on-crash'` re-runs the generator from its init args (the
 //     recovery state, Erlang position) up to `maxRestarts` times.
 //   - Bounded mailbox (`mailbox: n`): overflow drops the oldest message
-//     (a dropped ask rejects), with a one-shot dev warning.
+//     (a dropped call rejects), with a one-shot dev warning.
 
 import { source, effect, untracked } from './graph.ts'
 import type { Json } from './reconcile.ts'
@@ -72,7 +72,7 @@ class Mailbox<In> {
     }
     this.queue.push(msg)
     // a waiting latest() taker gets the newest of the burst, not the first:
-    // defer delivery one microtask so same-tick sends can supersede
+    // defer delivery one microtask so same-tick casts can supersede
     if (head !== undefined) this.scheduleDrain()
     const bound = this.hooks.bound
     if (bound !== undefined && this.queue.length > bound) {
@@ -126,9 +126,9 @@ class Mailbox<In> {
   }
 }
 
-const selfFor = <In>(mailbox: Mailbox<In>, signal: AbortSignal, send: (msg: In) => void): Self<In> => ({
+const selfFor = <In>(mailbox: Mailbox<In>, signal: AbortSignal, cast: (msg: In) => void): Self<In> => ({
   signal,
-  send,
+  cast,
   [Symbol.asyncIterator]: (): AsyncIterator<In> => ({ next: () => mailbox.take(false) }),
   latest: (): AsyncIterable<In> => ({
     [Symbol.asyncIterator]: (): AsyncIterator<In> => ({ next: () => mailbox.take(true) }),
@@ -232,19 +232,19 @@ export function spawnProcess<T, In, A>(
   let controller = new AbortController()
   let restarts = 0
 
-  const pendingAsks = new Map<object, (err: unknown) => void>()
+  const pendingCalls = new Map<object, (err: unknown) => void>()
   const rejectAsks = (err: unknown): void => {
-    for (const reject of pendingAsks.values()) reject(err)
-    pendingAsks.clear()
+    for (const reject of pendingCalls.values()) reject(err)
+    pendingCalls.clear()
   }
 
   const mailbox = new Mailbox<In>({
     ...(opts?.mailbox !== undefined ? { bound: opts.mailbox } : {}),
     onDrop: (msg) => {
-      const reject = pendingAsks.get(msg as object)
+      const reject = pendingCalls.get(msg as object)
       if (reject !== undefined) {
-        pendingAsks.delete(msg as object)
-        reject(new Error('nonchalant: ask dropped — mailbox overflow or process ended'))
+        pendingCalls.delete(msg as object)
+        reject(new Error('nonchalant: call dropped — mailbox overflow or process ended'))
       }
     },
     onDeliver: () => setMeta({ pending: true }),
@@ -346,7 +346,7 @@ export function spawnProcess<T, In, A>(
     }
     phase = 'disposed'
     if (parent !== null) parent.children.delete(core)
-    mailbox.close() // 1. mailbox closes: body's `for await` ends, queued asks reject
+    mailbox.close() // 1. mailbox closes: body's `for await` ends, queued calls reject
     controller.abort()
     const g = gen
     if (g !== null) void step(() => g.return(undefined as never)).catch(() => {}) // 2. finally blocks run; 3. drive() then disposes children
@@ -415,20 +415,20 @@ export function spawnProcess<T, In, A>(
     }
   }
 
-  const ask = (msg: Record<string, unknown>): Promise<unknown> =>
+  const call = (msg: Record<string, unknown>): Promise<unknown> =>
     new Promise((resolve, reject) => {
       if (phase !== 'running') {
-        reject(new Error(`nonchalant: ask on ${phase} process`))
+        reject(new Error(`nonchalant: call on ${phase} process`))
         return
       }
       const full = {
         ...msg,
         reply: (res: unknown): void => {
-          pendingAsks.delete(full)
+          pendingCalls.delete(full)
           resolve(res)
         },
       }
-      pendingAsks.set(full, reject)
+      pendingCalls.set(full, reject)
       mailbox.push(full as In)
     })
 
@@ -443,8 +443,8 @@ export function spawnProcess<T, In, A>(
     },
   })
   const p = read as unknown as Record<PropertyKey, unknown>
-  p['send'] = (msg: In): void => mailbox.push(msg)
-  p['ask'] = ask
+  p['cast'] = (msg: In): void => mailbox.push(msg)
+  p['call'] = call
   p[Symbol.asyncIterator] = asyncIterator
   p[Symbol.dispose] = disposeProcess
   p[Symbol.asyncDispose] = async (): Promise<void> => {

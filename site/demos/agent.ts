@@ -37,11 +37,11 @@ export function run(host: Element): Disposable {
 
   const draft = cell('what is a patch?')
   const ask = (): void => {
-    if (draft().trim() !== '') machine().send({ type: 'ask', question: draft() })
+    if (draft().trim() !== '') machine().cast({ type: 'ask', question: draft() })
   }
   const kill = (): void => {
     brain.evict('agent', { id: 'demo' })
-    generation.send(generation() + 1)
+    generation.cast(generation() + 1)
   }
   const running = (): boolean => {
     const status = state()?.status
@@ -71,15 +71,15 @@ export function run(host: Element): Disposable {
     if (asking === undefined) return null
     return div({ class: 'row gate' },
       span({}, `approve ${asking.tool} ${asking.args}?`),
-      button({ onclick: () => queue.send({ type: 'decide', ok: true }) }, 'yes'),
-      button({ onclick: () => queue.send({ type: 'decide', ok: false }) }, 'no'))
+      button({ onclick: () => queue.cast({ type: 'decide', ok: true }) }, 'yes'),
+      button({ onclick: () => queue.cast({ type: 'decide', ok: false }) }, 'no'))
   }
 
   return mount(host, div({ class: 'stack' },
     div({ class: 'row' },
       input({
         type: 'text', value: draft, size: 34,
-        oninput: (e: Event) => draft.send((e.target as HTMLInputElement).value),
+        oninput: (e: Event) => draft.cast((e.target as HTMLInputElement).value),
         onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') ask() },
       }),
       button({ onclick: ask, disabled: running }, 'ask'),

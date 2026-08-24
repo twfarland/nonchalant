@@ -9,7 +9,7 @@ running thing with state, a mailbox, a lifetime, and children.
 ```mermaid
 flowchart TD
     subgraph handle["the handle (outside)"]
-        READ["read()<br/>+ pending / stale / error<br/>+ send / ask / iterate / dispose"]
+        READ["read()<br/>+ pending / stale / error<br/>+ cast / call / iterate / dispose"]
     end
     subgraph runtime["the runtime"]
         MB["Mailbox&lt;In&gt;<br/>FIFO queue + parked takers"]
@@ -20,7 +20,7 @@ flowchart TD
     end
     GEN[["your async generator"]]
 
-    READ -->|send / ask| MB
+    READ -->|cast / call| MB
     MB -->|for await| GEN
     DRIVE -->|g.next| GEN
     GEN -->|yield| DRIVE
@@ -57,7 +57,7 @@ FIFO queue plus a list of parked takers. Delivery rules:
 
 - A push with a **non-`latest` taker parked** hands the message over directly.
 - A push with a **`latest` taker parked** queues it and schedules a microtask
-  drain, so same-tick sends can supersede each other before the taker sees
+  drain, so same-tick casts can supersede each other before the taker sees
   one. Without that deferral, `latest()` would hand over the first message of a
   burst instead of the newest.
 - `take(latest)` with a non-empty queue either shifts one message or drains to
@@ -68,8 +68,8 @@ FIFO queue plus a list of parked takers. Delivery rules:
 and routes the dropped message through `onDrop`. Drop-oldest, not
 drop-newest, ensuring that the latest input survives sustained overload.
 
-`onDrop` is also how a dropped `ask` rejects rather than hanging forever: every
-in-flight ask is registered in `pendingAsks` keyed by its message object, so
+`onDrop` is also how a dropped `call` rejects rather than hanging forever: every
+in-flight call is registered in `pendingCalls` keyed by its message object, so
 dropping that object rejects its promise.
 
 `close()` resolves parked takers as done and drops the queue, ending the
@@ -97,14 +97,14 @@ over**, and its children go with it. That is why a view process that owns state
 must idle on its mailbox instead of returning.
 
 On a throw (and only if not already disposed): record the error, abort the
-signal, reject pending asks, and dispose the crashed instance's children. Then
+signal, reject pending calls, and dispose the crashed instance's children. Then
 either restart (`restarts < maxRestarts`, default 3) or settle as `crashed`
 with `stale: true, errored: true`. Readers keep the last good value throughout
 because a crash makes the value stale rather than empty.
 
 Restart is the Erlang position: re-run from the **init args**, not from the
 crashed state. The mailbox survives, so queued casts replay into the fresh
-instance. Pending asks do not replay because they already rejected.
+instance. Pending calls do not replay because they already rejected.
 
 ## Ownership
 
@@ -147,7 +147,7 @@ sequenceDiagram
     U->>P: dispose()
     P->>P: phase = disposed, detach from parent
     P->>P: 1. mailbox.close()
-    Note over P,G: the body's for-await ends,<br/>queued asks reject
+    Note over P,G: the body's for-await ends,<br/>queued calls reject
     P->>P: 2. controller.abort()
     P->>G: 3. g.return() inside step()
     Note over G: finally blocks run
@@ -177,7 +177,7 @@ The handle *is* the read function, with everything else installed onto it:
 ```ts
 const read = (): T | undefined => src() as unknown as T | undefined
 Object.defineProperties(read, { pending: …, stale: …, error: … })
-p['send'] = …; p['ask'] = …
+p['cast'] = …; p['call'] = …
 p[Symbol.asyncIterator] = …; p[Symbol.dispose] = …; p[Symbol.asyncDispose] = …
 ```
 
@@ -185,9 +185,9 @@ Calling the handle is a source read, so it is tracked inside a derive, effect,
 or binding and a snapshot read anywhere else. The process handle
 inherits path precision for free from [graph.ts](graph.md).
 
-`ask(msg)` builds `{ ...msg, reply }`, registers the rejector under that exact
+`call(msg)` builds `{ ...msg, reply }`, registers the rejector under that exact
 object, and pushes it. The generator sees a message carrying `reply`;
-calling it deletes the entry and resolves. Asks on a non-running process reject
+calling it deletes the entry and resolves. Calls on a non-running process reject
 immediately.
 
 `Symbol.asyncIterator` returns an independent, **lossy** subscription: one
@@ -201,7 +201,7 @@ snapshots always compose.
 ## Tests
 
 `process.test.ts` (lifecycle, mailbox order, `latest()` conflation, crash and
-restart, ownership, ask rejection paths), `process.leaks.test.ts` (nothing
+restart, ownership, call rejection paths), `process.leaks.test.ts` (nothing
 retained after disposal. This test needs `gc({ execution: 'async' })`, since plain `gc()`
 false-fails under V8 conservative stack scanning), `types.check.ts` (the
 `@ts-expect-error` lines are regression checks for the type

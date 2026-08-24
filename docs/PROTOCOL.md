@@ -1,4 +1,4 @@
-# The Nonchalant wire protocol (rev 2)
+# The Nonchalant wire protocol (rev 3)
 
 The protocol works over any ordered, reliable transport, including WebSocket,
 BroadcastChannel, worker ports, and in-memory channels. It carries **plain-data
@@ -13,8 +13,8 @@ implementation runs in CI (`packages/wire/test/vectors.test.ts`).
 Client → host:
 
     { op: "lookup", ref, name, args? }  // get-or-spawn by schema name; args are data
-    { op: "send",   ref, msg }          // cast: fire-and-forget
-    { op: "call",   ref, id, msg }      // ask(): correlated request
+    { op: "cast",   ref, msg }          // fire-and-forget
+    { op: "call",   ref, id, msg }      // correlated request
     { op: "exit",   ref }               // release this watch; see Semantics for reclamation
 
 Host → client:
@@ -27,6 +27,10 @@ Host → client:
 `ref` is a client-chosen opaque string. On shared-bus transports, clients make
 refs globally unique (the reference implementation prefixes a per-session id).
 
+Rev 3 renamed the client op `send` to `cast`, matching the `cast`/`call` pair
+in the library. Nothing else about the op changed. There is no version field on
+the wire: a rev-2 host and a rev-3 client disagree on that one op name.
+
 ## A session
 
 ```mermaid
@@ -35,7 +39,7 @@ sequenceDiagram
     participant H as host
     C->>H: lookup ref=r1 name=cart
     H->>C: yield r1 [full snapshot: ops against nothing]
-    C->>H: send r1 {type: add, ...}
+    C->>H: cast r1 {type: add, ...}
     H->>C: yield r1 [set /items/0 ..., set /total ...]
     C->>H: call r1 id=1 {type: checkout}
     H->>C: reply r1 id=1 {ok: true}

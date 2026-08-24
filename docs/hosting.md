@@ -59,7 +59,7 @@ const host = await serve(definitions, {
 
 The gateway provides one place to enforce tenancy, quotas, and auditing. It can
 count lookups, record which resources a session accessed, or wrap returned
-processes to control `send` and `ask`. It may also delegate policy decisions to
+processes to control `cast` and `call`. It may also delegate policy decisions to
 a process. Nonchalant does not define users, roles, or tokens. Without `scope`,
 all accepted connections share the host registry, so exposed processes must
 validate tenant, record, and operation access themselves.

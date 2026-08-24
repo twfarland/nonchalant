@@ -46,10 +46,10 @@ function SignupForm(): VNode {
       onsubmit: (e: Event) => {
         e.preventDefault()
         const el = (e.target as HTMLFormElement).elements.namedItem('email') as HTMLInputElement
-        status.send('…')
-        void store.ask({ type: 'submit', email: el.value }).then(
-          (res) => status.send(res.ok ? 'welcome aboard' : (res.error ?? 'failed')),
-          () => status.send('the signup process is unavailable'),
+        status.cast('…')
+        void store.call({ type: 'submit', email: el.value }).then(
+          (res) => status.cast(res.ok ? 'welcome aboard' : (res.error ?? 'failed')),
+          () => status.cast('the signup process is unavailable'),
         )
       },
     },

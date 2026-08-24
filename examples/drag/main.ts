@@ -22,20 +22,20 @@ const startDrag = (down: PointerEvent): void => {
 
   const stop = effect(() => {
     const o = gesture()
-    if (o) pos.send({ x: base.x + o.dx, y: base.y + o.dy })
+    if (o) pos.cast({ x: base.x + o.dx, y: base.y + o.dy })
   })
 
-  const onMove = (e: PointerEvent): void => gesture.send(e)
+  const onMove = (e: PointerEvent): void => gesture.cast(e)
   const onUp = (): void => {
     removeEventListener('pointermove', onMove)
     removeEventListener('pointerup', onUp)
     stop()
     gesture[Symbol.dispose]() // the gesture is over; everything it owned is gone
-    dragging.send(false)
+    dragging.cast(false)
   }
   addEventListener('pointermove', onMove)
   addEventListener('pointerup', onUp)
-  dragging.send(true)
+  dragging.cast(true)
 }
 
 function App(): VNode {

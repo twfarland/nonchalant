@@ -1,7 +1,7 @@
 // The pitch demo: a shared cart. Its state moves from this tab to the server
 // by changing ONE line — which registry the view looks the cart up in.
 // Everything else is identical either way: same process definition, same
-// messages, same fine-grained updates, same ask().
+// messages, same fine-grained updates, same call().
 //
 // Server mode: run `pnpm cart-server` in another terminal, then swap the
 // commented line below.
@@ -27,7 +27,7 @@ type Cart = Process<CartState | undefined, CartMsg>
 function AddButton(c: Cart): VNode {
   const something = (): Item => ({ name: `item ${Date.now() % 1000}`, price: 5 })
 
-  return button({ onclick: () => c.send({ type: 'add', item: something() }) }, 'Add something')
+  return button({ onclick: () => c.cast({ type: 'add', item: something() }) }, 'Add something')
 }
 
 function CartLines(c: Cart): VNode {
@@ -35,7 +35,7 @@ function CartLines(c: Cart): VNode {
     (c()?.items ?? []).map((item) =>
       li({ key: item.name },
         `${item.name} — ${item.price} `,
-        button({ onclick: () => c.send({ type: 'remove', name: item.name }) }, '×'))))
+        button({ onclick: () => c.cast({ type: 'remove', name: item.name }) }, '×'))))
 }
 
 function Totals(c: Cart): VNode {
@@ -47,7 +47,7 @@ function Totals(c: Cart): VNode {
 
 function Checkout(c: Cart): VNode {
   const checkout = (): void => {
-    void c.ask({ type: 'checkout' }).then(
+    void c.call({ type: 'checkout' }).then(
       (res) => alert(`charged ${res.charged}`),
       (e) => alert(`checkout failed: ${String(e)}`),
     )

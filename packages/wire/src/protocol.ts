@@ -1,4 +1,4 @@
-// The wire protocol, rev 2 (docs/PROTOCOL.md): eight ops, JSON on an ordered
+// The wire protocol, rev 3 (docs/PROTOCOL.md): eight ops, JSON on an ordered
 // reliable transport, state patches of plain data — never markup, never code.
 // This module is the codec: encode/decode with structural validation. It is
 // deliberately boring — it doubles as the reference vocabulary for non-JS
@@ -10,7 +10,7 @@ import type { Json, Patch } from '@nonchalant/core'
 /** client → host */
 export type ClientMsg =
   | { op: 'lookup'; ref: string; name: string; args?: Json }
-  | { op: 'send'; ref: string; msg: Json }
+  | { op: 'cast'; ref: string; msg: Json }
   | { op: 'call'; ref: string; id: number; msg: Json }
   | { op: 'exit'; ref: string }
 
@@ -58,7 +58,7 @@ export function decodeClient(data: string): ClientMsg | null {
   switch (v['op']) {
     case 'lookup':
       return typeof v['name'] === 'string' ? (v as ClientMsg) : null
-    case 'send':
+    case 'cast':
       return 'msg' in v ? (v as ClientMsg) : null
     case 'call':
       return typeof v['id'] === 'number' && 'msg' in v ? (v as ClientMsg) : null

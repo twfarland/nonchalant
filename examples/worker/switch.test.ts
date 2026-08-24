@@ -35,18 +35,18 @@ describe('moving the grinder', () => {
     await settle()
     expect(el.textContent).toBe('0') // the remote snapshot, applied as a patch
 
-    grinder().send({ type: 'start' })
+    grinder().cast({ type: 'start' })
     await settle()
     await settle()
     const remote = Number(el.textContent)
     expect(remote).toBeGreaterThan(0)
-    grinder().send({ type: 'stop' })
+    grinder().cast({ type: 'stop' })
 
-    onWorker.send(false)
+    onWorker.cast(false)
     await settle()
     expect(el.textContent).toBe('0') // the local registry: a fresh process
 
-    onWorker.send(true)
+    onWorker.cast(true)
     await settle()
     expect(Number(el.textContent)).toBe(remote) // the remote one kept what it had
   })

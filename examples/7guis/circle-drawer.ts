@@ -3,17 +3,17 @@
 // radius. Radius drags collapse into one undo step on release.
 
 import { cell, spawn } from '@nonchalant/core'
-import type { Proc } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
 import { h, mount } from '@nonchalant/dom'
 import { button, div, input, label } from '@nonchalant/dom/tags'
 
 type Circle = { id: number; x: number; y: number; r: number }
 type DrawMsg =
-  | { type: 'add'; x: number; y: number }
-  | { type: 'resize'; id: number; r: number } // transient: not an undo step
-  | { type: 'commit' } // end of a radius drag: snapshot now
-  | { type: 'undo' }
-  | { type: 'redo' }
+  | Cast<{ type: 'add'; x: number; y: number }>
+  | Cast<{ type: 'resize'; id: number; r: number }> // transient: not an undo step
+  | Cast<{ type: 'commit' }> // end of a radius drag: snapshot now
+  | Cast<{ type: 'undo' }>
+  | Cast<{ type: 'redo' }>
 
 const drawing: Proc<Circle[], DrawMsg, void> = async function* (self) {
   let circles: Circle[] = []
@@ -56,13 +56,13 @@ const selected = cell(0)
 
 mount(document.getElementById('app')!, div({},
   div({},
-    button({ onclick: () => store.send({ type: 'undo' }) }, 'Undo'),
-    button({ onclick: () => store.send({ type: 'redo' }) }, 'Redo')),
+    button({ onclick: () => store.cast({ type: 'undo' }) }, 'Undo'),
+    button({ onclick: () => store.cast({ type: 'redo' }) }, 'Redo')),
   h('svg', {
     width: 500, height: 300, style: 'border: 1px solid #666',
     onclick: (e: MouseEvent) => {
       const box = (e.currentTarget as SVGElement).getBoundingClientRect()
-      store.send({ type: 'add', x: e.clientX - box.left, y: e.clientY - box.top })
+      store.cast({ type: 'add', x: e.clientX - box.left, y: e.clientY - box.top })
     },
   }, () => store().map((c) =>
     h('circle', {
@@ -71,7 +71,7 @@ mount(document.getElementById('app')!, div({},
       stroke: 'black',
       onclick: (e: Event) => {
         e.stopPropagation()
-        selected.send(c.id)
+        selected.cast(c.id)
       },
     }))),
   div({ hidden: () => selected() === 0 },
@@ -80,6 +80,6 @@ mount(document.getElementById('app')!, div({},
       type: 'range', min: 2, max: 100,
       value: () => String(store().find((c) => c.id === selected())?.r ?? 20),
       oninput: (e: Event) =>
-        store.send({ type: 'resize', id: selected(), r: Number((e.target as HTMLInputElement).value) }),
-      onchange: () => store.send({ type: 'commit' }),
+        store.cast({ type: 'resize', id: selected(), r: Number((e.target as HTMLInputElement).value) }),
+      onchange: () => store.cast({ type: 'commit' }),
     }))))

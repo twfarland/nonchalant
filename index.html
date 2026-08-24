@@ -65,9 +65,9 @@ const counter = spawn(async function* (self: Self&lt;number&gt;) {
 }, undefined, { initial: 0 })
 
 mount(document.getElementById('app')!, div({},
-  button({ onclick: () =&gt; counter.send(-1) }, '−'),
+  button({ onclick: () =&gt; counter.cast(-1) }, '−'),
   span({}, counter),                 // a live binding
-  button({ onclick: () =&gt; counter.send(1) }, '+')))
+  button({ onclick: () =&gt; counter.cast(1) }, '+')))
 </code></pre>
 
   <p>The model stays the same as an application grows. A process can manage one widget, shared state addressed by name, or a cached query with an idle timeout. Move it to a server and only the connection changes; callers still use the same process interface.</p>
@@ -122,8 +122,8 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
     <thead><tr><th>From the outside</th><th>What it does</th></tr></thead>
     <tbody>
       <tr><td><code>p()</code></td><td>Reads the latest value synchronously. In a binding, effect, or derived value, it also subscribes to the paths that were read.</td></tr>
-      <tr><td><code>p.send(msg)</code></td><td>Sends a message without waiting for a response. It is available when the message type includes plain messages.</td></tr>
-      <tr><td><code>p.ask(msg)</code></td><td>Sends a typed request and waits for its response. It is available for <code>Call</code> messages and rejects if the process crashes, finishes, or is disposed.</td></tr>
+      <tr><td><code>p.cast(msg)</code></td><td>Sends a message without waiting for a response. It is available when the message type includes <code>Cast</code> messages.</td></tr>
+      <tr><td><code>p.call(msg)</code></td><td>Sends a typed request and waits for its response. It is available for <code>Call</code> messages and rejects if the process crashes, finishes, or is disposed.</td></tr>
       <tr><td><code>p.pending</code> / <code>p.stale</code> / <code>p.error</code></td><td>Exposes lifecycle state through regular reads, using the same mechanism as application state.</td></tr>
       <tr><td><code>for await (v of p)</code></td><td>Iterates over current values. Slow consumers receive the newest value rather than a backlog.</td></tr>
       <tr><td><code>p[Symbol.dispose]()</code></td><td>Closes the mailbox, aborts the signal, runs finalizers, and disposes any owned child processes.</td></tr>
@@ -138,20 +138,20 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
       <tr><td><code>for await (msg of self)</code></td><td>Reads queued messages in order. Handling is sequential by default, so repeated submissions wait instead of racing.</td></tr>
       <tr><td><code>self.latest()</code></td><td>Drops queued messages and returns the newest one, which is useful for inputs such as typeahead search.</td></tr>
       <tr><td><code>self.signal</code></td><td>An <code>AbortSignal</code> triggered by disposal or a crash. Pass it to fetches and other cancellable work.</td></tr>
-      <tr><td><code>self.send(msg)</code></td><td>Sends a message to the process's own mailbox, allowing background work to report its result.</td></tr>
+      <tr><td><code>self.cast(msg)</code></td><td>Sends a message to the process's own mailbox, allowing background work to report its result.</td></tr>
     </tbody>
   </table>
   </div>
 
-  <p>A request that expects a response is a <code>Call</code>. TypeScript separates calls from one-way messages, so <code>send</code> cannot accept a call and <code>ask</code> cannot accept a cast.</p>
+  <p>A one-way message is a <code>Cast</code>; a request that expects a response is a <code>Call</code>. TypeScript separates the two, so <code>cast</code> cannot accept a call and <code>call</code> cannot accept a cast.</p>
 
 <pre><code data-ts>
 type CartMsg =
-  | { type: 'add'; item: Item }                                   // a cast
+  | Cast&lt;{ type: 'add'; item: Item }&gt;                             // a cast
   | Call&lt;{ type: 'checkout' }, { ok: boolean; charged: number }&gt;  // a call
 
-cart.send({ type: 'add', item })                 // fine
-const res = await cart.ask({ type: 'checkout' }) // res is typed; a crash rejects it
+cart.cast({ type: 'add', item })                 // fine
+const res = await cart.call({ type: 'checkout' }) // res is typed; a crash rejects it
 </code></pre>
 </section>
 
@@ -190,7 +190,7 @@ const res = await cart.ask({ type: 'checkout' }) // res is typed; a crash reject
   <div class="demo" data-demo="form">
     <div class="demo-head">
       <span class="demo-title">Form</span>
-      <span class="demo-note">ask() returns the result of a submission</span>
+      <span class="demo-note">call() returns the result of a submission</span>
     </div>
     <div class="demo-stage" data-stage></div>
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
@@ -297,7 +297,7 @@ const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // 
     <thead><tr><th>The same at every distance</th><th>Why</th></tr></thead>
     <tbody>
       <tr><td>The process itself</td><td>The process has no transport-specific code. <code>examples/shared-cart</code> uses one definition in both the tab and Node host. <a href="./examples/worker/">examples/worker</a> can move one definition across a thread boundary while it is running.</td></tr>
-      <tr><td><code>send</code> and <code>ask</code></td><td>A cast uses one wire operation. A call pairs a request with its response. TypeScript preserves the distinction between them.</td></tr>
+      <tr><td><code>cast</code> and <code>call</code></td><td>A cast uses one wire operation. A call pairs a request with its response. TypeScript preserves the distinction between them.</td></tr>
       <tr><td>Targeted updates</td><td>A remote handle applies patches to a local process. A binding on <code>/items/3/done</code> is not notified when <code>/total</code> changes, regardless of where the source process runs.</td></tr>
       <tr><td>Loading and failure</td><td><code>pending</code>, <code>stale</code>, and <code>error</code> are regular reads. If a host disconnects, the last value remains available and <code>stale</code> becomes true.</td></tr>
       <tr><td>Teardown</td><td><code>Symbol.dispose</code> releases the subscription. The host can reclaim the process after its last subscriber leaves.</td></tr>
@@ -383,23 +383,23 @@ const orders = registry({
   participant D as durable wrapper
   participant S as store (a port)
   participant P as your process
-  C->>D: send, or ask with a callId
+  C->>D: cast, or call with a callId
   D->>S: append(message)
   D->>P: deliver
   P->>D: step("charge")
   D->>S: putStep(result)
   P->>D: yield state
-  P->>D: ask for the next message
+  P->>D: request the next message
   D->>S: commit(state, cursor) - together, or not at all
   Note over D,S: a crash before that commit delivers the message again
   Note over D,S: recorded steps answer from the journal instead of running</pre></div>
   </details>
 
-  <p><strong>Calls also survive retries.</strong> An <code>ask</code> includes an idempotency key, and the response is stored under that key. Retrying the call returns the stored response. <code>d.call</code> derives a stable key from the caller, current message, and call name, so replay uses the same key:</p>
+  <p><strong>Calls also survive retries.</strong> A <code>call</code> includes an idempotency key, and the response is stored under that key. Retrying the call returns the stored response. <code>d.call</code> derives a stable key from the caller, current message, and call name, so replay uses the same key:</p>
 
 <pre><code data-ts>
 const receipt = await d.call('reserve', (callId) =>
-  vault.ask({ type: 'reserve', amount: 100, callId }))
+  vault.call({ type: 'reserve', amount: 100, callId }))
 </code></pre>
 
   <p>This prevents a retry from repeating completed work. Calls with the same ID share one result, callers can recover a response after restarting, and a callee does not repeat a message after recording its answer.</p>
@@ -421,7 +421,7 @@ const receipt = await d.call('reserve', (callId) =>
 
   <h4>Messaging and queues</h4>
 
-  <p>Backends often need pub/sub and work queues. The <a href="./examples/messaging/">messaging demo</a> defines both behind ports and provides in-memory adapters. A subscription can itself be a process: subscribe during setup, send each event through <code>self.send</code>, and unsubscribe when the process is disposed. This turns an external stream into state that views can read. Looking up the process by topic also lets the registry share one subscription among all readers of that topic.</p>
+  <p>Backends often need pub/sub and work queues. The <a href="./examples/messaging/">messaging demo</a> defines both behind ports and provides in-memory adapters. A subscription can itself be a process: subscribe during setup, cast each event through <code>self.cast</code>, and unsubscribe when the process is disposed. This turns an external stream into state that views can read. Looking up the process by topic also lets the registry share one subscription among all readers of that topic.</p>
 
   <p>A queue worker can also be modeled as a process: reserve a job under a lease, handle it, acknowledge success, and release it after failure. In the demo, press <b>kill</b> while a worker holds a job. Because the job is not acknowledged, its lease expires and another worker receives it with a higher <code>attempts</code> count. The queue provides at-least-once delivery, much as <code>durable()</code> does for messages inside a process.</p>
 
@@ -438,7 +438,7 @@ const receipt = await d.call('reserve', (callId) =>
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
 
-  <p><strong>Tools can be processes, with <code>ask()</code> used for calls.</strong> Their state is observable; for example, the search tool tracks its call count. A registry lookup can reach the tool locally or through a transport.</p>
+  <p><strong>Tools can be processes, reached with <code>call()</code>.</strong> Their state is observable; for example, the search tool tracks its call count. A registry lookup can reach the tool locally or through a transport.</p>
 
   <p><strong>Human approval uses the same request flow.</strong> Enter <em>refund 20</em> in the demo. The approval tool holds the request until you choose a response. The agent waits with a normal <code>await</code>, while the approval queue is process state rendered by a regular view.</p>
 
@@ -463,10 +463,10 @@ for await (const msg of self) {
   B["supervisor (durable)"] -- "d.call research" --> R["researcher (durable)"]
   B -- "d.call write" --> W["writer (durable)"]
   B -- "d.step approve" --> A["approvals: a reply parked until a person clicks"]
-  R -- "ask" --> SR["search tool"]
-  R -- "ask" --> M["budget: one limit for the whole system"]
-  W -- "ask" --> M
-  W -- "ask" --> MO["the model"]</pre></div>
+  R -- "call" --> SR["search tool"]
+  R -- "call" --> M["budget: one limit for the whole system"]
+  W -- "call" --> M
+  W -- "call" --> MO["the model"]</pre></div>
   </details>
 
   <div class="scroll">

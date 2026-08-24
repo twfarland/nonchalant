@@ -11,9 +11,9 @@ function Counter(): VNode {
   const count = cell(0)
   return div(
     { class: 'card' },
-    button({ onclick: () => count.send(count() - 1) }, '−'),
+    button({ onclick: () => count.cast(count() - 1) }, '−'),
     span({ class: 'value' }, count),
-    button({ onclick: () => count.send(count() + 1) }, '+'),
+    button({ onclick: () => count.cast(count() + 1) }, '+'),
   )
 }
 

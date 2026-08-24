@@ -18,7 +18,7 @@
 <pre><code>tr({ key: row.id, class: () =&gt; (selected() === row.id ? <span class="s">'danger'</span> : <span class="s">''</span>) },
   td({ class: <span class="s">'col-md-1'</span> }, String(row.id)),
   td({ class: <span class="s">'col-md-4'</span> },
-    a({ onclick: () =&gt; selected.send(row.id) }, row.label)),
+    a({ onclick: () =&gt; selected.cast(row.id) }, row.label)),
   <span class="c">// ...</span>
 )</code></pre>
 </aside>

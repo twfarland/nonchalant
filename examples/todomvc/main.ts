@@ -21,7 +21,7 @@ function NewTodo(store: Store): VNode {
       const el = e.target as HTMLInputElement
       const title = el.value.trim()
       if (e.key === 'Enter' && title !== '') {
-        store.send({ type: 'add', title })
+        store.cast({ type: 'add', title })
         el.value = ''
       }
     },
@@ -35,10 +35,10 @@ function TodoItem(store: Store, todo: Todo): VNode {
         class: 'toggle',
         type: 'checkbox',
         checked: todo.done,
-        onchange: () => store.send({ type: 'toggle', id: todo.id }),
+        onchange: () => store.cast({ type: 'toggle', id: todo.id }),
       }),
       label({}, todo.title),
-      button({ class: 'destroy', onclick: () => store.send({ type: 'destroy', id: todo.id }) })))
+      button({ class: 'destroy', onclick: () => store.cast({ type: 'destroy', id: todo.id }) })))
 }
 
 function TodoList(store: Store): VNode {
@@ -53,7 +53,7 @@ function ToggleAll(store: Store): VNode {
       type: 'checkbox',
       checked: () => remaining(store()) === 0 && store().todos.length > 0,
       onchange: (e: Event) =>
-        store.send({ type: 'toggle-all', done: (e.target as HTMLInputElement).checked }),
+        store.cast({ type: 'toggle-all', done: (e.target as HTMLInputElement).checked }),
     }),
     label({ for: 'toggle-all' }, 'Mark all as complete'))
 }
@@ -65,7 +65,7 @@ function FilterLink(store: Store, filter: Filter, text: string): VNode {
       class: () => (store().filter === filter ? 'selected' : ''),
       onclick: (e: Event) => {
         e.preventDefault()
-        store.send({ type: 'filter', filter })
+        store.cast({ type: 'filter', filter })
       },
     }, text))
 }
@@ -82,7 +82,7 @@ function FooterBar(store: Store): VNode {
       FilterLink(store, 'active', 'Active'),
       FilterLink(store, 'completed', 'Completed')),
 
-    button({ class: 'clear-completed', onclick: () => store.send({ type: 'clear-completed' }) },
+    button({ class: 'clear-completed', onclick: () => store.cast({ type: 'clear-completed' }) },
       'Clear completed'))
 }
 

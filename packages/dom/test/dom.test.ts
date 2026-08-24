@@ -116,7 +116,7 @@ describe('dynamic slots', () => {
     const count = cell(0)
     mount(root, div({}, span({}, count)))
     expect(root.querySelector('span')!.textContent).toBe('0')
-    count.send(7)
+    count.cast(7)
     await tick()
     expect(root.querySelector('span')!.textContent).toBe('7')
     count[Symbol.dispose]()
@@ -134,7 +134,7 @@ describe('dynamic slots', () => {
     expect(btn.getAttribute('class')).toBe('off')
     btn.click()
     expect(clicks).toBe(1)
-    active.send(true)
+    active.cast(true)
     await tick()
     expect(btn.getAttribute('class')).toBe('on')
     active[Symbol.dispose]()
@@ -166,7 +166,7 @@ describe('dynamic slots', () => {
         ? Promise.resolve().then(() => span({ id: 'about' }, 'About')) // stands in for import()
         : span({ id: 'home' }, 'Home')))
     expect(root.querySelector('#home')).not.toBeNull()
-    route.send('about')
+    route.cast('about')
     await tick()
     await tick()
     expect(root.querySelector('#home')).toBeNull()
@@ -207,10 +207,10 @@ describe('dynamic slots', () => {
       return String(v)
     }))
     expect(root.querySelector('div')!.textContent).toBe('1')
-    n.send(-1)
+    n.cast(-1)
     await tick()
     expect(root.querySelector('div')!.textContent).toBe('1') // kept
-    n.send(5)
+    n.cast(5)
     await tick()
     expect(root.querySelector('div')!.textContent).toBe('5') // recovered
     n[Symbol.dispose]()
@@ -234,7 +234,7 @@ describe('keyed reconciliation', () => {
     const before = [...root.querySelectorAll('li')]
     expect(before.map((el) => el.textContent)).toEqual(['zero', 'one', 'two'])
     const cur = rows()!
-    rows.send([cur[2]!, cur[0]!, cur[1]!])
+    rows.cast([cur[2]!, cur[0]!, cur[1]!])
     await tick()
     const after = [...root.querySelectorAll('li')]
     expect(after.map((el) => el.textContent)).toEqual(['two', 'zero', 'one'])
@@ -254,7 +254,7 @@ describe('keyed reconciliation', () => {
     mount(root, rowsView(() => rows() ?? []))
     const before = [...root.querySelectorAll('li')]
     const cur = rows()!
-    rows.send([cur[0]!, { id: 9, label: 'new' }, cur[2]!])
+    rows.cast([cur[0]!, { id: 9, label: 'new' }, cur[2]!])
     await tick()
     const after = [...root.querySelectorAll('li')]
     expect(after.map((el) => el.textContent)).toEqual(['a', 'new', 'c'])
@@ -273,7 +273,7 @@ describe('keyed reconciliation', () => {
     const spy = spyTextWrites()
     try {
       const cur = rows()!
-      rows.send(cur.map((r, i) => (i === 25 ? { ...r, label: 'CHANGED' } : r)))
+      rows.cast(cur.map((r, i) => (i === 25 ? { ...r, label: 'CHANGED' } : r)))
       await tick()
       flush()
       expect(root.querySelectorAll('li')[25]!.textContent).toBe('CHANGED')
@@ -304,7 +304,7 @@ describe('granularity across a state process', () => {
     const bText = root.querySelector('#b')!.firstChild
     const spy = spyTextWrites()
     try {
-      p.send('b')
+      p.cast('b')
       await tick()
       flush()
       expect(root.querySelector('#a')!.textContent).toBe('0')
@@ -326,7 +326,7 @@ describe('exit transitions', () => {
     mount(root, ul({}, () => (rows() ?? []).map((n) =>
       li({ key: n, exit: () => gate }, String(n)))))
     expect(root.querySelectorAll('li').length).toBe(3)
-    rows.send([1, 3])
+    rows.cast([1, 3])
     await tick()
     expect(root.querySelectorAll('li').length).toBe(3) // still attached, mid-transition
     release()
@@ -350,7 +350,7 @@ describe('view processes and unmount', () => {
     const handle = mount(root, vp)
     await tick()
     expect(root.querySelector('#one')!.textContent).toBe('first')
-    vp.send('swap')
+    vp.cast('swap')
     await tick()
     expect(root.querySelector('#one')).toBeNull()
     expect(root.querySelector('#two')!.textContent).toBe('second')
@@ -366,7 +366,7 @@ describe('view processes and unmount', () => {
     const handle = mount(root, div({}, () => String(n())))
     expect(root.textContent).toBe('0')
     handle[Symbol.dispose]()
-    n.send(9)
+    n.cast(9)
     await tick()
     expect(root.textContent).toBe('')
     n[Symbol.dispose]()
@@ -385,7 +385,7 @@ describe('error reporting', () => {
       return String(v)
     }))
     expect(root.textContent).toBe('0')
-    n.send(1)
+    n.cast(1)
     await tick()
     flush()
     expect(root.textContent).toBe('0') // the failing binding kept its previous content

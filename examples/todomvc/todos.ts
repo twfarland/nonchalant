@@ -1,19 +1,19 @@
 // The todos process and its pure helpers — separated from the view so tests
 // can drive the generator directly (see todos.test.ts).
 
-import type { Proc } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
 
 export type Todo = { id: number; title: string; done: boolean }
 export type Filter = 'all' | 'active' | 'completed'
 export type State = { todos: Todo[]; filter: Filter }
 
 export type Msg =
-  | { type: 'add'; title: string }
-  | { type: 'toggle'; id: number }
-  | { type: 'destroy'; id: number }
-  | { type: 'toggle-all'; done: boolean }
-  | { type: 'clear-completed' }
-  | { type: 'filter'; filter: Filter }
+  | Cast<{ type: 'add'; title: string }>
+  | Cast<{ type: 'toggle'; id: number }>
+  | Cast<{ type: 'destroy'; id: number }>
+  | Cast<{ type: 'toggle-all'; done: boolean }>
+  | Cast<{ type: 'clear-completed' }>
+  | Cast<{ type: 'filter'; filter: Filter }>
 
 export const todosProc: Proc<State, Msg, void> = async function* (self) {
   let todos: Todo[] = []

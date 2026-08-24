@@ -19,7 +19,7 @@ export function run(host: Element): Disposable {
 
   const held = new Set<string>()
   const arrows = (): void =>
-    world.send({
+    world.cast({
       type: 'arrows',
       x: (held.has('ArrowRight') ? 1 : 0) - (held.has('ArrowLeft') ? 1 : 0),
       y: (held.has('ArrowUp') ? 1 : 0) - (held.has('ArrowDown') ? 1 : 0),
@@ -40,13 +40,13 @@ export function run(host: Element): Disposable {
   let frame = 0
   let last = performance.now()
   const tick = (t: number): void => {
-    world.send({ type: 'tick', delta: (t - last) / 20 }) // ms / 20, as the original's signal did
+    world.cast({ type: 'tick', delta: (t - last) / 20 }) // ms / 20, as the original's signal did
     last = t
     frame = requestAnimationFrame(tick)
   }
   frame = requestAnimationFrame(tick)
 
-  const onresize = (): void => dims.send({ w: host.clientWidth, h: HEIGHT })
+  const onresize = (): void => dims.cast({ w: host.clientWidth, h: HEIGHT })
   addEventListener('resize', onresize)
 
   const view = mount(host, div({ class: 'mariostage', tabindex: '0', onkeydown, onkeyup },

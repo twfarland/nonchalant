@@ -19,7 +19,7 @@ export function run(host: Element): Disposable {
   }, undefined, { initial: 0 })
 
   return mount(host, div({ class: 'row' },
-    button({ onclick: () => counter.send(-1) }, '−'),
+    button({ onclick: () => counter.cast(-1) }, '−'),
     span({ class: 'count' }, counter),   // a live binding — the view runs once
-    button({ onclick: () => counter.send(1) }, '+')))
+    button({ onclick: () => counter.cast(1) }, '+')))
 }

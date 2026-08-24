@@ -54,21 +54,21 @@ const STAGES: Stage[] = ['researching', 'writing', 'approving', 'published']
 
 function Brief(): VNode {
   const topic = cell('what is a worker?')
-  const send = (): void => {
-    if (topic().trim() !== '') boss().send({ type: 'brief', topic: topic() })
+  const brief = (): void => {
+    if (topic().trim() !== '') boss().cast({ type: 'brief', topic: topic() })
   }
 
   return div({ class: 'row' },
     input({
       type: 'text', size: 30, value: topic,
-      oninput: (e: Event) => topic.send((e.target as HTMLInputElement).value),
-      onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') send() },
+      oninput: (e: Event) => topic.cast((e.target as HTMLInputElement).value),
+      onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') brief() },
     }),
-    button({ onclick: send }, 'brief the team'),
+    button({ onclick: brief }, 'brief the team'),
     button({
       onclick: () => {
         desk.evict('boss', { id: 'boss' })
-        generation.send(generation() + 1)
+        generation.cast(generation() + 1)
       },
     }, 'kill the supervisor'))
 }
@@ -104,7 +104,7 @@ function Meter(meter: Process<BudgetState | undefined, BudgetMsg>): VNode {
   return div({ class: 'row' },
     span({ class: 'muted' }, 'budget: '),
     span({ class: 'value' }, () => `${meter()?.spent ?? 0} / ${meter()?.limit ?? 0}`),
-    button({ onclick: () => meter.send({ type: 'reset', limit: 600 }) }, 'refill'))
+    button({ onclick: () => meter.cast({ type: 'reset', limit: 600 }) }, 'refill'))
 }
 
 // only while a person is actually being asked — a row that is not needed
@@ -116,8 +116,8 @@ function Gate(): () => VNode | null {
     if (asking === undefined) return null
     return div({ class: 'row gate' },
       span({}, `publish "${asking.args}"?`),
-      button({ onclick: () => queue.send({ type: 'decide', ok: true }) }, 'publish'),
-      button({ onclick: () => queue.send({ type: 'decide', ok: false }) }, 'hold'))
+      button({ onclick: () => queue.cast({ type: 'decide', ok: true }) }, 'publish'),
+      button({ onclick: () => queue.cast({ type: 'decide', ok: false }) }, 'hold'))
   }
 }
 

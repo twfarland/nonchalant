@@ -5,7 +5,7 @@
 // reading the same yields.
 
 import { effect, spawn } from '@nonchalant/core'
-import type { Proc, VNode } from '@nonchalant/core'
+import type { Cast, Proc, VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { div, p } from '@nonchalant/dom/tags'
 
@@ -15,7 +15,7 @@ const R = 8
 
 type Ball = { id: number; x: number; y: number; vx: number; vy: number; hue: number }
 type World = { balls: Ball[] }
-type Msg = { type: 'tick'; delta: number } | { type: 'add'; x: number; y: number }
+type Msg = Cast<{ type: 'tick'; delta: number }> | Cast<{ type: 'add'; x: number; y: number }>
 
 const world: Proc<World, Msg, void> = async function* (self) {
   let balls: Ball[] = []
@@ -51,7 +51,7 @@ const sim = spawn(world, undefined, { initial: { balls: [] } })
 
 const addAt = (e: MouseEvent): void => {
   const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  sim.send({ type: 'add', x: e.clientX - box.left, y: e.clientY - box.top })
+  sim.cast({ type: 'add', x: e.clientX - box.left, y: e.clientY - box.top })
 }
 
 // ---- renderer 1: the DOM sink (keyed list, style bindings) ----
@@ -101,7 +101,7 @@ document.getElementById('canvas-slot')!.appendChild(canvas)
 
 let last = performance.now()
 const frame = (t: number): void => {
-  sim.send({ type: 'tick', delta: Math.min(3, (t - last) / 16) })
+  sim.cast({ type: 'tick', delta: Math.min(3, (t - last) / 16) })
   last = t
   requestAnimationFrame(frame)
 }

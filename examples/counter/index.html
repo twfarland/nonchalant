@@ -18,9 +18,9 @@
 <pre><code><span class="k">function</span> Counter(): VNode {
   <span class="k">const</span> count = cell(0)
   <span class="k">return</span> div({ class: <span class="s">'card'</span> },
-    button({ onclick: () =&gt; count.send(count() - 1) }, <span class="s">'-'</span>),
+    button({ onclick: () =&gt; count.cast(count() - 1) }, <span class="s">'-'</span>),
     span({ class: <span class="s">'value'</span> }, count),
-    button({ onclick: () =&gt; count.send(count() + 1) }, <span class="s">'+'</span>))
+    button({ onclick: () =&gt; count.cast(count() + 1) }, <span class="s">'+'</span>))
 }</code></pre>
 </aside>
 </div>

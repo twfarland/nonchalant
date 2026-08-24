@@ -4,7 +4,7 @@ Nonchalant is an experimental TypeScript runtime for managing state with async
 generators. Optional packages add DOM rendering and remote connections. Each
 process owns its state, handles messages in order, publishes snapshots, and has
 a defined lifetime. Calling `spawn` returns a typed handle for reading state,
-sending messages, making requests, iterating over values, and disposing the
+casting messages, making calls, iterating over values, and disposing the
 process.
 
 The project asks whether one process model can cover widget state, shared
@@ -32,9 +32,9 @@ const counter = spawn(async function* (self: Self<number>) {
 }, undefined, { initial: 0 })
 
 mount(document.getElementById('app')!, div({},
-  button({ onclick: () => counter.send(-1) }, '−'),
+  button({ onclick: () => counter.cast(-1) }, '−'),
   span({}, counter),                 // a live binding
-  button({ onclick: () => counter.send(1) }, '+')))
+  button({ onclick: () => counter.cast(1) }, '+')))
 ```
 
 ## Why use processes?
@@ -76,17 +76,17 @@ for await (const { q } of self.latest()) {          // queued keystrokes conflat
 }
 ```
 
-- **Requests and responses are typed.** A message that expects a response is a
-  `Call`. `ask()` returns a promise for that response and rejects if the process
-  crashes. TypeScript prevents calls from being passed to `send` and casts from
-  being passed to `ask`.
+- **Requests and responses are typed.** A one-way message is a `Cast`; one that
+  expects a response is a `Call`. `call()` returns a promise for that response
+  and rejects if the process crashes. TypeScript prevents a `Call` from being
+  passed to `cast` and a `Cast` from being passed to `call`.
 
 ```ts
 type CartMsg =
-  | { type: 'add'; item: Item }                                   // a cast
+  | Cast<{ type: 'add'; item: Item }>                             // a cast
   | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>  // a call
 
-const res = await cart.ask({ type: 'checkout' })   // res is typed; crash = rejection
+const res = await cart.call({ type: 'checkout' })   // res is typed; crash = rejection
 ```
 
 - **One lookup interface works locally and remotely.** `lookup(name, args)` can
@@ -108,7 +108,7 @@ const shop = registry({ cart: define(cart) })                       // this tab
 
 ```ts
 const self = channel<Msg>()                  // a scripted mailbox
-self.send({ type: 'add', title: 'milk' })
+self.cast({ type: 'add', title: 'milk' })
 const it = todosProc(self, undefined)
 expect((await it.next()).value.todos).toHaveLength(1)
 ```

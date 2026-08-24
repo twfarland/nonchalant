@@ -15,7 +15,7 @@
 <aside class="explain">
 <h2>How it works</h2>
 <p>The process owns its interval, and the abort signal is the cleanup — dispose the process and the timer dies with it. A tick past the duration changes nothing, so nothing wakes.</p>
-<pre><code><span class="k">const</span> iv = setInterval(() =&gt; self.send({ <span class="k">type</span>: <span class="s">'tick'</span> }), 100)
+<pre><code><span class="k">const</span> iv = setInterval(() =&gt; self.cast({ <span class="k">type</span>: <span class="s">'tick'</span> }), 100)
 self.signal.addEventListener(<span class="s">'abort'</span>, () =&gt; clearInterval(iv))</code></pre>
 </aside>
 </div>

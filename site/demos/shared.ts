@@ -5,12 +5,12 @@
 // the same code reads a process on a server.
 
 import { define, registry } from '@nonchalant/core'
-import type { Proc, Process, VNode } from '@nonchalant/core'
+import type { Cast, Proc, Process, VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, li, span, ul } from '@nonchalant/dom/tags'
 
 type Cart = { items: string[]; total: number }
-type Msg = { type: 'add'; item: string; price: number } | { type: 'clear' }
+type Msg = Cast<{ type: 'add'; item: string; price: number }> | Cast<{ type: 'clear' }>
 
 const cart: Proc<Cart, Msg, { userId: string }> = async function* (self) {
   let s: Cart = { items: [], total: 0 }
@@ -33,7 +33,7 @@ function AddPanel(c: Process<Cart, Msg>): VNode {
   return div({ class: 'card' },
     span({ class: 'demo-title' }, 'panel one'),
     div({ class: 'row' }, ...STOCK.map(([item, price]) =>
-      button({ onclick: () => c.send({ type: 'add', item, price }) }, `add ${item}`))))
+      button({ onclick: () => c.cast({ type: 'add', item, price }) }, `add ${item}`))))
 }
 
 function TotalPanel(c: Process<Cart, Msg>): VNode {
@@ -41,7 +41,7 @@ function TotalPanel(c: Process<Cart, Msg>): VNode {
     span({ class: 'demo-title' }, 'panel two'),
     div({ class: 'row' },
       span({ class: 'readout' }, () => `${plural(c().items.length)} · $${c().total}`),
-      button({ onclick: () => c.send({ type: 'clear' }) }, 'clear')),
+      button({ onclick: () => c.cast({ type: 'clear' }) }, 'clear')),
     ul({ class: 'list' }, () => c().items.map((item, i) => li({ key: i }, item))))
 }
 

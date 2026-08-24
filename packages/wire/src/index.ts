@@ -1,4 +1,4 @@
-// @nonchalant/wire — protocol rev 2 (docs/PROTOCOL.md): eight ops carrying
+// @nonchalant/wire — protocol rev 3 (docs/PROTOCOL.md): eight ops carrying
 // state patches of plain data, never markup, never code. Isomorphic, DOM-free.
 // The conformance vectors under spec/vectors/ are the cross-language contract.
 

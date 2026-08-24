@@ -1,5 +1,5 @@
 // Browser bootstrap: rAF drives ticks, the keyboard drives arrow state.
-// Key-repeat re-sends the same arrows — which steps nothing (see mario.ts).
+// Key-repeat re-casts the same arrows — which steps nothing (see mario.ts).
 
 import { cell, spawn } from '@nonchalant/core'
 import type { Self, VNode } from '@nonchalant/core'
@@ -11,11 +11,11 @@ const world = spawn(mario, undefined, { initial: initialMario })
 const stage = document.getElementById('stage')!
 const size = (): Dims => ({ w: stage.clientWidth, h: stage.clientHeight })
 const dims = cell<Dims>(size())
-addEventListener('resize', () => dims.send(size()))
+addEventListener('resize', () => dims.cast(size()))
 
 const keys = new Set<string>()
 const sendArrows = (): void =>
-  world.send({
+  world.cast({
     type: 'arrows',
     x: (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0),
     y: (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0),
@@ -31,7 +31,7 @@ addEventListener('keyup', (e) => {
 
 let last = performance.now()
 const frame = (t: number): void => {
-  world.send({ type: 'tick', delta: (t - last) / 20 })
+  world.cast({ type: 'tick', delta: (t - last) / 20 })
   last = t
   requestAnimationFrame(frame)
 }

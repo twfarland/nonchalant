@@ -3,7 +3,7 @@
 // proc a private Self; the wrapper owns the history.
 
 import { channel, spawn } from '@nonchalant/core'
-import type { Proc, VNode } from '@nonchalant/core'
+import type { Cast, Proc, VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, span } from '@nonchalant/dom/tags'
 
@@ -29,7 +29,7 @@ function withHistory<T, In, A>(proc: Proc<T, In, A>, depth = 100): Proc<T, In | 
         past.push(current)
         if (past.length > depth) past.shift()
         future.length = 0
-        inner.send(m as In)
+        inner.cast(m as In)
         current = (await it.next()).value as T // convention: one yield per message
       }
       yield current
@@ -37,7 +37,7 @@ function withHistory<T, In, A>(proc: Proc<T, In, A>, depth = 100): Proc<T, In | 
   }
 }
 
-type CounterMsg = { type: 'add'; n: number }
+type CounterMsg = Cast<{ type: 'add'; n: number }>
 
 const counter: Proc<number, CounterMsg, void> = async function* (self) {
   let n = 0
@@ -51,10 +51,10 @@ const counter: Proc<number, CounterMsg, void> = async function* (self) {
 function App(): VNode {
   const count = spawn(withHistory(counter), undefined, { initial: 0 })
   return div({ class: 'card' },
-    button({ onclick: () => count.send({ type: 'add', n: 1 }) }, '+1'),
+    button({ onclick: () => count.cast({ type: 'add', n: 1 }) }, '+1'),
     span({ class: 'value' }, count),
-    button({ onclick: () => count.send({ type: 'undo' }) }, 'undo'),
-    button({ onclick: () => count.send({ type: 'redo' }) }, 'redo'))
+    button({ onclick: () => count.cast({ type: 'undo' }) }, 'undo'),
+    button({ onclick: () => count.cast({ type: 'redo' }) }, 'redo'))
 }
 
 mount(document.getElementById('app')!, App())

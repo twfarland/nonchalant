@@ -5,7 +5,7 @@
 //
 // The transaction boundary is one message. A message is journaled before it is
 // handled; the effects inside it are journaled as they complete; and when the
-// process asks for its *next* message, the state it produced and the cursor
+// process requests its *next* message, the state it produced and the cursor
 // past that message are committed together. Crash anywhere in between and the
 // message is redelivered with its completed effects already answered — so the
 // generator re-runs, and the effects do not.
@@ -32,12 +32,12 @@ export interface Durable<T> {
    */
   step<R extends Json>(name: string, fn: () => R | Promise<R>): Promise<R>
   /**
-   * A call to another process, journaled on both sides. The id handed to `ask`
+   * A call to another process, journaled on both sides. The id handed to `invoke`
    * is derived from this process, the message being handled, and `name`, so a
-   * replay asks with the same id — and a durable callee answers it from its
+   * replay calls with the same id — and a durable callee answers it from its
    * record rather than doing the work twice.
    */
-  call<R extends Json>(name: string, ask: (callId: string) => Promise<R>): Promise<R>
+  call<R extends Json>(name: string, invoke: (callId: string) => Promise<R>): Promise<R>
   /** A sleep whose deadline is journaled: after a restart it waits out the remainder, not the whole duration. */
   sleep(name: string, ms: number): Promise<void>
 }
@@ -134,7 +134,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     // everything the log holds past the cursor goes in first, in order: a
     // restart is a redelivery, not a special mode
     for (const logged of await store.pending(key, cursor))
-      inbox.send({ seq: logged.seq, msg: restore(logged.msg, logged.callId), ...(logged.callId === undefined ? {} : { callId: logged.callId }) })
+      inbox.cast({ seq: logged.seq, msg: restore(logged.msg, logged.callId), ...(logged.callId === undefined ? {} : { callId: logged.callId }) })
 
     // A store that will not accept a message must crash the process rather than
     // drop it: handling a message that was never written down is the one thing
@@ -148,7 +148,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     void failed.catch(() => {}) // nobody may be racing it yet
 
     // one serialized appender, so the log order is the delivery order for both
-    // outside messages and the process's own self-sends
+    // outside messages and the process's own self-casts
     let appending: Promise<void> = Promise.resolve()
     const journal = (msg: In): void => {
       if (broken) return
@@ -165,11 +165,11 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
             waiting.set(callId, [...(waiting.get(callId) ?? []), reply])
             if (waiting.get(callId)!.length > 1) return // already in flight under this id
             const seq = await store.append(key, plainly(msg), callId)
-            inbox.send({ seq, msg: restore(plainly(msg), callId), callId })
+            inbox.cast({ seq, msg: restore(plainly(msg), callId), callId })
             return
           }
           const seq = await store.append(key, msg as Json)
-          inbox.send({ seq, msg })
+          inbox.cast({ seq, msg })
         } catch (e) {
           broken = true
           fail(e)
@@ -213,7 +213,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
 
     const inner: Self<In> = {
       signal: self.signal,
-      send: journal,
+      cast: journal,
       latest: () => ({ [Symbol.asyncIterator]: () => deliver(inbox.latest()[Symbol.asyncIterator]()) }),
       [Symbol.asyncIterator]: () => deliver(inbox[Symbol.asyncIterator]()),
     }
@@ -237,7 +237,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     const ctx: Durable<T> = {
       restored: latest,
       step,
-      call: (name, ask) => step(name, () => ask(`${key}#${handling}#${name}`)),
+      call: (name, invoke) => step(name, () => invoke(`${key}#${handling}#${name}`)),
       sleep: async (name, ms) => {
         const deadline = await step(`${name}:deadline`, () => now() + ms)
         const left = deadline - now()

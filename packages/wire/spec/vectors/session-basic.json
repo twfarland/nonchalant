@@ -3,11 +3,11 @@
   "steps": [
     { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 5 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 5 } },
-    { "recv": { "op": "send", "ref": "r1", "msg": { "type": "add", "n": 3 } } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 3 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 8 } },
     { "recv": { "op": "call", "ref": "r1", "id": 1, "msg": { "type": "get" } } },
     { "expect": { "op": "reply", "ref": "r1", "id": 1, "value": { "n": 8 } } },
-    { "recv": { "op": "send", "ref": "r1", "msg": { "type": "add", "n": -8 } } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": -8 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 0 } },
     { "recv": { "op": "exit", "ref": "r1" } }
   ]

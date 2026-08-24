@@ -30,9 +30,9 @@ describe('registry: lookup is get-or-spawn', () => {
     expect(a1).toBe(a2)
     expect(b).not.toBe(a1)
     await tick()
-    a1.send(10)
+    a1.cast(10)
     await tick()
-    expect(a2()).toBe(11) // shared: a2 sees a1's send
+    expect(a2()).toBe(11) // shared: a2 sees a1's cast
     expect(b()).toBe(2)
     reg.evict('counter')
   })

@@ -3,7 +3,7 @@
 // why TanStack Query's feature list falls out of the primitives here.
 //
 // Things to try: pick a user (cached on revisit); rename someone (the detail
-// updates write-through, the list refreshes); submit an empty name (the ask
+// updates write-through, the list refreshes); submit an empty name (the call
 // rejects, the error shows, the process re-syncs from the server).
 
 import { cell } from '@nonchalant/core'
@@ -28,9 +28,9 @@ function UserList(): VNode {
     ul({ class: 'list' }, () =>
       (users() ?? []).map((u) =>
         li({ key: u.id },
-          button({ class: 'linklike', onclick: () => selected.send(u.id) }, u.name)))),
+          button({ class: 'linklike', onclick: () => selected.cast(u.id) }, u.name)))),
 
-    button({ onclick: () => users.send({ type: 'refresh' }) }, 'Refresh'))
+    button({ onclick: () => users.cast({ type: 'refresh' }) }, 'Refresh'))
 }
 
 function UserDetail(): VNode {
@@ -52,7 +52,7 @@ function RenameForm(id: number): VNode {
   const submit = (e: Event): void => {
     e.preventDefault()
     const el = (e.target as HTMLFormElement).elements.namedItem('name') as HTMLInputElement
-    void user.ask({ type: 'rename', name: el.value }).then(() => (el.value = ''), () => {})
+    void user.call({ type: 'rename', name: el.value }).then(() => (el.value = ''), () => {})
   }
 
   return form({ onsubmit: submit },

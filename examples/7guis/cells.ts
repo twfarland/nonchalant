@@ -15,11 +15,11 @@
 // + - * /, and parentheses.
 
 import { derive, spawn } from '@nonchalant/core'
-import type { Proc, Process } from '@nonchalant/core'
+import type { Cast, Proc, Process } from '@nonchalant/core'
 
 export type CellValue = number | string
 export type Formulas = Record<string, string>
-export type SheetMsg = { type: 'set'; key: string; formula: string }
+export type SheetMsg = Cast<{ type: 'set'; key: string; formula: string }>
 
 const sheetProc: Proc<Formulas, SheetMsg, void> = async function* (self) {
   let formulas: Formulas = {}
@@ -142,7 +142,7 @@ export function createSheet(): Sheet {
   }
 
   return {
-    set: (key, formula) => formulas.send({ type: 'set', key: key.toUpperCase(), formula }),
+    set: (key, formula) => formulas.cast({ type: 'set', key: key.toUpperCase(), formula }),
     value: (key) => valueOf(key.toUpperCase())(),
     formulas,
     evals,

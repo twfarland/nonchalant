@@ -57,14 +57,14 @@ const workers = { w1: workerAt('w1'), w2: workerAt('w2') }
 
 const kill = (name: 'w1' | 'w2') => (): void => {
   crew.evict('worker', { name })
-  lives[name].send(lives[name]() + 1)
+  lives[name].cast(lives[name]() + 1)
 }
 
 // A port does not publish changes, so its numbers are polled — inside a
 // process, where the interval has an owner and the abort is the cleanup.
 const stats = spawn(async function* (self: Self<QueueStats>) {
   const iv = setInterval(() => {
-    void queue.stats().then((s) => self.send(s))
+    void queue.stats().then((s) => self.cast(s))
   }, 200)
   self.signal.addEventListener('abort', () => clearInterval(iv), { once: true })
   for await (const s of self.latest()) yield s
@@ -77,17 +77,17 @@ let pushed = 1
 
 function Publish(): VNode {
   const text = cell('something happened')
-  const send = (topic: string) => (): void => {
+  const publish = (topic: string) => (): void => {
     void bus.publish(topic, `${text()} (${new Date().toLocaleTimeString()})`)
   }
 
   return div({ class: 'row' },
     input({
       type: 'text', size: 26, value: text,
-      oninput: (e: Event) => text.send((e.target as HTMLInputElement).value),
+      oninput: (e: Event) => text.cast((e.target as HTMLInputElement).value),
     }),
-    button({ onclick: send('orders') }, 'publish to #orders'),
-    button({ onclick: send('alerts') }, 'publish to #alerts'))
+    button({ onclick: publish('orders') }, 'publish to #orders'),
+    button({ onclick: publish('alerts') }, 'publish to #alerts'))
 }
 
 function FeedPanel(topic: string): VNode {
@@ -103,13 +103,13 @@ function FeedPanel(topic: string): VNode {
 function Push(): VNode {
   const push = (): void => {
     void queue.push(drafted().trim() === '' ? `order ${pushed}` : drafted())
-    drafted.send(`order ${++pushed}`) // the next one is already typed for you
+    drafted.cast(`order ${++pushed}`) // the next one is already typed for you
   }
 
   return div({ class: 'row' },
     input({
       type: 'text', size: 16, value: drafted,
-      oninput: (e: Event) => drafted.send((e.target as HTMLInputElement).value),
+      oninput: (e: Event) => drafted.cast((e.target as HTMLInputElement).value),
     }),
     button({ onclick: push }, 'push a job'),
     span({ class: 'muted' }, () =>
@@ -126,8 +126,8 @@ function WorkerPanel(name: 'w1' | 'w2'): VNode {
       span({ class: () => `status ${now()?.status ?? 'idle'}` }, () => now()?.status ?? 'starting'),
       span({ class: 'muted' }, () => (now()?.holding === null ? '' : ` holding ${now()?.holding ?? ''}`))),
     div({ class: 'row' },
-      button({ onclick: () => at().send({ type: 'pause' }) }, 'pause'),
-      button({ onclick: () => at().send({ type: 'resume' }) }, 'resume'),
+      button({ onclick: () => at().cast({ type: 'pause' }) }, 'pause'),
+      button({ onclick: () => at().cast({ type: 'resume' }) }, 'resume'),
       button({ onclick: kill(name) }, 'kill')),
     ul({ class: 'list' }, () =>
       (now()?.done ?? []).map((line, i) => li({ key: `${i}-${line}` }, line))),

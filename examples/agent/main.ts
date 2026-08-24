@@ -56,10 +56,10 @@ const busy = (): boolean => {
 
 function Ask(): VNode {
   const draft = cell('')
-  const send = (): void => {
+  const ask = (): void => {
     if (draft().trim() === '') return
-    machine().send({ type: 'ask', question: draft() })
-    draft.send('')
+    machine().cast({ type: 'ask', question: draft() })
+    draft.cast('')
   }
 
   return div({ class: 'row' },
@@ -67,12 +67,12 @@ function Ask(): VNode {
       type: 'text',
       value: draft,
       placeholder: 'ask about a process, or "2 + 3 * 4", or "refund 20"',
-      oninput: (e: Event) => draft.send((e.target as HTMLInputElement).value),
+      oninput: (e: Event) => draft.cast((e.target as HTMLInputElement).value),
       onkeydown: (e: KeyboardEvent) => {
-        if (e.key === 'Enter') send()
+        if (e.key === 'Enter') ask()
       },
     }),
-    button({ onclick: send, disabled: busy }, 'ask'),
+    button({ onclick: ask, disabled: busy }, 'ask'),
     span({ class: 'muted' }, () => state()?.status ?? 'starting…'))
 }
 
@@ -105,7 +105,7 @@ function Transcript(): VNode {
 // the panel exists only while somebody is being asked. `hidden` is not enough:
 // any class that sets `display` beats the browser's [hidden] rule
 function Approvals(queue: Process<ApprovalState | undefined, ApprovalMsg>): () => VNode | null {
-  const decide = (ok: boolean) => (): void => queue.send({ type: 'decide', ok })
+  const decide = (ok: boolean) => (): void => queue.cast({ type: 'decide', ok })
 
   return () => {
     const asking = queue()?.pending[0]
@@ -124,7 +124,7 @@ function ToolUse(name: string, tool: Process<ToolState | undefined, never>): VNo
 
 function Machine(): VNode {
   return div({ class: 'row' },
-    button({ onclick: () => { brain.evict('agent', { id: 'demo' }); generation.send(generation() + 1) } },
+    button({ onclick: () => { brain.evict('agent', { id: 'demo' }); generation.cast(generation() + 1) } },
       'kill the machine'),
     span({ class: 'muted' }, 'and watch it come back where it was'))
 }

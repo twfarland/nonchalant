@@ -13,7 +13,7 @@ the wire.
 | you want | what it is here |
 |---|---|
 | a mailbox, in order | `for await (const msg of self)` handles messages sequentially, so repeated submissions queue instead of racing |
-| cast and call | `send` and `ask`, kept apart by the type system |
+| cast and call | `cast` and `call`, kept apart by the type system |
 | supervision | `restart: 'on-crash'` with a budget; a terminal crash leaves `error` readable |
 | cancellation | pass `self.signal` to fetches; disposal aborts it |
 | a linked lifetime | children spawned inside a process die with it |
@@ -95,9 +95,9 @@ that ID, and retries with the same ID receive the recorded response:
 
 ```ts
 // the caller's side: journaled, and the id is derived from (key, message, name)
-// so a replay asks with the same one
+// so a replay calls with the same one
 const receipt = await d.call('reserve', (callId) =>
-  vault.ask({ type: 'reserve', amount: 100, callId }))
+  vault.call({ type: 'reserve', amount: 100, callId }))
 ```
 
 This provides four behaviors:
@@ -110,7 +110,7 @@ This provides four behaviors:
 - **A callee that answered but died before acknowledging does not re-handle the
   message.** The recorded answer acknowledges it on the next activation.
 
-An `ask` from outside a durable process supplies its own id; that id is the
+A `call` from outside a durable process supplies its own id; that id is the
 idempotency key of the whole operation, so it should come from the thing being
 done (an order number, a request id), not from a random.
 
@@ -142,7 +142,7 @@ An agent process receives a question, calls tools, evaluates their responses,
 and publishes progress. `examples/agent` includes the loop, a stub model, three
 tools, and a page bound to their state.
 
-**Tools can be processes, with `ask()` used for calls.** Their state can be
+**Tools can be processes, reached with `call()`.** Their state can be
 observed, and the registry makes them available by name. A tool can also hold a
 request until a person responds:
 
@@ -197,14 +197,14 @@ export interface Queue {
 ```
 
 **A subscription can be a process.** Subscribe during setup, pass each event to
-`self.send`, and unsubscribe during disposal. The external stream becomes state
+`self.cast`, and unsubscribe during disposal. The external stream becomes state
 that a view can bind to. Looking up the process by topic also allows the
 registry to share one subscription among all readers of that topic and release
 it when the last reader leaves.
 
 **A worker is a process too.** Reserve, handle, acknowledge; release on a
 failure instead of losing the job. Poll with a timer rather than a bare
-`self.send`. A mailbox loop that re-sends synchronously never lets the event
+`self.cast`. A mailbox loop that casts to itself synchronously never lets the event
 loop turn again.
 
 **At-least-once lives in the queue, not in the worker.** A worker that dies
@@ -222,7 +222,7 @@ code and tests them without a browser.
 | the pattern | what it is here |
 |---|---|
 | single agent | one process (`examples/agent`) |
-| agent delegation | the tool is another agent: `d.call('research', (callId) => researcher.ask({ …, callId }))` |
+| agent delegation | the tool is another agent: `d.call('research', (callId) => researcher.call({ …, callId }))` |
 | programmatic handoff | the supervisor passes one agent's output to the next as an argument, without a shared blackboard or history object |
 | graph-based control flow | `stage` is a field in the state, the code between yields is the edge, and the graph is renderable because it is data |
 | usage limits | one budget process everybody asks, inside a `d.step` so a replay does not spend twice |

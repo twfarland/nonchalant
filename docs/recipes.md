@@ -37,7 +37,7 @@ This prevents a backlog, but it does not cancel the request already in flight.
 That request completes and publishes its yield before the newest queued
 query begins, which is why each yield carries its own `q`. If even a transient
 stale result matters, don't await in the loop: stamp each request with an
-epoch, run it in the background, `self.send` the result back, and ignore
+epoch, run it in the background, `self.cast` the result back, and ignore
 results whose epoch is old. `examples/typeahead`.
 
 ## Forms that wait for a result
@@ -62,7 +62,7 @@ after its last watcher leaves, and the next lookup starts a new fetch.
 `packages/core/test/registry.test.ts` verifies this lifecycle.
 
 `examples/query` adds loading and error states, retries, stale-while-refetch,
-and mutations implemented as `ask()` calls on the query. The example uses
+and mutations implemented as `call()` on the query. The example uses
 write-through updates instead of an invalidation graph, with the schema
 tested headlessly in `examples/query/shop.test.ts` and the reasoning written
 up right on the demo page.
@@ -99,7 +99,7 @@ el.addEventListener('pointerdown', (down: PointerEvent) => {
       yield { dx: move.clientX - down.clientX, dy: move.clientY - down.clientY }
   }, undefined)
   const stop = effect(() => { const o = gesture(); if (o) applyOffset(o) })
-  const onMove = (e: PointerEvent): void => gesture.send(e)
+  const onMove = (e: PointerEvent): void => gesture.cast(e)
   const onUp = (): void => {
     removeEventListener('pointermove', onMove)
     removeEventListener('pointerup', onUp)
@@ -142,10 +142,10 @@ not drop.
 Two things to keep in mind when a process grinds on its own:
 
 - Chunk the work and drive the next chunk with a **timer**, not a bare
-  `self.send`. A mailbox loop that re-sends synchronously resolves in
+  `self.cast`. A mailbox loop that casts to itself synchronously resolves in
   microtasks, and the event loop never turns again, so nothing else is heard.
 - Yield the small thing. Keep the working set in the process (a plain local
-  array) and let `ask()` fetch it when someone actually wants it; every yield
+  array) and let `call()` fetch it when someone actually wants it; every yield
   is a diff that has to cross.
 
 `examples/worker`.
@@ -184,7 +184,7 @@ function merge<T>(...sources: Process<T>[]): Process<T | undefined, T> {
       void (async () => {
         for await (const v of s) {
           if (self.signal.aborted) break
-          self.send(v)
+          self.cast(v)
         }
       })()
     for await (const v of self) yield v
@@ -200,7 +200,7 @@ function debounced<T>(source: Process<T>, ms: number): Process<T | undefined> {
       for await (const v of source) {
         if (self.signal.aborted) break
         clearTimeout(timer)
-        timer = setTimeout(() => settled.send(v), ms)
+        timer = setTimeout(() => settled.cast(v), ms)
       }
     })()
     for await (const v of settled) yield v
@@ -264,7 +264,7 @@ hosts can activate the same ID, the store needs leases or fencing. The library
 does not provide that coordination. [Hosting safely](hosting.md)
 covers the boundary.
 
-## A deadline on `ask`
+## A deadline on `call`
 
 A pending remote call already rejects on crash, completion, disconnect, and
 dispose. A host handler that never replies can still leave it pending. A
@@ -281,7 +281,7 @@ function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]).finally(() => clearTimeout(timer))
 }
 
-const receipt = await withDeadline(cart.ask({ type: 'checkout' }), 5_000)
+const receipt = await withDeadline(cart.call({ type: 'checkout' }), 5_000)
 ```
 
 ## Reading connection status

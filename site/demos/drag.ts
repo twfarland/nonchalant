@@ -33,9 +33,9 @@ export function run(host: Element): Disposable {
 
     const stop = effect(() => {
       const o = gesture()
-      if (o !== undefined) at.send(o)
+      if (o !== undefined) at.cast(o)
     })
-    const onmove = (e: PointerEvent): void => gesture.send(e)
+    const onmove = (e: PointerEvent): void => gesture.cast(e)
     const onup = (): void => {
       removeEventListener('pointermove', onmove)
       removeEventListener('pointerup', onup)

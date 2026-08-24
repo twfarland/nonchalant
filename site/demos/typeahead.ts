@@ -4,12 +4,12 @@
 // no cancellation bookkeeping — the mailbox already has an answer for this.
 
 import { spawn } from '@nonchalant/core'
-import type { Proc } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { div, input, li, span, ul } from '@nonchalant/dom/tags'
 
 type State = { q: string; results: string[]; pending: boolean }
-type Msg = { q: string }
+type Msg = Cast<{ q: string }>
 
 const FRUIT = [
   'apricot', 'banana', 'blackberry', 'blueberry', 'cherry', 'clementine',
@@ -55,7 +55,7 @@ export function run(host: Element): Disposable {
     input({
       type: 'text',
       placeholder: 'type a fruit — the fake API is slow, so type fast',
-      oninput: (e: Event) => s.send({ q: (e.target as HTMLInputElement).value }),
+      oninput: (e: Event) => s.cast({ q: (e.target as HTMLInputElement).value }),
     }),
     span({ class: 'muted' }, () => (s().pending ? 'searching…' : `${s().results.length} matches`)),
     ul({ class: 'list' }, () => s().results.slice(0, 6).map((r) => li({ key: r }, r)))))

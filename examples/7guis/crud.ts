@@ -2,15 +2,15 @@
 // the visible list is a keyed thunk hole.
 
 import { cell, spawn } from '@nonchalant/core'
-import type { Proc } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, input, label, option, select } from '@nonchalant/dom/tags'
 
 type Person = { id: number; name: string; surname: string }
 type CrudMsg =
-  | { type: 'create'; name: string; surname: string }
-  | { type: 'update'; id: number; name: string; surname: string }
-  | { type: 'delete'; id: number }
+  | Cast<{ type: 'create'; name: string; surname: string }>
+  | Cast<{ type: 'update'; id: number; name: string; surname: string }>
+  | Cast<{ type: 'delete'; id: number }>
 
 const people: Proc<Person[], CrudMsg, void> = async function* (self) {
   let list: Person[] = [
@@ -41,34 +41,34 @@ const visible = (): Person[] =>
 mount(document.getElementById('app')!, div({ class: 'card' },
   div({},
     label({}, 'Filter prefix: '),
-    input({ value: prefix, oninput: (e: Event) => prefix.send((e.target as HTMLInputElement).value) })),
+    input({ value: prefix, oninput: (e: Event) => prefix.cast((e.target as HTMLInputElement).value) })),
   select({
     size: 5,
     onchange: (e: Event) => {
       const id = Number((e.target as HTMLSelectElement).value)
-      selected.send(id)
+      selected.cast(id)
       const p = store().find((x) => x.id === id)
       if (p) {
-        name.send(p.name)
-        surname.send(p.surname)
+        name.cast(p.name)
+        surname.cast(p.surname)
       }
     },
   }, () => visible().map((p) => option({ key: p.id, value: String(p.id) }, `${p.surname}, ${p.name}`))),
   div({},
     label({}, 'Name: '),
-    input({ value: name, oninput: (e: Event) => name.send((e.target as HTMLInputElement).value) }),
+    input({ value: name, oninput: (e: Event) => name.cast((e.target as HTMLInputElement).value) }),
     label({}, ' Surname: '),
-    input({ value: surname, oninput: (e: Event) => surname.send((e.target as HTMLInputElement).value) })),
+    input({ value: surname, oninput: (e: Event) => surname.cast((e.target as HTMLInputElement).value) })),
   div({},
-    button({ onclick: () => store.send({ type: 'create', name: name(), surname: surname() }) }, 'Create'),
+    button({ onclick: () => store.cast({ type: 'create', name: name(), surname: surname() }) }, 'Create'),
     button({
       disabled: () => selected() === 0,
-      onclick: () => store.send({ type: 'update', id: selected(), name: name(), surname: surname() }),
+      onclick: () => store.cast({ type: 'update', id: selected(), name: name(), surname: surname() }),
     }, 'Update'),
     button({
       disabled: () => selected() === 0,
       onclick: () => {
-        store.send({ type: 'delete', id: selected() })
-        selected.send(0)
+        store.cast({ type: 'delete', id: selected() })
+        selected.cast(0)
       },
     }, 'Delete'))))

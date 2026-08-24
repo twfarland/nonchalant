@@ -11,7 +11,7 @@
 // walk/jump/stand transitions); the generator never resumes. Frame-rate
 // yields want frame-sized state — Mario is five numbers.
 
-import type { Proc, Process, VNode } from '@nonchalant/core'
+import type { Cast, Proc, Process, VNode } from '@nonchalant/core'
 import { div, img } from '@nonchalant/dom/tags'
 
 export interface MarioState {
@@ -28,8 +28,8 @@ export interface Arrows {
 }
 
 export type MarioMsg =
-  | { type: 'tick'; delta: number } // delta pre-scaled: milliseconds / 20, as the original's input signal did
-  | { type: 'arrows'; x: number; y: number }
+  | Cast<{ type: 'tick'; delta: number }> // delta pre-scaled: milliseconds / 20, as the original's input signal did
+  | Cast<{ type: 'arrows'; x: number; y: number }>
 
 export const initialMario: MarioState = { x: 0, y: 0, vx: 0, vy: 0, dir: 'LEFT' }
 

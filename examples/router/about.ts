@@ -12,7 +12,7 @@ export const AboutView: Proc<VNode, never, void> = async function* (self: Self<n
   yield div({},
     h2({}, 'About'),
     p({}, 'This page arrived over a dynamic import, and it has its own state:'),
-    button({ onclick: () => visits.send(visits() + 1) }, 'clicked '),
+    button({ onclick: () => visits.cast(visits() + 1) }, 'clicked '),
     span({ class: 'value' }, visits))
   // a page that owns state must stay alive: returning would end this process
   // and dispose everything it spawned (the cell above included). The router

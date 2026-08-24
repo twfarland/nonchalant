@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { applyPatch, define, registry } from '@nonchalant/core'
-import type { Call, Json, Patch, Proc } from '@nonchalant/core'
+import type { Call, Cast, Json, Patch, Proc } from '@nonchalant/core'
 import { expose } from '../src/host.ts'
 import { decodeHost, type ClientMsg, type HostMsg } from '../src/protocol.ts'
 import { memoryPair } from '../src/transport.ts'
@@ -31,7 +31,7 @@ describe('patch vectors', () => {
 })
 
 // the canonical counter process from spec/README.md
-type CounterMsg = { type: 'add'; n: number } | Call<{ type: 'get' }, { n: number }>
+type CounterMsg = Cast<{ type: 'add'; n: number }> | Call<{ type: 'get' }, { n: number }>
 const counter: Proc<{ n: number }, CounterMsg, { start: number }> = async function* (self, { start }) {
   let n = start
   yield { n }

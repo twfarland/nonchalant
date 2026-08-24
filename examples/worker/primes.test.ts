@@ -23,10 +23,10 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 describe('primes: a process that grinds', () => {
   it('runs chunk by chunk and hears stop between chunks', async () => {
     const p = spawn(primes, undefined)
-    p.send({ type: 'start' })
+    p.cast({ type: 'start' })
     await until(() => (p()?.tested ?? 0) >= CHUNK, 'the first chunk')
 
-    p.send({ type: 'stop' })
+    p.cast({ type: 'stop' })
     await settle()
     const stoppedAt = p()!.tested
     await settle()
@@ -45,16 +45,16 @@ describe('primes over a port', () => {
     const remote = there.lookup('primes') as Grinder
 
     await until(() => remote() !== undefined, 'the first snapshot')
-    remote.send({ type: 'start' })
+    remote.cast({ type: 'start' })
     await until(() => (remote()?.count ?? 0) > 6, 'more primes than a yield carries')
-    remote.send({ type: 'stop' })
+    remote.cast({ type: 'stop' })
     await settle()
 
     const seen = remote()!
     expect(seen.recent).toHaveLength(6) // the working set stays in the process
     expect(seen.count).toBeGreaterThan(6)
 
-    const all = await remote.ask({ type: 'export' })
+    const all = await remote.call({ type: 'export' })
     expect(all).toHaveLength(seen.count)
     expect(all.slice(-6)).toEqual(seen.recent)
 

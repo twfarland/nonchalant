@@ -45,7 +45,7 @@ describe('site demos', () => {
     expect(el.querySelector('.count')?.textContent).toBe('1')
 
     // three clicks in one tick: deltas queue in the mailbox and all three land,
-    // which a read-modify-write (`send(count() - 1)`) would lose
+    // which a read-modify-write (`cast(count() - 1)`) would lose
     minus?.click()
     minus?.click()
     minus?.click()
@@ -93,7 +93,7 @@ describe('site demos', () => {
     expect(el.querySelectorAll('li').length).toBeGreaterThan(0)
   })
 
-  it('form replies to ask() with the outcome, both ways', async () => {
+  it('form replies to call() with the outcome, both ways', async () => {
     const el = host()
     form(el)
     await settle()

@@ -16,8 +16,8 @@ import { encode, decodeClient, type HostMsg } from './protocol.ts'
 import type { Transport } from './transport.ts'
 
 interface HostProcess extends ProcessBase<unknown> {
-  send?(msg: unknown): void
-  ask?(msg: unknown): Promise<unknown>
+  cast?(msg: unknown): void
+  call?(msg: unknown): Promise<unknown>
 }
 
 export interface Exposable {
@@ -116,17 +116,17 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
         case 'lookup':
           startWatch(msg.ref, msg.name, msg.args)
           return
-        case 'send':
-          watches.get(msg.ref)?.proc.send?.(msg.msg)
+        case 'cast':
+          watches.get(msg.ref)?.proc.cast?.(msg.msg)
           return
         case 'call': {
           const w = watches.get(msg.ref)
           const { ref, id } = msg
-          if (w === undefined || w.proc.ask === undefined) {
+          if (w === undefined || w.proc.call === undefined) {
             out({ op: 'raise', ref, error: errorJson(new Error('no such process'), id) })
             return
           }
-          w.proc.ask(msg.msg).then(
+          w.proc.call(msg.msg).then(
             (value) => out({ op: 'reply', ref, id, value: value as Json }),
             (e) => out({ op: 'raise', ref, error: errorJson(e, id) }),
           )

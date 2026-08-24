@@ -1,10 +1,10 @@
-// Tools are processes, and a tool call is `ask()`. That buys three things
+// Tools are processes, and a tool call is `call()`. That buys three things
 // without any tool-calling machinery: a tool has state you can watch (these
 // keep a usage count the page renders), a tool can live somewhere else (a
 // registry lookup is a registry lookup), and a tool can decline to answer for
 // as long as it likes — which is all "human in the loop" turns out to be.
 
-import type { Call, Proc } from '@nonchalant/core'
+import type { Call, Cast, Proc } from '@nonchalant/core'
 import { delay } from './llm.ts'
 
 // ---------- a plain tool ----------
@@ -97,12 +97,12 @@ export type Pending = { tool: string; args: string }
 export type ApprovalState = { pending: Pending[]; decided: number }
 export type ApprovalMsg =
   | Call<{ type: 'request'; tool: string; args: string }, boolean>
-  | { type: 'decide'; ok: boolean }
+  | Cast<{ type: 'decide'; ok: boolean }>
 
 /**
  * The reply is simply not sent until someone decides. The caller is an ordinary
  * `await`; the queue is ordinary state a view can render. No callback registry,
- * no interrupt protocol — the ask is parked in a closure inside the process.
+ * no interrupt protocol — the call is parked in a closure inside the process.
  */
 export const approvals: Proc<ApprovalState, ApprovalMsg, void> = async function* (self) {
   let waiting: (Pending & { reply: (ok: boolean) => void })[] = []

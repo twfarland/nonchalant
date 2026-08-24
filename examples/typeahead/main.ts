@@ -53,7 +53,7 @@ function Typeahead(): VNode {
   return div({ class: 'card' },
     input({
       placeholder: 'Type to search…',
-      oninput: (e: Event) => s.send({ q: (e.target as HTMLInputElement).value }),
+      oninput: (e: Event) => s.cast({ q: (e.target as HTMLInputElement).value }),
     }),
     span({ class: 'muted', hidden: () => !s().pending }, ' searching…'),
     ul({ class: 'list' }, () => s().results.map((r) => li({ key: r.title }, r.title))))

@@ -22,19 +22,19 @@ const bookable = derive(
 )
 
 mount(document.getElementById('app')!, div({ class: 'card' },
-  select({ onchange: (e: Event) => mode.send((e.target as HTMLSelectElement).value as Mode) },
+  select({ onchange: (e: Event) => mode.cast((e.target as HTMLSelectElement).value as Mode) },
     option({}, 'one-way flight'),
     option({}, 'return flight')),
   input({
     value: depart,
     style: () => (departOk() ? '' : 'background: salmon'),
-    oninput: (e: Event) => depart.send((e.target as HTMLInputElement).value),
+    oninput: (e: Event) => depart.cast((e.target as HTMLInputElement).value),
   }),
   input({
     value: back,
     disabled: () => mode() === 'one-way flight',
     style: () => (backOk() ? '' : 'background: salmon'),
-    oninput: (e: Event) => back.send((e.target as HTMLInputElement).value),
+    oninput: (e: Event) => back.cast((e.target as HTMLInputElement).value),
   }),
   button({
     disabled: () => !bookable(),

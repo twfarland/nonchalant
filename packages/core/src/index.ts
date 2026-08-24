@@ -4,7 +4,7 @@
 // TypeScript with load-bearing @ts-expect-error negative cases.
 
 export type {
-  Call, Plain, Requests, Res,
+  Cast, Call, Casts, Calls, Res,
   Process, ProcessBase, Self, Proc,
   Definition, Schema, Registry, ProcessOf, ArgsOf,
   VNode, Slot, Sink,

@@ -13,7 +13,7 @@ import { remaining, todosProc, visible, type Msg, type State } from './todos.ts'
 /** Drive a proc through a scripted mailbox; return the transcript of yields. */
 const transcript = async <T, In>(proc: Proc<T, In, void>, msgs: In[]): Promise<T[]> => {
   const self = channel<In>()
-  for (const msg of msgs) self.send(msg) // FIFO: queued until the body reads
+  for (const msg of msgs) self.cast(msg) // FIFO: queued until the body reads
   const it = proc(self, undefined)
   const out: T[] = []
   for (let i = 0; i < msgs.length; i++) out.push((await it.next()).value as T)

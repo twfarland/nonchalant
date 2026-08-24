@@ -27,7 +27,7 @@ const room = (): Room => conn.lookup('room', { name: roomName() }) as Room
 // ---------- components ----------
 
 function RoomPicker(): VNode {
-  const join = (name: string): void => roomName.send(name)
+  const join = (name: string): void => roomName.cast(name)
 
   return div({ class: 'rooms' },
     ...['lobby', 'dev', 'random'].map((name) =>
@@ -57,14 +57,14 @@ function Composer(): VNode {
   const post = (e: Event): void => {
     e.preventDefault()
     const el = (e.target as HTMLFormElement).elements.namedItem('text') as HTMLInputElement
-    room().send({ type: 'post', from: me(), text: el.value })
+    room().cast({ type: 'post', from: me(), text: el.value })
     el.value = ''
   }
 
   return form({ class: 'chat-form', onsubmit: post },
     input({
       name: 'name', size: 10, value: me,
-      oninput: (e: Event) => me.send((e.target as HTMLInputElement).value),
+      oninput: (e: Event) => me.cast((e.target as HTMLInputElement).value),
     }),
     input({ name: 'text', placeholder: () => `say something in #${roomName()}…`, autocomplete: 'off' }),
     button({ type: 'submit', disabled: () => room().stale || room()() === undefined }, 'Send'))

@@ -31,7 +31,7 @@ export function historyRouter<R>(parse: (path: string) => R): Router<R> {
   const read = (): R => parse(location.pathname)
 
   const route = spawn<R, R, void>(async function* (self: Self<R>) {
-    const onPop = (): void => self.send(read())
+    const onPop = (): void => self.cast(read())
     addEventListener('popstate', onPop)
     self.signal.addEventListener('abort', () => removeEventListener('popstate', onPop))
     yield read()
@@ -42,7 +42,7 @@ export function historyRouter<R>(parse: (path: string) => R): Router<R> {
     if (opts?.replace ?? true) history.replaceState(null, '', path)
     else history.pushState(null, '', path)
     // pushState/replaceState don't fire popstate — nudge the route ourselves
-    ;(route as unknown as { send(r: R): void }).send(read())
+    ;(route as unknown as { cast(r: R): void }).cast(read())
   }
 
   return {
@@ -63,7 +63,7 @@ export function hashRouter<R>(parse: (path: string) => R): Router<R> {
   const read = (): R => parse(location.hash.replace(/^#/, '') || '/')
 
   const route = spawn<R, R, void>(async function* (self: Self<R>) {
-    const onChange = (): void => self.send(read())
+    const onChange = (): void => self.cast(read())
     addEventListener('hashchange', onChange)
     self.signal.addEventListener('abort', () => removeEventListener('hashchange', onChange))
     yield read()

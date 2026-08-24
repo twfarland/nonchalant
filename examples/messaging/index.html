@@ -29,7 +29,7 @@
 
 <h2>A subscription is a process</h2>
 <p>Which is the whole trick: an external stream becomes ordinary state, so a view binds to it exactly as it binds to a counter. Subscribing happens on the way in, and the unsubscribe is the disposal.</p>
-<pre><code><span class="k">const</span> stop = bus.subscribe(topic, (event) =&gt; self.send({ <span class="k">type</span>: <span class="s">'event'</span>, text: String(event) }))
+<pre><code><span class="k">const</span> stop = bus.subscribe(topic, (event) =&gt; self.cast({ <span class="k">type</span>: <span class="s">'event'</span>, text: String(event) }))
 self.signal.addEventListener(<span class="s">'abort'</span>, stop, { once: <span class="k">true</span> })
 
 <span class="k">yield</span> { topic, events, received }
@@ -42,7 +42,7 @@ self.signal.addEventListener(<span class="s">'abort'</span>, stop, { once: <span
 <h2>A worker is a process too</h2>
 <p>Reserve, handle, acknowledge — and if the handler throws, release the job instead of losing it. Nothing here is a framework hook; the retry count above is what the queue reports.</p>
 <pre><code><span class="k">const</span> job = <span class="k">await</span> queue.reserve(leaseMs)
-<span class="k">if</span> (job === <span class="k">undefined</span>) { soon(() =&gt; self.send({ <span class="k">type</span>: <span class="s">'poll'</span> }), idleMs); <span class="k">continue</span> }
+<span class="k">if</span> (job === <span class="k">undefined</span>) { soon(() =&gt; self.cast({ <span class="k">type</span>: <span class="s">'poll'</span> }), idleMs); <span class="k">continue</span> }
 <span class="k">try</span> {
   done = [...done, <span class="k">await</span> handle(job, self.signal)]
   <span class="k">await</span> queue.ack(job.id)
@@ -53,7 +53,7 @@ self.signal.addEventListener(<span class="s">'abort'</span>, stop, { once: <span
 <h2>Press kill while a worker is holding a job</h2>
 <p>The process is disposed, its handler is aborted through <code>self.signal</code>, and nothing acknowledges the job — so it stays invisible until its lease runs out, and then the other worker takes it. That is what at-least-once looks like when the queue, rather than the worker, is the thing that guarantees it. The <code>attempts</code> count in the <code>#jobs</code> feed goes up on the redelivery.</p>
 
-<p>The poll loop uses a timer, not a bare <code>self.send</code>: a mailbox loop that re-sends synchronously resolves in microtasks and the event loop never turns again, so no timer, no I/O and no <em>pause</em> would ever be heard.</p>
+<p>The poll loop uses a timer, not a bare <code>self.cast</code>: a mailbox loop that casts to itself synchronously resolves in microtasks and the event loop never turns again, so no timer, no I/O and no <em>pause</em> would ever be heard.</p>
 
 <p><code>messaging.test.ts</code> drives all of it headlessly. The queue takes its clock as an argument, so the test expires a lease by assigning to a number instead of waiting four seconds.</p>
 </aside>

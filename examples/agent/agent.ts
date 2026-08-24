@@ -7,7 +7,7 @@
 // model calls and tool calls go through `d.step`: those are the effects that
 // must not happen twice when the process is killed and comes back.
 
-import type { Process } from '@nonchalant/core'
+import type { Cast, Process } from '@nonchalant/core'
 import type { DurableProc } from '@nonchalant/durable'
 import type { Model, ToolSpec } from './llm.ts'
 import type { ApprovalMsg, ApprovalState, CalcMsg, SearchMsg, ToolState } from './tools.ts'
@@ -25,7 +25,7 @@ export type AgentState = {
   error: string | null
 }
 
-export type AgentMsg = { type: 'ask'; question: string }
+export type AgentMsg = Cast<{ type: 'ask'; question: string }>
 
 export interface Tools {
   search: Process<ToolState | undefined, SearchMsg>
@@ -54,10 +54,10 @@ const answered = (steps: Step[], result: string): Step[] =>
   steps.map((step, i) => (i === steps.length - 1 && step.kind === 'tool' ? { ...step, result } : step))
 
 async function callTool(tools: Tools, tool: string, args: string): Promise<string> {
-  if (tool === 'search') return tools.search.ask({ type: 'search', q: args })
-  if (tool === 'calc') return tools.calc.ask({ type: 'calc', expr: args })
-  // the one that needs a person: the ask parks until somebody decides
-  const ok = await tools.approvals.ask({ type: 'request', tool, args })
+  if (tool === 'search') return tools.search.call({ type: 'search', q: args })
+  if (tool === 'calc') return tools.calc.call({ type: 'calc', expr: args })
+  // the one that needs a person: the call parks until somebody decides
+  const ok = await tools.approvals.call({ type: 'request', tool, args })
   return ok ? `refund of ${args} approved` : `refund of ${args} refused`
 }
 

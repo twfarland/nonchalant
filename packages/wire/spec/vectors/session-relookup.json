@@ -3,7 +3,7 @@
   "steps": [
     { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 2 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 2 } },
-    { "recv": { "op": "send", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 3 } },
     { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 2 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 3 }, "full": true },

@@ -10,10 +10,10 @@ local server.
 | `counter/` | widget state as a closed-over `cell`; a Process as a live slot |
 | `todomvc/` | ⏱ one state process + one view; the keyed list patches one row at a time |
 | `typeahead/` | `latest()` queue conflation, lifetime abort via `self.signal` |
-| `form/` | a submission that receives its result through `ask()` (try someone@taken.com) |
+| `form/` | a submission that receives its result through `call()` (try someone@taken.com) |
 | `router/` | pages as view processes over the userland router in `lib/router.ts` |
 | `undo-redo/` | middleware as function composition over `channel` |
-| `query/` | ⏱ server state the process way: queries as definitions, mutations as `ask()` |
+| `query/` | ⏱ server state the process way: queries as definitions, mutations as `call()` |
 | `drag/` | a process that lasts from pointerdown to pointerup |
 | `bounce/` | one physics process rendered through both DOM and canvas output |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
