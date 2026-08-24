@@ -64,6 +64,23 @@ body {
 
 .page { max-width: 1180px; margin: 0 auto; padding: 0 32px 140px; }
 
+/* ---------- alpha disclaimer ---------- */
+
+/* Inverted rather than coloured: the only emphasis this palette allows. */
+.alpha {
+  display: flex; gap: 18px; align-items: baseline;
+  background: var(--ink); color: var(--paper);
+  border-radius: 5px; padding: 18px 22px; margin: 26px 0 0;
+  font-family: var(--f-ui); font-size: 14px; line-height: 1.6;
+}
+.alpha-tag {
+  font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  border: 1px solid var(--paper); border-radius: 3px; padding: 3px 9px; white-space: nowrap;
+}
+.alpha p { margin: 0; max-width: 80ch; }
+.alpha b { font-weight: 700; }
+.alpha a { color: var(--paper); text-decoration: underline; }
+
 /* ---------- masthead ---------- */
 
 .mast { padding: 88px 0 0; }
@@ -383,4 +400,6 @@ footer a { color: var(--ink-2); }
   .sec-head { flex-direction: column; gap: 4px; }
   .sec-num { padding-top: 0; }
   .demo-note { margin-left: 0; text-align: left; width: 100%; }
+  .alpha { flex-direction: column; gap: 12px; }
+  .alpha-tag { align-self: flex-start; }
 }

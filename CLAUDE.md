@@ -58,6 +58,11 @@ State:
   union of `Cast<Msg>` and `Call<Req, Res>` members, matching the `cast` and
   `call` methods on the handle; the generator body is the reducer; one yield
   per state change.
+- Dispatch with `switch (msg.type)`, one `case` per member, never an
+  if/else-if chain — the closest thing JS gives us to pattern matching. Name
+  every case; no `default`. A `case` that declares a binding gets braces.
+  Inside the mailbox loop `break` falls through to the trailing `yield` and
+  `continue` skips it, which is how "no state change, no yield" is written.
 - Immutable updates, always: `let` + spread, sharing everything that didn't
   change. That sharing is what makes diffs O(changed).
 - Keep computation out of the loop: pure helpers (`step`, `visible`) in their

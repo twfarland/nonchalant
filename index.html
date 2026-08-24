@@ -29,6 +29,11 @@
   <a href="https://github.com/twfarland/nonchalant">GitHub</a>
 </nav>
 
+<div class="alpha" role="note">
+  <span class="alpha-tag">Alpha</span>
+  <p><b>This is experimental alpha software.</b> It is a research project, not a product: nothing is published to npm, there is no versioning policy, and the API, the wire protocol, and the package names may all change without notice or a migration path. Read it, run the demos, take the ideas — but do not put it in production.</p>
+</div>
+
 <header class="mast" id="top">
   <div class="eyebrow">TypeScript &nbsp;·&nbsp; MIT &nbsp;·&nbsp; core + DOM under 13&nbsp;KB gzipped</div>
   <h1>Nonchalant</h1>
@@ -444,8 +449,15 @@ const receipt = await d.call('reserve', (callId) =>
 
 <pre><code data-ts>
 for await (const msg of self) {
-  if (msg.type === 'request') waiting = [...waiting, { ...msg, reply: msg.reply }]  // parked
-  else { waiting[0]?.reply(msg.ok); waiting = waiting.slice(1) }                    // a person decided
+  switch (msg.type) {
+    case 'request':                                    // parked until somebody decides
+      waiting = [...waiting, { ...msg, reply: msg.reply }]
+      break
+    case 'decide':                                     // a person decided
+      waiting[0]?.reply(msg.ok)
+      waiting = waiting.slice(1)
+      break
+  }
   yield state()
 }
 </code></pre>

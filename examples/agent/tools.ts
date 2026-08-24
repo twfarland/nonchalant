@@ -114,14 +114,18 @@ export const approvals: Proc<ApprovalState, ApprovalMsg, void> = async function*
 
   yield state()
   for await (const msg of self) {
-    if (msg.type === 'request') {
-      waiting = [...waiting, { tool: msg.tool, args: msg.args, reply: msg.reply }]
-    } else {
-      const [head, ...rest] = waiting
-      if (head === undefined) continue // nothing to decide, no state change
-      head.reply(msg.ok)
-      waiting = rest
-      decided++
+    switch (msg.type) {
+      case 'request':
+        waiting = [...waiting, { tool: msg.tool, args: msg.args, reply: msg.reply }]
+        break
+      case 'decide': {
+        const [head, ...rest] = waiting
+        if (head === undefined) continue // nothing to decide, no state change
+        head.reply(msg.ok)
+        waiting = rest
+        decided++
+        break
+      }
     }
     yield state()
   }

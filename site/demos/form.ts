@@ -19,17 +19,20 @@ const signup: Proc<State, Msg, void> = async function* (self) {
   yield s
 
   for await (const msg of self) {
-    if (msg.type === 'set') {
-      s = { ...s, email: msg.value }
-      yield s
-      continue
+    switch (msg.type) {
+      case 'set':
+        s = { ...s, email: msg.value }
+        yield s
+        break
+      case 'submit':
+        s = { ...s, submitting: true }
+        yield s
+        await new Promise((resolve) => setTimeout(resolve, 700)) // stands in for the request
+        msg.reply(s.email.includes('@') ? { ok: true } : { ok: false, error: 'that is not an email' })
+        s = { ...s, submitting: false }
+        yield s
+        break
     }
-    s = { ...s, submitting: true }
-    yield s
-    await new Promise((resolve) => setTimeout(resolve, 700))     // stands in for the request
-    msg.reply(s.email.includes('@') ? { ok: true } : { ok: false, error: 'that is not an email' })
-    s = { ...s, submitting: false }
-    yield s
   }
 }
 

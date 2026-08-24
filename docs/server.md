@@ -149,8 +149,15 @@ request until a person responds:
 ```ts
 // the approval tool holds the reply until somebody decides
 for await (const msg of self) {
-  if (msg.type === 'request') waiting = [...waiting, { ...msg, reply: msg.reply }]
-  else { waiting[0]?.reply(msg.ok); waiting = waiting.slice(1) }
+  switch (msg.type) {
+    case 'request':
+      waiting = [...waiting, { ...msg, reply: msg.reply }]
+      break
+    case 'decide':
+      waiting[0]?.reply(msg.ok)
+      waiting = waiting.slice(1)
+      break
+  }
   yield state()
 }
 ```

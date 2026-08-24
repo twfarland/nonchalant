@@ -16,11 +16,18 @@ const timer: Proc<TimerState, TimerMsg, void> = async function* (self) {
   self.signal.addEventListener('abort', () => clearInterval(iv))
   yield { duration, elapsed }
   for await (const msg of self) {
-    if (msg.type === 'tick') {
-      if (elapsed >= duration) continue // no state change, no yield
-      elapsed = Math.min(duration, elapsed + 0.1)
-    } else if (msg.type === 'duration') duration = msg.s
-    else elapsed = 0
+    switch (msg.type) {
+      case 'tick':
+        if (elapsed >= duration) continue // no state change, no yield
+        elapsed = Math.min(duration, elapsed + 0.1)
+        break
+      case 'duration':
+        duration = msg.s
+        break
+      case 'reset':
+        elapsed = 0
+        break
+    }
     yield { duration, elapsed }
   }
 }

@@ -49,8 +49,15 @@
 <p>A tool call is <code>call()</code>. That is why the counters above are live — each tool is a running process with state of its own — and why a tool could just as well be on a server: it is reached by a registry lookup, and a registry lookup does not care about distance.</p>
 <p>It is also why <strong>human-in-the-loop needs no mechanism</strong>. The approval tool simply does not reply until you click:</p>
 <pre><code><span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
-  <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'request'</span>) waiting = [...waiting, { ...msg, reply: msg.reply }]  <span class="c">// parked</span>
-  <span class="k">else</span> { waiting[0]?.reply(msg.ok); waiting = waiting.slice(1) }              <span class="c">// a person decided</span>
+  <span class="k">switch</span> (msg.<span class="k">type</span>) {
+    <span class="k">case</span> <span class="s">'request'</span>:                                    <span class="c">// parked until somebody decides</span>
+      waiting = [...waiting, { ...msg, reply: msg.reply }]
+      <span class="k">break</span>
+    <span class="k">case</span> <span class="s">'decide'</span>:                                     <span class="c">// a person decided</span>
+      waiting[0]?.reply(msg.ok)
+      waiting = waiting.slice(1)
+      <span class="k">break</span>
+  }
   <span class="k">yield</span> state()
 }</code></pre>
 <p>The agent's side of that is an ordinary <code>await</code> that takes as long as it takes. The queue is ordinary state, so the buttons above are an ordinary view of it.</p>

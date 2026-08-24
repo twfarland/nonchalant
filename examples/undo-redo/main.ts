@@ -19,6 +19,9 @@ function withHistory<T, In, A>(proc: Proc<T, In, A>, depth = 100): Proc<T, In | 
     yield current
     for await (const msg of self) {
       const m = msg as Hist | In
+      // if/else, not a switch: `In` is opaque here, so there is no union to
+      // switch over — and an undo with an empty past is not ours to handle,
+      // it falls through to the wrapped process like any other message
       if ((m as Hist).type === 'undo' && past.length > 0) {
         future.push(current)
         current = past.pop() as T

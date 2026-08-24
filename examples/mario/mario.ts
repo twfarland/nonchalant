@@ -63,12 +63,15 @@ export const mario: Proc<MarioState, MarioMsg, void> = async function* (self) {
   let arrows: Arrows = { x: 0, y: 0 }
   yield m
   for await (const msg of self) {
-    if (msg.type === 'arrows') {
-      // input is state, not a step: no yield, no physics — the double-step fix
-      arrows = { x: msg.x, y: msg.y }
-    } else {
-      m = step(msg.delta, arrows, m)
-      yield m
+    switch (msg.type) {
+      case 'arrows':
+        // input is state, not a step: no yield, no physics — the double-step fix
+        arrows = { x: msg.x, y: msg.y }
+        break
+      case 'tick':
+        m = step(msg.delta, arrows, m)
+        yield m
+        break
     }
   }
 }

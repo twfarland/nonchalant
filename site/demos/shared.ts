@@ -16,9 +16,14 @@ const cart: Proc<Cart, Msg, { userId: string }> = async function* (self) {
   let s: Cart = { items: [], total: 0 }
   yield s
   for await (const msg of self) {
-    s = msg.type === 'add'
-      ? { items: [...s.items, msg.item], total: s.total + msg.price }
-      : { items: [], total: 0 }
+    switch (msg.type) {
+      case 'add':
+        s = { items: [...s.items, msg.item], total: s.total + msg.price }
+        break
+      case 'clear':
+        s = { items: [], total: 0 }
+        break
+    }
     yield s
   }
 }

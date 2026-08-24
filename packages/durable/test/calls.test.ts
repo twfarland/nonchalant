@@ -24,18 +24,22 @@ const vault: DurableProc<Vault, VaultMsg, { id: string }> = async function* (sel
   let s: Vault = d.restored ?? { reserved: 0, receipts: [] }
   yield s
   for await (const msg of self) {
-    if (msg.type === 'clear') {
-      s = { reserved: 0, receipts: [] }
-      yield s
-      continue
+    switch (msg.type) {
+      case 'clear':
+        s = { reserved: 0, receipts: [] }
+        yield s
+        break
+      case 'reserve': {
+        const receipt = await d.step('reserve', () => {
+          worked++
+          return `receipt-${worked}`
+        })
+        s = { reserved: s.reserved + msg.amount, receipts: [...s.receipts, receipt] }
+        msg.reply(receipt)
+        yield s
+        break
+      }
     }
-    const receipt = await d.step('reserve', () => {
-      worked++
-      return `receipt-${worked}`
-    })
-    s = { reserved: s.reserved + msg.amount, receipts: [...s.receipts, receipt] }
-    msg.reply(receipt)
-    yield s
   }
 }
 

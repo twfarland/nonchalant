@@ -33,6 +33,32 @@ h2 { font-size: 1rem; margin: 0 0 0.75rem; font-weight: 600; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* the alpha disclaimer, on the gallery index */
+.alpha {
+  display: flex;
+  gap: 0.9rem;
+  align-items: baseline;
+  background: var(--ink);
+  color: var(--card);
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem;
+  margin: 0 0 1.25rem;
+  max-width: 46rem;
+  font-size: 0.9rem;
+}
+.alpha .tag {
+  border: 1px solid var(--card);
+  border-radius: 4px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.alpha p { margin: 0; }
+.alpha a { color: var(--card); text-decoration: underline; }
+
 /* the standard panel most examples render into */
 .card {
   background: var(--card);

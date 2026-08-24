@@ -21,10 +21,17 @@ const people: Proc<Person[], CrudMsg, void> = async function* (self) {
   let nextId = 4
   yield list
   for await (const msg of self) {
-    if (msg.type === 'create') list = [...list, { id: nextId++, name: msg.name, surname: msg.surname }]
-    else if (msg.type === 'update')
-      list = list.map((p) => (p.id === msg.id ? { ...p, name: msg.name, surname: msg.surname } : p))
-    else list = list.filter((p) => p.id !== msg.id)
+    switch (msg.type) {
+      case 'create':
+        list = [...list, { id: nextId++, name: msg.name, surname: msg.surname }]
+        break
+      case 'update':
+        list = list.map((p) => (p.id === msg.id ? { ...p, name: msg.name, surname: msg.surname } : p))
+        break
+      case 'delete':
+        list = list.filter((p) => p.id !== msg.id)
+        break
+    }
     yield list
   }
 }

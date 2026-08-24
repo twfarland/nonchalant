@@ -79,42 +79,47 @@ export const worker = (opts: WorkerOpts): Proc<WorkerState, WorkerMsg, { name: s
     yield state()
 
     for await (const msg of self) {
-      if (msg.type === 'pause') {
-        if (status === 'paused') continue // no state change, no yield
-        status = 'paused'
-      } else if (msg.type === 'resume') {
-        if (status !== 'paused') continue
-        status = 'idle'
-        soon(() => self.cast({ type: 'poll' }), 0)
-      } else {
-        if (status === 'paused') continue
-        const job = await opts.queue.reserve(opts.leaseMs)
-        if (job === undefined) {
-          soon(() => self.cast({ type: 'poll' }), opts.idleMs)
-          if (status === 'idle') continue // nothing happened worth publishing
+      switch (msg.type) {
+        case 'pause':
+          if (status === 'paused') continue // no state change, no yield
+          status = 'paused'
+          break
+        case 'resume':
+          if (status !== 'paused') continue
+          status = 'idle'
+          soon(() => self.cast({ type: 'poll' }), 0)
+          break
+        case 'poll': {
+          if (status === 'paused') continue
+          const job = await opts.queue.reserve(opts.leaseMs)
+          if (job === undefined) {
+            soon(() => self.cast({ type: 'poll' }), opts.idleMs)
+            if (status === 'idle') continue // nothing happened worth publishing
+            status = 'idle'
+            holding = null
+            yield state()
+            continue
+          }
+
+          // holding a lease: if this process dies here, the lease expires and
+          // somebody else gets the job — which is what at-least-once means
+          status = 'working'
+          holding = job.id
+          yield state()
+
+          try {
+            const result = await opts.handle(job, self.signal)
+            await opts.queue.ack(job.id)
+            done = [...done.slice(-5), result]
+          } catch {
+            await opts.queue.release(job.id) // failed, not died: give it back now
+            failed++
+          }
           status = 'idle'
           holding = null
-          yield state()
-          continue
+          soon(() => self.cast({ type: 'poll' }), 0)
+          break
         }
-
-        // holding a lease: if this process dies here, the lease expires and
-        // somebody else gets the job — which is what at-least-once means
-        status = 'working'
-        holding = job.id
-        yield state()
-
-        try {
-          const result = await opts.handle(job, self.signal)
-          await opts.queue.ack(job.id)
-          done = [...done.slice(-5), result]
-        } catch {
-          await opts.queue.release(job.id) // failed, not died: give it back now
-          failed++
-        }
-        status = 'idle'
-        holding = null
-        soon(() => self.cast({ type: 'poll' }), 0)
       }
       yield state()
     }

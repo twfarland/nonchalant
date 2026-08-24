@@ -36,11 +36,14 @@ const counter: Proc<{ n: number }, CounterMsg, { start: number }> = async functi
   let n = start
   yield { n }
   for await (const msg of self) {
-    if (msg.type === 'add') {
-      n += msg.n
-      yield { n }
-    } else {
-      msg.reply({ n })
+    switch (msg.type) {
+      case 'add':
+        n += msg.n
+        yield { n }
+        break
+      case 'get':
+        msg.reply({ n })
+        break
     }
   }
 }

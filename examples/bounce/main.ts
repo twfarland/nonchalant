@@ -22,26 +22,30 @@ const world: Proc<World, Msg, void> = async function* (self) {
   let nextId = 1
   yield { balls }
   for await (const msg of self) {
-    if (msg.type === 'add') {
-      if (balls.length >= 40) balls = balls.slice(1)
-      balls = [...balls, {
-        id: nextId++,
-        x: msg.x, y: msg.y,
-        vx: (Math.random() - 0.5) * 6, vy: -3 - Math.random() * 3,
-        hue: Math.floor(Math.random() * 360),
-      }]
-    } else {
-      const d = msg.delta
-      balls = balls.map((b) => {
-        let { x, y, vx, vy } = b
-        vy += 0.35 * d
-        x += vx * d
-        y += vy * d
-        if (x < R) { x = R; vx = Math.abs(vx) }
-        if (x > W - R) { x = W - R; vx = -Math.abs(vx) }
-        if (y > H - R) { y = H - R; vy = -Math.abs(vy) * 0.85 }
-        return { ...b, x, y, vx, vy }
-      })
+    switch (msg.type) {
+      case 'add':
+        if (balls.length >= 40) balls = balls.slice(1)
+        balls = [...balls, {
+          id: nextId++,
+          x: msg.x, y: msg.y,
+          vx: (Math.random() - 0.5) * 6, vy: -3 - Math.random() * 3,
+          hue: Math.floor(Math.random() * 360),
+        }]
+        break
+      case 'tick': {
+        const d = msg.delta
+        balls = balls.map((b) => {
+          let { x, y, vx, vy } = b
+          vy += 0.35 * d
+          x += vx * d
+          y += vy * d
+          if (x < R) { x = R; vx = Math.abs(vx) }
+          if (x > W - R) { x = W - R; vx = -Math.abs(vx) }
+          if (y > H - R) { y = H - R; vy = -Math.abs(vy) * 0.85 }
+          return { ...b, x, y, vx, vy }
+        })
+        break
+      }
     }
     yield { balls }
   }

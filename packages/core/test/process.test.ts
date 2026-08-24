@@ -128,13 +128,16 @@ const cart: Proc<number, CartMsg, { start: number }> = async function* (self, ar
   let sum = args.start
   yield sum
   for await (const msg of self) {
-    if (msg.type === 'add') {
-      sum += msg.n
-      yield sum
-    } else if (msg.type === 'sum') {
-      msg.reply({ sum })
-    } else {
-      throw new Error('boom')
+    switch (msg.type) {
+      case 'add':
+        sum += msg.n
+        yield sum
+        break
+      case 'sum':
+        msg.reply({ sum })
+        break
+      case 'boom':
+        throw new Error('boom')
     }
   }
 }

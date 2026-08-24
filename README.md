@@ -1,5 +1,12 @@
 # Nonchalant
 
+> [!WARNING]
+> **Experimental alpha software.** This is a research project, not a product.
+> Nothing is published to npm, there is no versioning policy, and the API, the
+> wire protocol, and the package names may all change without notice or a
+> migration path. Read it, run the demos, take the ideas — but do not put it in
+> production.
+
 Nonchalant is an experimental TypeScript runtime for managing state with async
 generators. Optional packages add DOM rendering and remote connections. Each
 process owns its state, handles messages in order, publishes snapshots, and has

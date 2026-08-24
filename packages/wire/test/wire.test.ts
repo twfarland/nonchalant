@@ -25,16 +25,20 @@ const cart: Proc<CartState, CartMsg, void> = async function* (self) {
   let s: CartState = { items: [{ done: false }, { done: false }, { done: false }], total: 0 }
   yield s
   for await (const msg of self) {
-    if (msg.type === 'toggle') {
-      s = { ...s, items: s.items.map((it, i) => (i === msg.i ? { ...it, done: !it.done } : it)) }
-      yield s
-    } else if (msg.type === 'total') {
-      s = { ...s, total: msg.n }
-      yield s
-    } else if (msg.type === 'count') {
-      msg.reply(s.items.length)
-    } else {
-      throw new Error('boom')
+    switch (msg.type) {
+      case 'toggle':
+        s = { ...s, items: s.items.map((it, i) => (i === msg.i ? { ...it, done: !it.done } : it)) }
+        yield s
+        break
+      case 'total':
+        s = { ...s, total: msg.n }
+        yield s
+        break
+      case 'count':
+        msg.reply(s.items.length)
+        break
+      case 'boom':
+        throw new Error('boom')
     }
   }
 }

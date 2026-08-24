@@ -27,25 +27,30 @@ const drawing: Proc<Circle[], DrawMsg, void> = async function* (self) {
   }
   yield circles
   for await (const msg of self) {
-    if (msg.type === 'add') {
-      snapshot(circles)
-      circles = [...circles, { id: nextId++, x: msg.x, y: msg.y, r: 20 }]
-    } else if (msg.type === 'resize') {
-      if (dragBase === null) dragBase = circles
-      circles = circles.map((c) => (c.id === msg.id ? { ...c, r: msg.r } : c))
-    } else if (msg.type === 'commit') {
-      // the whole drag is one undo step: snapshot what it started from
-      if (dragBase !== null && dragBase !== circles) snapshot(dragBase)
-      dragBase = null
-      continue
-    } else if (msg.type === 'undo') {
-      if (past.length === 0) continue
-      future.push(circles)
-      circles = past.pop() as Circle[]
-    } else {
-      if (future.length === 0) continue
-      past.push(circles)
-      circles = future.pop() as Circle[]
+    switch (msg.type) {
+      case 'add':
+        snapshot(circles)
+        circles = [...circles, { id: nextId++, x: msg.x, y: msg.y, r: 20 }]
+        break
+      case 'resize':
+        if (dragBase === null) dragBase = circles
+        circles = circles.map((c) => (c.id === msg.id ? { ...c, r: msg.r } : c))
+        break
+      case 'commit':
+        // the whole drag is one undo step: snapshot what it started from
+        if (dragBase !== null && dragBase !== circles) snapshot(dragBase)
+        dragBase = null
+        continue
+      case 'undo':
+        if (past.length === 0) continue
+        future.push(circles)
+        circles = past.pop() as Circle[]
+        break
+      case 'redo':
+        if (future.length === 0) continue
+        past.push(circles)
+        circles = future.pop() as Circle[]
+        break
     }
     yield circles
   }

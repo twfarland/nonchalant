@@ -16,11 +16,17 @@ export const cart: Proc<CartState, CartMsg, { userId: string }> = async function
   const total = (): number => items.reduce((sum, it) => sum + it.price, 0)
   yield { items, total: 0 }
   for await (const msg of self) {
-    if (msg.type === 'add') items = [...items, msg.item]
-    else if (msg.type === 'remove') items = items.filter((it) => it.name !== msg.name)
-    else {
-      msg.reply({ ok: true, charged: total() })
-      items = []
+    switch (msg.type) {
+      case 'add':
+        items = [...items, msg.item]
+        break
+      case 'remove':
+        items = items.filter((it) => it.name !== msg.name)
+        break
+      case 'checkout':
+        msg.reply({ ok: true, charged: total() })
+        items = []
+        break
     }
     yield { items, total: total() }
   }

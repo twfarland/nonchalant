@@ -35,16 +35,21 @@ export const budget = (limit: number): Proc<BudgetState, BudgetMsg, void> =>
     let refused = 0
     yield { spent, limit: cap, refused }
     for await (const msg of self) {
-      if (msg.type === 'reset') {
-        spent = 0
-        refused = 0
-        cap = msg.limit
-      } else if (spent + msg.tokens > cap) {
-        refused++
-        msg.reply({ ok: false, left: cap - spent })
-      } else {
-        spent += msg.tokens
-        msg.reply({ ok: true, left: cap - spent })
+      switch (msg.type) {
+        case 'reset':
+          spent = 0
+          refused = 0
+          cap = msg.limit
+          break
+        case 'spend':
+          if (spent + msg.tokens > cap) {
+            refused++
+            msg.reply({ ok: false, left: cap - spent })
+          } else {
+            spent += msg.tokens
+            msg.reply({ ok: true, left: cap - spent })
+          }
+          break
       }
       yield { spent, limit: cap, refused }
     }

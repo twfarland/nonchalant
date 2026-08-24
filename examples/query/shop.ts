@@ -21,13 +21,17 @@ export const shop = registry({
     async function* (self, { id }) {
       yield await getUser(id)
       for await (const msg of self) {
-        if (msg.type === 'refresh') {
-          yield await getUser(id)
-        } else {
-          const updated = await renameUser(id, msg.name) // a throw rejects the call; restart re-syncs
-          msg.reply(updated)
-          yield updated // write-through: the new state, no refetch
-          shop.lookup('users').cast({ type: 'refresh' }) // the one explicit ripple
+        switch (msg.type) {
+          case 'refresh':
+            yield await getUser(id)
+            break
+          case 'rename': {
+            const updated = await renameUser(id, msg.name) // a throw rejects the call; restart re-syncs
+            msg.reply(updated)
+            yield updated // write-through: the new state, no refetch
+            shop.lookup('users').cast({ type: 'refresh' }) // the one explicit ripple
+            break
+          }
         }
       }
     },

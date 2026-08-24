@@ -32,13 +32,17 @@
 <pre><code>user: define&lt;User, UserMsg, { id: number }&gt;(<span class="k">async</span> <span class="k">function</span>* (self, { id }) {
   <span class="k">yield</span> <span class="k">await</span> getUser(id)
   <span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> msg <span class="k">of</span> self) {
-    <span class="k">if</span> (msg.<span class="k">type</span> === <span class="s">'refresh'</span>) {
-      <span class="k">yield</span> <span class="k">await</span> getUser(id)
-    } <span class="k">else</span> {
-      <span class="k">const</span> updated = <span class="k">await</span> renameUser(id, msg.name)  <span class="c">// a throw rejects the call</span>
-      msg.reply(updated)
-      <span class="k">yield</span> updated                                   <span class="c">// write-through</span>
-      shop.lookup(<span class="s">'users'</span>).cast({ <span class="k">type</span>: <span class="s">'refresh'</span> })  <span class="c">// the one explicit ripple</span>
+    <span class="k">switch</span> (msg.<span class="k">type</span>) {
+      <span class="k">case</span> <span class="s">'refresh'</span>:
+        <span class="k">yield</span> <span class="k">await</span> getUser(id)
+        <span class="k">break</span>
+      <span class="k">case</span> <span class="s">'rename'</span>: {
+        <span class="k">const</span> updated = <span class="k">await</span> renameUser(id, msg.name)  <span class="c">// a throw rejects the call</span>
+        msg.reply(updated)
+        <span class="k">yield</span> updated                                   <span class="c">// write-through</span>
+        shop.lookup(<span class="s">'users'</span>).cast({ <span class="k">type</span>: <span class="s">'refresh'</span> })  <span class="c">// the one explicit ripple</span>
+        <span class="k">break</span>
+      }
     }
   }
 }, { evict: 60_000, restart: <span class="s">'on-crash'</span> })</code></pre>

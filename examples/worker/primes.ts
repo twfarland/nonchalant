@@ -55,26 +55,31 @@ export const primes: Proc<PrimesState, PrimesMsg, void> = async function* (self)
 
   yield state()
   for await (const msg of self) {
-    if (msg.type === 'start') {
-      if (running) continue // no state change, no yield
-      running = true
-      soon(() => self.cast({ type: 'grind' }))
-    } else if (msg.type === 'stop') {
-      if (!running) continue
-      running = false
-    } else if (msg.type === 'reset') {
-      running = false
-      found.length = 0
-      cursor = FROM
-      tested = 0
-    } else if (msg.type === 'export') {
-      msg.reply([...found]) // an answer is not a state change
-      continue
-    } else {
-      if (!running) continue // a chunk queued behind a stop
-      for (let i = 0; i < CHUNK; i++, cursor += 2) if (isPrime(cursor)) found.push(cursor)
-      tested += CHUNK
-      soon(() => self.cast({ type: 'grind' })) // the next chunk is just the next message
+    switch (msg.type) {
+      case 'start':
+        if (running) continue // no state change, no yield
+        running = true
+        soon(() => self.cast({ type: 'grind' }))
+        break
+      case 'stop':
+        if (!running) continue
+        running = false
+        break
+      case 'reset':
+        running = false
+        found.length = 0
+        cursor = FROM
+        tested = 0
+        break
+      case 'export':
+        msg.reply([...found]) // an answer is not a state change
+        continue
+      case 'grind':
+        if (!running) continue // a chunk queued behind a stop
+        for (let i = 0; i < CHUNK; i++, cursor += 2) if (isPrime(cursor)) found.push(cursor)
+        tested += CHUNK
+        soon(() => self.cast({ type: 'grind' })) // the next chunk is just the next message
+        break
     }
     yield state()
   }

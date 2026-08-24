@@ -66,7 +66,11 @@ const cart: Proc<Cart, CartMsg, void> = async function* (self) {
   let s: Cart = { items: [], total: 0 }
   yield s
   for await (const msg of self) {
-    if (msg.type === 'add') s = { ...s, items: [...s.items, msg.item] }
+    switch (msg.type) {
+      case 'add':
+        s = { ...s, items: [...s.items, msg.item] }
+        break
+    }
     yield s
   }
 }
@@ -127,8 +131,15 @@ type CartMsg =
   | Cast<{ type: 'add'; item: Item }>
   | Call<{ type: 'checkout' }, { ok: boolean; charged: number }>
 
-// inside the generator, a call carries a reply function:
-if (msg.type === 'checkout') msg.reply({ ok: true, charged: total })
+// inside the generator, one case per message; a call carries a reply function:
+switch (msg.type) {
+  case 'add':
+    items = [...items, msg.item]
+    break
+  case 'checkout':
+    msg.reply({ ok: true, charged: total })
+    break
+}
 
 // outside:
 const res = await cart.call({ type: 'checkout' })   // the reply, typed

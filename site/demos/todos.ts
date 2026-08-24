@@ -27,12 +27,17 @@ const todos: Proc<State, Msg, void> = async function* (self) {
   let s = initial
   yield s
   for await (const msg of self) {
-    if (msg.type === 'add')
-      s = { todos: [...s.todos, { id: s.nextId, title: msg.title, done: false }], nextId: s.nextId + 1 }
-    else if (msg.type === 'toggle')
-      s = { ...s, todos: s.todos.map((t) => (t.id === msg.id ? { ...t, done: !t.done } : t)) }
-    else
-      s = { ...s, todos: s.todos.filter((t) => t.id !== msg.id) }
+    switch (msg.type) {
+      case 'add':
+        s = { todos: [...s.todos, { id: s.nextId, title: msg.title, done: false }], nextId: s.nextId + 1 }
+        break
+      case 'toggle':
+        s = { ...s, todos: s.todos.map((t) => (t.id === msg.id ? { ...t, done: !t.done } : t)) }
+        break
+      case 'remove':
+        s = { ...s, todos: s.todos.filter((t) => t.id !== msg.id) }
+        break
+    }
     yield s
   }
 }
