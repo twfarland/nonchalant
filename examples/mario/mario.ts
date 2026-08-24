@@ -1,4 +1,5 @@
-// Mario — the golden demo, ported from the classic Elm-architecture example.
+// Mario — the golden demo, ported from the classic Elm-architecture example
+// (https://elm-lang.org/examples/mario).
 // The physics is verbatim. The architecture matters: in signal libraries where
 // input events and animation frames merge into one stream, holding a key down
 // steps the physics twice per frame. Here arrows are plain state inside the
@@ -76,12 +77,13 @@ export const mario: Proc<MarioState, MarioMsg, void> = async function* (self) {
 
 export type Dims = { w: number; h: number }
 
-export const sprite = (m: MarioState): string => {
+/** `base` is where the sprite folders live, relative to the page. */
+export const sprite = (m: MarioState, base = 'img/mario'): string => {
   const verb = m.y > 0 ? 'jump' : m.vx !== 0 ? 'walk' : 'stand'
-  return `img/mario/${verb}/${m.dir === 'LEFT' ? 'left' : 'right'}.gif`
+  return `${base}/${verb}/${m.dir === 'LEFT' ? 'left' : 'right'}.gif`
 }
 
-export function MarioView(m: Process<MarioState>, dims: Process<Dims>): VNode {
+export function MarioView(m: Process<MarioState>, dims: Process<Dims>, base?: string): VNode {
   return div(
     {
       style: () =>
@@ -92,7 +94,7 @@ export function MarioView(m: Process<MarioState>, dims: Process<Dims>): VNode {
         `width: ${dims().w}px; height: 50px; background: rgb(74,167,43); position: absolute; bottom: 0px;`,
     }),
     img({
-      src: () => sprite(m()),
+      src: () => sprite(m(), base),
       style: () => `position: absolute; z-index: 1; bottom: ${m().y + 46}px; left: ${m().x}px;`,
     }),
   )

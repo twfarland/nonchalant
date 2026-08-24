@@ -101,8 +101,10 @@ const res = await cart.ask({ type: 'checkout' })   // res is typed; crash = reje
   a deployed host needs authentication.
 
 ```ts
-const shop = registry({ cart: define(cart) })                  // local
-// const shop = connect<Shop>(webSocketTransport('wss://…'))   // remote, same interface
+const shop = registry({ cart: define(cart) })                       // this tab
+// const shop = connect<Shop>(portTransport(new Worker(url)))       // another thread
+// const shop = connect<Shop>(broadcastChannelTransport('shop'))    // another tab
+// const shop = connect<Shop>(webSocketTransport('wss://…'))        // another machine
 ```
 
 - **Processes test as transcripts.** `Self` is an interface and `channel()`
@@ -168,7 +170,7 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 |---|---|
 | `@nonchalant/core` | `Process`, `spawn`, `derive`, the registry, `reconcile`, the reactive graph. Zero dependencies, no DOM. |
 | `@nonchalant/dom` | tag constructors, `h()`, the DOM sink, keyed reconciliation, `mount`. |
-| `@nonchalant/wire` | the protocol, codec, transports (WebSocket, BroadcastChannel, in-memory), `connect`. Isomorphic. |
+| `@nonchalant/wire` | the protocol, codec, transports (WebSocket, worker port, BroadcastChannel, in-memory), `connect`. Isomorphic. |
 | `@nonchalant/host` | the Node WebSocket host: handshake authorization, origin policy, per-connection registry scoping, and connection limits. |
 
 ## Credits and prior art

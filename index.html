@@ -153,7 +153,7 @@ const res = await cart.ask({ type: 'checkout' }) // res is typed; a crash reject
 <section id="demos">
   <div class="sec-head"><span class="sec-num">04</span><h2>Live demos</h2></div>
 
-  <p class="lede">Every demo below is running on this page right now — the real library, no server anywhere. The listing under each one is the program above it: the same file, imported twice, once to run and once to read.</p>
+  <p class="lede">Every demo below is running on this page right now — the real library, no server anywhere, and one of them on a Worker thread. The listing under each one is the program above it: the same file, imported twice, once to run and once to read.</p>
 
   <div class="demo" data-demo="counter">
     <div class="demo-head">
@@ -209,8 +209,38 @@ const res = await cart.ask({ type: 'checkout' }) // res is typed; a crash reject
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
 
+  <div class="demo" data-demo="worker">
+    <div class="demo-head">
+      <span class="demo-title">Worker</span>
+      <span class="demo-note">the state process is on another thread · the hand keeps its frame rate</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <p>The grinder above is doing something deliberately stupid — trial division above a trillion, in 30&nbsp;ms chunks — on a Worker thread. The page reads it exactly as it reads a process in this tab, and the hand keeps turning because this thread has nothing to do but draw. The whole worker half is four lines:</p>
+
+<pre><code data-ts>
+import { define, registry } from '@nonchalant/core'
+import { expose, portTransport, workerEndpoint } from '@nonchalant/wire'
+import { primes } from './primes.ts'
+
+expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))
+</code></pre>
+
+  <div class="demo" data-demo="mario">
+    <div class="demo-head">
+      <span class="demo-title">Mario</span>
+      <span class="demo-note">click the stage, then arrow keys · up to jump</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <p>Mario is a port of the classic <a href="https://elm-lang.org/examples/mario">Elm example</a>, physics verbatim. The interesting part is what a process does to the input: arrows are <em>state</em> inside it and only ticks step the world, so holding a key down cannot double-step the physics the way merged input/frame streams do. The view yields once — every frame after that is two attribute bindings, which CI pins at one view yield, at most 3&nbsp;DOM writes per frame, and zero node churn.</p>
+
   <div class="note">
-    <b>More, and bigger.</b> The full ladder — TodoMVC, a router with code splitting, undo/redo as function composition, a query cache with write-through mutations, a canvas and a DOM renderer driven by one process, the seven GUIs, and a 60&nbsp;fps Mario — is in the <a href="./examples/">example gallery</a>. Everything there runs in the browser alone except the chat demo, which wants a local WebSocket host.
+    <b>More, and bigger.</b> The full ladder — TodoMVC, a router with code splitting, undo/redo as function composition, a query cache with write-through mutations, a canvas and a DOM renderer driven by one process, the seven GUIs, and Mario at full size — is in the <a href="./examples/">example gallery</a>. Everything there runs in the browser alone except the chat demo, which wants a local WebSocket host.
   </div>
 </section>
 
@@ -246,18 +276,37 @@ yield s                                     // diffed → only /total readers wa
 <section id="wire">
   <div class="sec-head"><span class="sec-num">06</span><h2>Over the wire</h2></div>
 
-  <p><code>lookup(name, args)</code> is one operation doing three jobs: dependency injection, query caching, and — once a transport is involved — remote addressing. Swapping a local registry for a connection keeps the interface, so the process and the view do not change:</p>
+  <p><code>lookup(name, args)</code> is one operation doing three jobs: dependency injection, query caching, and — once a transport is involved — remote addressing. A transport is only <code>send</code> plus <code>subscribe</code> over something ordered and reliable, which a socket, a worker port, and a tab-to-tab bus all are. So the choice of <em>where the state lives</em> is one line, and it is the only line that changes:</p>
 
 <pre><code data-ts>
-const shop = registry({ cart: define(cart) })                  // state lives in this tab
-const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))      // state lives on a server
+const shop = registry({ cart: define(cart) })                        // this tab
+const shop = connect&lt;Shop&gt;(portTransport(new Worker(url)))           // another thread
+const shop = connect&lt;Shop&gt;(broadcastChannelTransport('shop'))        // another tab
+const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // another machine
 </code></pre>
 
-  <p>What crosses is a patch of plain data — never markup, never code — so the browser keeps rendering and local interaction, and any language can implement the host half against the conformance vectors. A crashed process on the host shows up here as <code>stale: true</code> with the last value intact; reconnecting is not a special case, just a re-lookup that answers with a full snapshot.</p>
+  <p>Everything downstream of that line is identical in all four cases, and it is identical because it is the same code, not because four backends were made to look alike:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>The same at every distance</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>The process itself</td><td>It never learns where it runs. <code>examples/shared-cart</code> ships one definition the tab and the Node host both execute; <a href="./examples/worker/">examples/worker</a> runs one definition on either side of a thread boundary, switchable while it runs.</td></tr>
+      <tr><td><code>send</code> and <code>ask</code></td><td>A cast is one op on the wire, a call is a correlated pair. The compiler still refuses to <code>send</code> a call or <code>ask</code> a cast.</td></tr>
+      <tr><td>Fine-grained updates</td><td>A remote process <em>is</em> a local process that applies patches, so a binding on <code>/items/3/done</code> sleeps through a change to <code>/total</code> whether the yield came from this thread or a datacentre.</td></tr>
+      <tr><td>Loading and failure</td><td><code>pending</code>, <code>stale</code>, <code>error</code> are ordinary reads. A dead host reads exactly like a crashed local process: last value intact, <code>stale: true</code>.</td></tr>
+      <tr><td>Teardown</td><td><code>Symbol.dispose</code> releases the watch, and the host reclaims the process when the last watcher leaves.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>What crosses is a patch of plain data — never markup, never code. That is what keeps rendering and local interaction on the client, keeps the payload proportional to the change rather than the page, and lets any language implement the host half against the conformance vectors in <code>packages/wire/spec/</code>. Reconnecting is not a special case either: the client looks its names up again and the first yield after any lookup is a full snapshot, which diffs against what it kept — so readers of unchanged paths sleep straight through the outage.</p>
+
+  <p>The distance is not free, and the library does not pretend otherwise. State has to be JSON-shaped; a <code>Date</code> or a class instance is an atomic leaf that will not survive a remote lookup. Calls can fail and arrive late. The published schema is a whitelist of names, not an identity check — authorization belongs at the host and inside the processes. Those costs are real; what the wire removes is the second implementation of your application state.</p>
 
   <div class="note"><b>These demos need a terminal, not a server you have to deploy.</b> The chat room and the shared cart run against a local Node host — <code>pnpm chat-server</code> or <code>pnpm cart-server</code>, then open the page from <code>pnpm dev</code>. The shared-cart page also runs standalone with its state in the tab: one commented line swaps between the two. Before putting a host on the internet, read <a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a> — origin policy, authorization, per-connection scoping, and the limits that are not on by default.</div>
 
-  <p>One demo needs no server but does need two tabs: <a href="./examples/multi-tab/">multi-tab</a> elects one tab as the host over a <code>BroadcastChannel</code>, and moves the job when you close it. Open it twice.</p>
+  <p>Two of them need no server at all. <a href="./examples/multi-tab/">multi-tab</a> elects one tab as the host over a <code>BroadcastChannel</code> and moves the job when you close it — open it twice. <a href="./examples/worker/">worker</a> puts the grinder from the demo above on a thread, with a switch that moves it back and forth while it runs: the numbers are identical either way, and only the frame meter can tell.</p>
 </section>
 
 <section id="more">

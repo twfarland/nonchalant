@@ -30,8 +30,8 @@ expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))</c
 <pre><code><span class="k">const</span> there = connect&lt;Lab&gt;(portTransport(<span class="k">new</span> Worker(<span class="k">new</span> URL(<span class="s">'./worker.ts'</span>, <span class="k">import</span>.meta.url), { type: <span class="s">'module'</span> })))
 <span class="k">const</span> here  = registry({ primes: define(primes) })   <span class="c">// the same definition, this thread</span></code></pre>
 <p>The switch flips between those two registries at runtime. <code>start</code>, <code>stop</code> and <code>reset</code> are the same casts either way; the state arrives as the same patches. What differs is who does the arithmetic: on this thread the grinder shares the frame budget with the hand, and the worst-frame number climbs from about 17 ms to the length of one chunk.</p>
-<p><code>portTransport</code> is userland — about twenty lines over <code>postMessage</code>, in <code>examples/lib/port.ts</code>. It needs no reconnect story: a port never drops, and messages posted before the worker has evaluated its script are queued rather than lost.</p>
-<pre><code><span class="k">export function</span> portTransport(port: Endpoint): Transport {
+<p><code>portTransport</code> is the third transport in the box, next to the WebSocket and BroadcastChannel ones — twenty lines over <code>postMessage</code>. It takes a port rather than making one, so the same function serves a <code>Worker</code>, a <code>MessagePort</code>, or a worker's own global. It needs no reconnect story: a port does not drop, and messages posted before the worker has evaluated its script are queued rather than lost.</p>
+<pre><code><span class="k">export function</span> portTransport(port: MessageEndpoint): Transport {
   <span class="k">let</span> handlers: TransportHandlers | <span class="k">null</span> = <span class="k">null</span>
   port.addEventListener(<span class="s">'message'</span>, (ev) =&gt; {
     <span class="k">if</span> (<span class="k">typeof</span> ev.data === <span class="s">'string'</span>) handlers?.message(ev.data)

@@ -5,8 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { define, registry, spawn } from '@nonchalant/core'
 import type { Process } from '@nonchalant/core'
-import { connect, expose } from '@nonchalant/wire'
-import { portTransport, type Endpoint } from '../lib/port.ts'
+import { connect, expose, portTransport, type MessageEndpoint } from '@nonchalant/wire'
 import { CHUNK, primes, type Lab, type PrimesMsg, type PrimesState } from './primes.ts'
 
 type Grinder = Process<PrimesState | undefined, PrimesMsg>
@@ -41,8 +40,8 @@ describe('primes: a process that grinds', () => {
 describe('primes over a port', () => {
   it('carries state as patches and the full list only when asked', async () => {
     const { port1, port2 } = new MessageChannel()
-    const stopHosting = expose(registry({ primes: define(primes) }), portTransport(port1 as unknown as Endpoint))
-    const there = connect<Lab>(portTransport(port2 as unknown as Endpoint))
+    const stopHosting = expose(registry({ primes: define(primes) }), portTransport(port1 as unknown as MessageEndpoint))
+    const there = connect<Lab>(portTransport(port2 as unknown as MessageEndpoint))
     const remote = there.lookup('primes') as Grinder
 
     await until(() => remote() !== undefined, 'the first snapshot')

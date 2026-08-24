@@ -13,6 +13,8 @@ import { run as typeahead } from './demos/typeahead.ts'
 import { run as form } from './demos/form.ts'
 import { run as drag } from './demos/drag.ts'
 import { run as shared } from './demos/shared.ts'
+import { run as worker } from './demos/worker.ts'
+import { run as mario } from './demos/mario.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -137,6 +139,51 @@ describe('site demos', () => {
     clear?.click()
     await settle()
     expect(readout()).toBe('0 items · $0')
+  })
+
+  // no Worker in a DOM shim, so this exercises the demo's other host: the same
+  // registry exposed in this thread over a MessageChannel. What is under test
+  // is that the page's code path does not care which one it got.
+  it('worker: the grinder is reached over a port and counts up', async () => {
+    const el = host()
+    const demo = worker(el)
+    await settle()
+    const readout = (): string => el.querySelector('.readout')?.textContent ?? ''
+    expect(readout()).toBe('0 tested · 0 primes · last —')
+
+    const start = [...el.querySelectorAll('button')].find((b) => b.textContent === 'grind primes')
+    start?.click()
+    await new Promise((resolve) => setTimeout(resolve, 300)) // a couple of chunks
+    flush()
+    expect(Number(readout().split(' ')[0])).toBeGreaterThan(0)
+
+    const stop = [...el.querySelectorAll('button')].find((b) => b.textContent === 'stop')
+    stop?.click()
+    await settle()
+    demo[Symbol.dispose]()
+  })
+
+  it('mario: the stage owns its keyboard and the sprite tracks the walk', async () => {
+    const el = host()
+    const demo = mario(el)
+    await settle()
+    const stage = el.querySelector('.mariostage') as HTMLElement
+    const sprite = (): string => el.querySelector('img')?.getAttribute('src') ?? ''
+    expect(stage.getAttribute('tabindex')).toBe('0') // arrows belong to the stage, not the page
+    expect(sprite()).toContain('stand/left')
+
+    stage.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 120)) // a few animation frames
+    flush()
+    expect(sprite()).toContain('walk/right')
+    const left = el.querySelector('img')?.getAttribute('style') ?? ''
+    expect(left).toContain('left: ')
+
+    stage.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    flush()
+    expect(sprite()).toContain('stand/right')
+    demo[Symbol.dispose]()
   })
 })
 

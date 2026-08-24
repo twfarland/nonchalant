@@ -8,10 +8,9 @@
 
 import { cell, define, derive, registry, spawn } from '@nonchalant/core'
 import type { Plain, Proc, Process, VNode } from '@nonchalant/core'
-import { connect } from '@nonchalant/wire'
+import { connect, portTransport } from '@nonchalant/wire'
 import { mount } from '@nonchalant/dom'
 import { button, div, li, span, ul } from '@nonchalant/dom/tags'
-import { portTransport } from '../lib/port.ts'
 import { primes, FROM, type Lab, type PrimesMsg, type PrimesState } from './primes.ts'
 
 type Grinder = Process<PrimesState | undefined, PrimesMsg>

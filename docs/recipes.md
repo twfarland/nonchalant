@@ -134,9 +134,10 @@ job — moves to another. The protocol never assumed a server, just a transport.
 A transport carries ordered, reliable strings; the port to a worker is one. The
 worker calls `expose(registry({...}), portTransport(workerEndpoint()))`, the tab
 calls `connect(portTransport(new Worker(...)))`, and a heavy process runs off
-the thread that draws while its state arrives as ordinary patches. The transport
-is ~20 lines of userland `postMessage` (`examples/lib/port.ts`) and needs no
-reconnect story: a port does not drop.
+the thread that draws while its state arrives as ordinary patches. `portTransport`
+takes a port rather than making one, so a `MessagePort` or worker_threads'
+`parentPort` works the same way, and it needs no reconnect story: a port does
+not drop.
 
 Two things to keep in mind when a process grinds on its own:
 

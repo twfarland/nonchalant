@@ -23,10 +23,10 @@ are self-contained — no backends required.
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | the standard krausest benchmark app, keyed |
 
-`lib/` holds constructs written as if they were libraries — the router (hash
-and History-API flavors, replace-by-default navigation) and a `postMessage`
-transport — to show what defining your own costs here: no plugin API, no
-framework hooks, just processes. Every demo page explains its own mechanism inline, with the
+`lib/` holds constructs written as if they were libraries — currently the
+router (hash and History-API flavors, replace-by-default navigation) — to
+show what defining your own costs here: no plugin API, no framework hooks,
+just processes. Every demo page explains its own mechanism inline, with the
 load-bearing code readable next to the running thing.
 
 ## Running them

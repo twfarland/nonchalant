@@ -118,3 +118,48 @@ export function broadcastChannelTransport(
     close: () => ch.close(),
   }
 }
+
+/** The postMessage surface shared by a Worker, a MessagePort, and a worker's own global scope. */
+export interface MessageEndpoint {
+  postMessage(data: unknown): void
+  addEventListener(type: 'message', fn: (ev: { data?: unknown }) => void): void
+  /** A MessagePort stays silent until started; a Worker has no such method. */
+  start?(): void
+}
+
+/**
+ * A transport over an already-connected port: `new Worker(...)` and a
+ * `MessagePort` on one side, the worker's own global on the other. It takes
+ * the endpoint rather than making one, so it is equally at home on
+ * `worker_threads`' `parentPort`.
+ *
+ * No reconnect story and no announce: a port does not drop, and messages
+ * posted before the worker has evaluated its script are queued, not lost.
+ */
+export function portTransport(port: MessageEndpoint): Transport {
+  let handlers: TransportHandlers | null = null
+  port.addEventListener('message', (ev) => {
+    if (typeof ev.data !== 'string') return // not ours: other postMessage traffic on the same port
+    handlers?.message(ev.data)
+  })
+  port.start?.()
+  return {
+    send: (data) => port.postMessage(data),
+    subscribe: (h) => {
+      handlers = h
+      queueMicrotask(() => h.open?.())
+      return () => {
+        if (handlers === h) handlers = null
+      }
+    },
+  }
+}
+
+/**
+ * Inside a browser Worker the global scope is the port back to whoever spawned
+ * it (TypeScript's DOM lib types `self` as a Window, hence this). In Node's
+ * worker_threads it is `parentPort` instead — pass that to portTransport.
+ */
+export function workerEndpoint(): MessageEndpoint {
+  return globalThis as unknown as MessageEndpoint
+}

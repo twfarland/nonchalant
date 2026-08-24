@@ -307,6 +307,17 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .dragfield { position: relative; height: 150px; border: 1px dashed var(--rule-2); border-radius: 5px; overflow: hidden; }
 
+/* the worker demo's idle-thread proof: a hand drawn by this thread, per frame */
+.sweep { position: relative; width: 34px; height: 34px; border: 1px solid var(--rule-2); border-radius: 50%; }
+.hand { position: absolute; left: 50%; top: 50%; width: 2px; height: 13px; margin-left: -1px; background: var(--ink); transform-origin: 50% 0; }
+
+/* mario keeps the keyboard to itself: the stage is focusable, the page is not hijacked */
+.mariostage {
+  position: relative; height: 200px; overflow: hidden;
+  border: 1px solid var(--rule-2); border-radius: 5px; align-self: stretch;
+}
+.mariostage:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
 footer {
   margin-top: 96px; padding-top: 26px; border-top: 1px solid var(--rule-2);
   font-family: var(--f-ui); font-size: 12.5px; color: var(--ink-3); line-height: 1.7;

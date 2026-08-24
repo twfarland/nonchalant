@@ -171,9 +171,10 @@ nothing special: look the name up again, get the full state, diff it against
 what you kept. The WebSocket transport redials on its own, with exponential
 backoff jittered to 50–100% of each step so a fleet of clients doesn't
 stampede a restarting host; `retryDelay` tunes the base. A transport is only
-`send` plus `subscribe`, so the port to a Web Worker is one as well — the same
-two calls put a heavy process on another thread (`examples/worker`, over the
-twenty-line `postMessage` transport in `examples/lib/port.ts`).
+`send` plus `subscribe`, so the port to a Web Worker is one as well:
+`portTransport(new Worker(...))` here, `portTransport(workerEndpoint())` there,
+and a heavy process is on another thread with the calling code unchanged
+(`examples/worker`).
 
 The format is documented for other languages in `packages/wire/spec/` — the
 JSON vectors there are the contract, and this repo's CI runs them too.

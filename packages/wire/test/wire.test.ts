@@ -5,7 +5,7 @@ import { connect, WireError } from '../src/client.ts'
 import { expose } from '../src/host.ts'
 import { decodeClient, decodeHost, encode, type ClientMsg, type HostMsg } from '../src/protocol.ts'
 import { memoryPair } from '../src/transport.ts'
-import { broadcastChannelTransport, webSocketTransport } from '../src/transports.ts'
+import { broadcastChannelTransport, portTransport, webSocketTransport, type MessageEndpoint } from '../src/transports.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 const until = async (cond: () => boolean): Promise<void> => {
@@ -279,6 +279,27 @@ describe('websocket transport backoff', () => {
       if (prevWS === undefined) delete g.WebSocket
       else g.WebSocket = prevWS
     }
+  })
+})
+
+describe('port transport', () => {
+  it('carries a whole session between two ends of a port', async () => {
+    const { port1, port2 } = new MessageChannel()
+    const reg = registry({ cart: define(cart) })
+    const stop = expose(reg, portTransport(port1 as unknown as MessageEndpoint))
+    const conn = connect<Shop>(portTransport(port2 as unknown as MessageEndpoint))
+
+    const rcart = conn.lookup('cart')
+    await until(() => rcart() !== undefined)
+    rcart.send({ type: 'total', n: 7 })
+    await until(() => rcart().total === 7)
+    expect(await rcart.ask({ type: 'count' })).toBe(3)
+
+    conn.close()
+    stop()
+    port1.close()
+    port2.close()
+    reg.evict('cart')
   })
 })
 
