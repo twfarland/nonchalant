@@ -28,9 +28,21 @@ Each case is one of:
 - Every JSON key is valid, including `__proto__`, `constructor`, and
   `prototype`; implementations MUST create own data properties without invoking
   prototype setters.
+- An array index segment MUST match RFC 6901's grammar, `0|[1-9][0-9]*`, and
+  name an existing element: no sign, leading zero, exponent, fraction,
+  whitespace, or empty segment. `-` is not an index here — appends are
+  splices.
+- Absent and undefined are one state. JSON cannot carry `undefined`, but a
+  producer whose language has it (the JS reference) never emits a `set` for a
+  record key holding it, emits `del` when a key goes to it, and applies a
+  `set` whose value is `undefined` as removal of that key. Nothing crosses the
+  wire differently; the rule only keeps local diff and apply symmetric, so it
+  has no vector.
 - `error: true` cases MUST be rejected: malformed escapes, paths that are
   neither `""` nor `/`-prefixed, non-integer or negative splice numbers,
-  invalid array indices/ranges, and splices on non-arrays. Rejecting means
+  invalid array indices/ranges, splices on non-arrays, `del` of the root or
+  of a missing key, and paths that descend through a primitive or a missing
+  key. Rejecting means
   refusing the entire patch rather than applying a prefix. Rejection may happen at
   either layer. The reference codec refuses unprefixed paths and bad splice
   numbers at decode time (`decodeHost` returns null) and the rest at apply

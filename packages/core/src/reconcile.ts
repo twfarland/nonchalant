@@ -37,6 +37,10 @@ function unescapeSegment(s: string): string {
   return out
 }
 
+// Object.hasOwn, not `in` or a bare index: a key like "toString" would find
+// Object.prototype's and corrupt the diff
+const own = (o: { [key: string]: Json }, k: string): Json | undefined => (Object.hasOwn(o, k) ? o[k] : undefined)
+
 export function reconcile(prev: Json, next: Json): Patch {
   const ops: Patch = []
   walk(prev, next, '', ops)
@@ -69,14 +73,16 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
     return
   }
   if (isRecord(prev) && isRecord(next)) {
-    // Object.hasOwn, not `in`: `in` walks the prototype chain, so a key like
-    // "toString" would find Object.prototype's and corrupt the diff
-    for (const k of Object.keys(prev)) if (!Object.hasOwn(next, k)) ops.push(['del', `${path}/${escapeSegment(k)}`])
+    // a key holding undefined is absent (JSON has no undefined): never set,
+    // and a key going to undefined is a del
+    for (const k of Object.keys(prev)) {
+      if (prev[k] !== undefined && own(next, k) === undefined) ops.push(['del', `${path}/${escapeSegment(k)}`])
+    }
     for (const k of Object.keys(next)) {
-      if (!Object.is(prev[k], next[k])) {
-        if (Object.hasOwn(prev, k)) walk(prev[k] as Json, next[k] as Json, `${path}/${escapeSegment(k)}`, ops)
-        else ops.push(['set', `${path}/${escapeSegment(k)}`, next[k] as Json])
-      }
+      const n = next[k], p = own(prev, k)
+      if (n === undefined || Object.is(p, n)) continue
+      if (p === undefined) ops.push(['set', `${path}/${escapeSegment(k)}`, n])
+      else walk(p, n, `${path}/${escapeSegment(k)}`, ops)
     }
     return
   }
@@ -124,9 +130,9 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
   const last = i === keys.length - 1
 
   if (Array.isArray(node)) {
-    const idx = Number(k)
-    if (!Number.isInteger(idx) || idx < 0 || idx >= node.length)
-      throw new Error(`applyPatch: bad array index ${JSON.stringify(k)}`)
+    // RFC 6901 array-index grammar: no sign, exponent, whitespace, or leading zero
+    const idx = /^(0|[1-9][0-9]*)$/.test(k) ? +k : -1
+    if (idx < 0 || idx >= node.length) throw new Error(`applyPatch: bad array index ${JSON.stringify(k)}`)
     const copy = node.slice()
     copy[idx] = last ? applyLeaf(node[idx] as Json, op) : applyAt(node[idx] as Json, keys, i + 1, op)
     if (last && op[0] === 'del') copy.splice(idx, 1)
@@ -136,6 +142,11 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
     const copy: { [key: string]: Json } = { ...node }
     if (last && op[0] === 'del') {
       if (!Object.hasOwn(node, k)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
+      delete copy[k]
+      return copy
+    }
+    // setting a key to undefined is removing it — the same rule reconcile follows
+    if (last && op[0] === 'set' && op[2] === undefined) {
       delete copy[k]
       return copy
     }
