@@ -43,6 +43,6 @@ mount(document.getElementById('app')!, div({ class: 'card' },
     label({}, 'Duration: '),
     input({
       type: 'range', min: 0, max: 60, value: () => String(t().duration),
-      oninput: (e: Event) => t.cast({ type: 'duration', s: Number((e.target as HTMLInputElement).value) }),
+      oninput: (e) => t.cast({ type: 'duration', s: Number(e.currentTarget.value) }),
     })),
   button({ onclick: () => t.cast({ type: 'reset' }) }, 'Reset')))

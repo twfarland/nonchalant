@@ -50,7 +50,7 @@ export function run(host: Element): Disposable {
       input({
         type: 'email',
         placeholder: 'you@example.com',
-        oninput: (e: Event) => form.cast({ type: 'set', value: (e.target as HTMLInputElement).value }),
+        oninput: (e) => form.cast({ type: 'set', value: e.currentTarget.value }),
       }),
       button({ onclick: () => void submit(), disabled: () => form().submitting }, 'Sign up')),
     span({ class: 'readout' }, () => (form().submitting ? 'submitting…' : outcome()))))

@@ -55,7 +55,7 @@ export function run(host: Element): Disposable {
     input({
       type: 'text',
       placeholder: 'type a fruit — the fake API is slow, so type fast',
-      oninput: (e: Event) => s.cast({ q: (e.target as HTMLInputElement).value }),
+      oninput: (e) => s.cast({ q: e.currentTarget.value }),
     }),
     span({ class: 'muted' }, () => (s().pending ? 'searching…' : `${s().results.length} matches`)),
     ul({ class: 'list' }, () => s().results.slice(0, 6).map((r) => li({ key: r }, r)))))

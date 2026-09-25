@@ -79,7 +79,7 @@ export function run(host: Element): Disposable {
     div({ class: 'row' },
       input({
         type: 'text', value: draft, size: 34,
-        oninput: (e: Event) => draft.cast((e.target as HTMLInputElement).value),
+        oninput: (e) => draft.cast(e.currentTarget.value),
         onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') ask() },
       }),
       button({ onclick: ask, disabled: running }, 'ask'),

@@ -38,8 +38,8 @@ function RoomPicker(): VNode {
 
     input({
       placeholder: 'or make one up…',
-      onkeydown: (e: KeyboardEvent) => {
-        const value = (e.target as HTMLInputElement).value.trim()
+      onkeydown: (e) => {
+        const value = e.currentTarget.value.trim()
         if (e.key === 'Enter' && value !== '') join(value.toLowerCase())
       },
     }))
@@ -64,7 +64,7 @@ function Composer(): VNode {
   return form({ class: 'chat-form', onsubmit: post },
     input({
       name: 'name', size: 10, value: me,
-      oninput: (e: Event) => me.cast((e.target as HTMLInputElement).value),
+      oninput: (e) => me.cast(e.currentTarget.value),
     }),
     input({ name: 'text', placeholder: () => `say something in #${roomName()}…`, autocomplete: 'off' }),
     button({ type: 'submit', disabled: () => room().stale || room()() === undefined }, 'Send'))

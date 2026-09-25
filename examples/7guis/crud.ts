@@ -48,11 +48,11 @@ const visible = (): Person[] =>
 mount(document.getElementById('app')!, div({ class: 'card' },
   div({},
     label({}, 'Filter prefix: '),
-    input({ value: prefix, oninput: (e: Event) => prefix.cast((e.target as HTMLInputElement).value) })),
+    input({ value: prefix, oninput: (e) => prefix.cast(e.currentTarget.value) })),
   select({
     size: 5,
-    onchange: (e: Event) => {
-      const id = Number((e.target as HTMLSelectElement).value)
+    onchange: (e) => {
+      const id = Number(e.currentTarget.value)
       selected.cast(id)
       const p = store().find((x) => x.id === id)
       if (p) {
@@ -63,9 +63,9 @@ mount(document.getElementById('app')!, div({ class: 'card' },
   }, () => visible().map((p) => option({ key: p.id, value: String(p.id) }, `${p.surname}, ${p.name}`))),
   div({},
     label({}, 'Name: '),
-    input({ value: name, oninput: (e: Event) => name.cast((e.target as HTMLInputElement).value) }),
+    input({ value: name, oninput: (e) => name.cast(e.currentTarget.value) }),
     label({}, ' Surname: '),
-    input({ value: surname, oninput: (e: Event) => surname.cast((e.target as HTMLInputElement).value) })),
+    input({ value: surname, oninput: (e) => surname.cast(e.currentTarget.value) })),
   div({},
     button({ onclick: () => store.cast({ type: 'create', name: name(), surname: surname() }) }, 'Create'),
     button({

@@ -65,8 +65,8 @@ mount(document.getElementById('app')!, div({},
     button({ onclick: () => store.cast({ type: 'redo' }) }, 'Redo')),
   h('svg', {
     width: 500, height: 300, style: 'border: 1px solid #666',
-    onclick: (e: MouseEvent) => {
-      const box = (e.currentTarget as SVGElement).getBoundingClientRect()
+    onclick: (e) => {
+      const box = e.currentTarget.getBoundingClientRect()
       store.cast({ type: 'add', x: e.clientX - box.left, y: e.clientY - box.top })
     },
   }, () => store().map((c) =>
@@ -84,7 +84,7 @@ mount(document.getElementById('app')!, div({},
     input({
       type: 'range', min: 2, max: 100,
       value: () => String(store().find((c) => c.id === selected())?.r ?? 20),
-      oninput: (e: Event) =>
-        store.cast({ type: 'resize', id: selected(), r: Number((e.target as HTMLInputElement).value) }),
+      oninput: (e) =>
+        store.cast({ type: 'resize', id: selected(), r: Number(e.currentTarget.value) }),
       onchange: () => store.cast({ type: 'commit' }),
     }))))

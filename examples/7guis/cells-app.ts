@@ -15,17 +15,17 @@ const cellInput = (key: string) =>
   input({
     class: 'cell',
     value: () => String(sheet.value(key)),
-    onfocus: (e: Event) => {
-      const el = e.target as HTMLInputElement
+    onfocus: (e) => {
+      const el = e.currentTarget
       el.value = untracked(() => (sheet.formulas()[key] ?? ''))
     },
-    onblur: (e: Event) => {
-      const el = e.target as HTMLInputElement
+    onblur: (e) => {
+      const el = e.currentTarget
       sheet.set(key, el.value)
       el.value = String(untracked(() => sheet.value(key)))
     },
-    onkeydown: (e: KeyboardEvent) => {
-      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+    onkeydown: (e) => {
+      if (e.key === 'Enter') e.currentTarget.blur()
     },
   })
 
