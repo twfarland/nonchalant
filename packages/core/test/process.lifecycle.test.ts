@@ -273,10 +273,12 @@ describe('crashes', () => {
 })
 
 describe('mailbox depth', () => {
-  it('queued casts drain in linear time: 4x the backlog costs under 8x the time', async () => {
+  it('queued casts drain in linear time: 4x the backlog costs under 10x the time', async () => {
     // a ratio of two drains on the same runner survives a slow runner where a
     // wall-clock bound does not. O(1) dequeue scales ~4x from 50k to 200k and
-    // O(n) dequeue ~16x; each figure is the quietest of three runs
+    // O(n) dequeue measures 16-19x. Runs interleave so a busy spell hits both
+    // sizes, each starts after a gc, and each figure is the quietest of five
+    const gc = (globalThis as { gc?: () => void }).gc
     const drain = async (n: number): Promise<number> => {
       let release!: () => void
       const gate = new Promise<void>((resolve) => { release = resolve })
@@ -296,6 +298,7 @@ describe('mailbox depth', () => {
       }, undefined)
       await tick()
       for (let i = 0; i < n; i++) p.cast(1)
+      gc?.()
       const start = performance.now()
       release()
       await done
@@ -305,15 +308,14 @@ describe('mailbox depth', () => {
       p[Symbol.dispose]()
       return elapsed
     }
-    const quietest = async (n: number): Promise<number> => {
-      let best = Number.POSITIVE_INFINITY
-      for (let run = 0; run < 3; run++) best = Math.min(best, await drain(n))
-      return best
-    }
 
     await drain(50_000) // warmup: let the JIT settle
-    const small = await quietest(50_000)
-    const large = await quietest(200_000)
-    expect(large / small).toBeLessThan(8)
-  }, 60_000) // a quadratic mailbox takes ~25 s here; let the ratio, not the timeout, report it
+    let small = Number.POSITIVE_INFINITY
+    let large = Number.POSITIVE_INFINITY
+    for (let run = 0; run < 5; run++) {
+      small = Math.min(small, await drain(50_000))
+      large = Math.min(large, await drain(200_000))
+    }
+    expect(large / small).toBeLessThan(10)
+  }, 90_000) // a quadratic mailbox takes ~50 s here; let the ratio, not the timeout, report it
 })
