@@ -65,7 +65,8 @@ state changes notify bindings according to the paths they read.
   and yield the next snapshot. Nonchalant compares it with the previous value
   and notifies readers only when a path they used has changed. CI verifies that
   changing one label in a 50-row list performs one DOM write. It also limits the
-  60 fps game demo to one view yield and three DOM writes per frame.
+  60 fps game demo to one view yield and at most two DOM writes in its busiest
+  frame.
 
 ```ts nocheck
 s = { ...s, total: s.total + item.price }   // update immutably
@@ -142,8 +143,8 @@ expect((await it.next()).value).toMatchObject({ todos: [{ title: 'milk' }] })
 - **The wire protocol is language-independent.** Eight JSON operations carry
   state patches rather than markup or code. Other languages can implement a
   host against the conformance vectors in `packages/wire/spec/`.
-- **Small, with enforced limits.** CI keeps core at or below 8 KB gzipped and
-  core + DOM + tags at or below 13 KB gzipped.
+- **Small, with enforced limits.** CI keeps core at or below 8.3 KB gzipped and
+  core + DOM + tags at or below 13.7 KB gzipped (`test/size.test.ts`).
 - **Text is never parsed as HTML.** The DOM renderer creates elements and text
   nodes directly and sets attributes with `setAttribute`, so markup in
   application data stays inert text. That closes markup injection; it does not

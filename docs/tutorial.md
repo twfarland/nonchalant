@@ -110,7 +110,7 @@ In the repository benchmark, changing one field in 10,000 items takes about
 skip them in constant time. Tracked reads separate a dependency on `total` from
 one on `items`, and patches notify only readers of affected paths. The test suite
 checks notification counts, while the Mario demo is limited to one view yield
-and three DOM writes per frame.
+and at most two DOM writes in its busiest frame.
 
 ## 5. Views run once
 
