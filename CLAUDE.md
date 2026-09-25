@@ -113,20 +113,32 @@ Structure:
 ## Map
 - `packages/core` — types (`types.ts`), reconcile/patches, the reactive graph
   (`system.ts` port + `graph.ts` + `track.ts`), the process runtime
-  (`process.ts`), the registry.
+  (`process.ts`), the registry. `graph.ts` also holds `binding`/`rebind`, an
+  effect whose body swaps in place (how dom rebinds without recreating);
+  `process.ts` holds the `instrument()` hook (one null check per event site
+  when unused).
 - `packages/dom` — `h.ts`/`tags.ts` constructors, `attrs.ts` (type-only
   per-tag attribute and event typing), `render.ts` sink.
 - `packages/wire` — `protocol.ts` codec, transports, `client.ts` (connect),
   `host.ts` (expose), `spec/` conformance vectors.
 - `packages/durable` — `durable(proc)`: a message journal, an effect journal
-  (`step`), durable calls (`call`), and the seven-method `Store` port
-  (epoch-fenced; answers commit atomically with the cursor). The
-  in-memory adapter is the only one in this repo, deliberately — a real store
-  belongs wherever its driver does.
+  (`step`), durable calls (`call`), timers with a `scheduler`, and the
+  eight-method `Store` port (epoch-fenced; answers commit atomically with the
+  cursor). `@nonchalant/durable/conformance` is the suite every adapter must
+  pass. The in-memory adapter is the only one in packages/, deliberately — a
+  real store belongs wherever its driver does; `examples/durable-sqlite` shows
+  one (built-in `node:sqlite`) certified against the suite.
   Backend-facing but isomorphic; `docs/server.md` is its front page.
 - `packages/host` — the Node WebSocket host.
+- `packages/react` — hooks (`useProcess`, `useDerive`, `useSpawn`,
+  `useLookup`, `useProcessMeta`) for using processes under a React renderer;
+  `docs/react.md` is its front page.
+- `packages/inspect` — the inspector (process tree, timeline, time travel),
+  built on `instrument()` and rendered with nonchalant itself; `?inspect` on
+  the todomvc and agent examples; `docs/inspect.md`.
 - `examples/` — the demo ladder (see its README); `mario/`, `7guis/cells`,
-  `worker/`, and `agent/` carry their own test files. `agent/` is the
+  `worker/`, `agent/`, `react-agent/`, `durable-sqlite/` (Node-only), and
+  `js-framework-benchmark/` (count budgets) carry their own test files. `agent/` is the
   full-stack claim in miniature: an agent loop, its tools, and a human-approval
   gate, all processes, all durable, rendered by the same bindings as the
   counter. `multi-agent/` adds delegation, hand-off, and a shared budget;
@@ -159,5 +171,5 @@ Structure:
 Implementation and docs are complete and tested. The Pages site is built and
 deployed by `.github/workflows/pages.yml` — it needs Settings → Pages → Source
 set to "GitHub Actions" once. Packages build and pass publint/attw but stay
-`private`. Not yet done: npm scope claim and first publish (Changesets is set
-up), js-framework-benchmark submission (the app exists in examples/).
+`private`; publishing to npm is not a current goal. Not yet done:
+js-framework-benchmark submission (the app exists in examples/).
