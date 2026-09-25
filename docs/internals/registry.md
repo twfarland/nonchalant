@@ -77,10 +77,12 @@ stateDiagram-v2
     Live --> [*]: process returns (onSettled)<br/>or evict(name, args)
 ```
 
-**Watchers are subscriptions, not reads.** Effects, derives, and iterators that
-read either the value or the lifecycle metadata create gates
-([graph.md](graph.md)); their total is the refcount. A plain snapshot pull is
-not watching. That is SWR semantics on purpose: an evicted entry simply
+**Watchers are subscriptions, not reads.** Effects that read the value or the
+lifecycle metadata, directly or through derives and iterators, are watchers.
+The graph counts each gate whose reader has an effect downstream
+([graph.md](graph.md)), and that count is the refcount. A plain snapshot pull
+is not watching, and neither is a derive that is read only as a snapshot, even
+though it stays linked. That is SWR semantics on purpose: an evicted entry simply
 respawns on the next lookup, so a caller who only pulls occasionally is not
 holding a process open.
 
@@ -105,6 +107,20 @@ superseded entry cannot delete its replacement.
 `evict(name)` drops every entry under a name; `evict(name, args)` drops one.
 Both dispose immediately rather than waiting for the timer.
 
+## Capacity
+
+`registry(defs, { maxEntries })` caps the cache. Without a cap, a caller that
+looks up distinct arguments (an id from user input, a search string) grows the
+cache without bound whenever the definition has no `evict` timeout. That is a
+memory DoS if the arguments come from a remote peer. With a cap, the `entries`
+map doubles as the recency list: a hit deletes and re-inserts its key, so
+iteration order runs from least to most recently looked up. After a spawn
+takes the map past the cap, the oldest *unwatched* entries are disposed until
+it fits. A watched entry is never evicted to make room, so a registry whose
+entries are all watched can sit above the cap until watchers leave. Every
+entry keeps its own watcher count from `onWatchers`, whether or not its
+definition declares `evict`.
+
 ## Where this shows up elsewhere
 
 `RegistryHandle` and the remote `Connection` implement the same `Registry`
@@ -119,7 +135,8 @@ one.
 uses to give each connection its own gateway; see
 [hosting.md](../hosting.md).
 
-Tests: `packages/core/test/registry.test.ts` (key equivalence, sharing,
-refcounting, eviction timing, respawn after eviction).
+Tests: `packages/core/test/registry.test.ts` (key equivalence, the encoding
+table above value by value, sharing, refcounting, snapshot derives not
+pinning, eviction timing, respawn after eviction, the `maxEntries` cap).
 
 Back to the [overview](README.md).

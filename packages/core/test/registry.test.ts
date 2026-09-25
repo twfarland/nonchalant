@@ -252,3 +252,116 @@ describe('the query-cache recipe (SWR in twenty lines of userland)', () => {
     users.evict('user')
   })
 })
+
+describe('registry: snapshot derives do not pin entries', () => {
+  it('a derive read once outside any effect lets the entry idle out', async () => {
+    const log: string[] = []
+    const proc: Proc<number, never, void> = async function* (self) {
+      log.push('spawn')
+      try {
+        yield 1
+        for await (const _ of self) void _
+      } finally {
+        log.push('dispose')
+      }
+    }
+    const reg = registry({ x: define(proc, { evict: 15 }) })
+    reg.lookup('x')
+    await tick()
+    const d = derive(() => reg.lookup('x')())
+    expect(d()).toBe(1)
+    await tick(50)
+    expect(log).toEqual(['spawn', 'dispose'])
+    d[Symbol.dispose]()
+  })
+})
+
+describe('registry: maxEntries bounds the cache', () => {
+  const tracked = (): { proc: Proc<number, never, number>; live: Set<number> } => {
+    const live = new Set<number>()
+    const proc: Proc<number, never, number> = async function* (self, id) {
+      live.add(id)
+      try {
+        yield id
+        for await (const _ of self) void _
+      } finally {
+        live.delete(id)
+      }
+    }
+    return { proc, live }
+  }
+
+  it('rejects a cap that is not a positive integer', () => {
+    const { proc } = tracked()
+    expect(() => registry({ v: define(proc) }, { maxEntries: 0 })).toThrow(/maxEntries/)
+    expect(() => registry({ v: define(proc) }, { maxEntries: 1.5 })).toThrow(/maxEntries/)
+    expect(() => registry({ v: define(proc) }, { maxEntries: Number.NaN })).toThrow(/maxEntries/)
+  })
+
+  it('evicts the least recently looked-up entry once the cap is passed', async () => {
+    const { proc, live } = tracked()
+    const reg = registry({ v: define(proc) }, { maxEntries: 2 })
+    const one = reg.lookup('v', 1)
+    reg.lookup('v', 2)
+    await tick()
+    expect(reg.lookup('v', 1)).toBe(one) // 1 is now the most recent
+    reg.lookup('v', 3)
+    await tick()
+    expect([...live].sort()).toEqual([1, 3])
+    reg.evict('v')
+  })
+
+  it('distinct args cannot grow the cache past the cap', async () => {
+    const { proc, live } = tracked()
+    const reg = registry({ v: define(proc) }, { maxEntries: 3 })
+    for (let i = 0; i < 100; i++) reg.lookup('v', i)
+    await tick()
+    expect([...live].sort((a, b) => a - b)).toEqual([97, 98, 99])
+    reg.evict('v')
+  })
+
+  it('watched entries are never evicted to make room', async () => {
+    const { proc, live } = tracked()
+    const reg = registry({ v: define(proc) }, { maxEntries: 1 })
+    const first = reg.lookup('v', 1)
+    const stop = effect(() => void first())
+    reg.lookup('v', 2)
+    reg.lookup('v', 3)
+    await tick()
+    expect([...live].sort()).toEqual([1, 3])
+    expect(reg.lookup('v', 1)).toBe(first)
+    stop()
+    reg.evict('v')
+  })
+})
+
+describe('registry: cache keys distinguish every argument value', () => {
+  const echo: Proc<unknown, never, unknown> = async function* (self) {
+    yield null
+    for await (const _ of self) void _
+  }
+
+  it('same value, same entry; different value, different entry', () => {
+    const reg = registry({ v: define(echo) })
+    const same = (a: unknown, b: unknown): boolean =>
+      (reg.lookup as (n: 'v', x: unknown) => unknown)('v', a) === (reg.lookup as (n: 'v', x: unknown) => unknown)('v', b)
+    const sym = Symbol('s')
+    expect(same(Number.NaN, Number.NaN)).toBe(true)
+    expect(same(Number.NaN, 'NaN')).toBe(false)
+    expect(same(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(true)
+    expect(same(Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY)).toBe(false)
+    expect(same(Number.POSITIVE_INFINITY, null)).toBe(false) // JSON.stringify would say null
+    expect(same(-0, -0)).toBe(true)
+    expect(same(-0, 0)).toBe(false)
+    expect(same(1n, 1n)).toBe(true)
+    expect(same(1n, 1)).toBe(false)
+    expect(same(1n, '1')).toBe(false)
+    expect(same(sym, sym)).toBe(true)
+    expect(same(sym, Symbol('s'))).toBe(false)
+    expect(same([, 1], [, 1])).toBe(true) // eslint-disable-line no-sparse-arrays
+    expect(same([, 1], [undefined, 1])).toBe(false) // eslint-disable-line no-sparse-arrays
+    expect(same([, 1], [null, 1])).toBe(false) // eslint-disable-line no-sparse-arrays
+    expect(same({ a: undefined }, {})).toBe(false)
+    reg.evict('v')
+  })
+})

@@ -46,8 +46,29 @@ Gate bookkeeping:
 - **Created lazily** on first tracked read, keyed by the reading node
   (`state.gates: Map<ReactiveNode, Gate>`).
 - **Removed** through the reactive system's `unwatched` callback when the
-  reader drops the dependency, which also drives the watcher count that the
-  registry uses for refcounting (see [registry.md](registry.md)).
+  reader drops the dependency.
+- **Counted** as a watcher only while its reader is *watched*: the reader is
+  an effect, or a computed with an effect somewhere downstream. The count is
+  what `onWatchers` reports, and the registry refcounts with it (see
+  [registry.md](registry.md)). alien-signals keeps a computed's deps linked
+  until its last subscriber leaves, so a derive read once outside any effect
+  stays linked to its gates indefinitely. Counting links would let that
+  snapshot read pin a registry entry forever.
+
+The watched bit is not stored. `isWatched(node)` walks subscribers up to an
+effect, which is usually one hop. It is re-judged only at the transitions,
+all of them in `graph.ts`:
+
+- a gate is created: counted if its reader is watched;
+- `computedOper` links a computed that was not watched under a watched
+  reader: `rewatch(c, true)` counts every gate beneath it;
+- a dependency link is removed (`purgeDeps`, `disposeAllDepsInReverse`) from
+  a computed that still has other subscribers: if none of them is watched,
+  `rewatch(dep, false)` uncounts the gates beneath it;
+- a gate loses its reader (`unwatched`): uncounted if it was counted.
+
+`graph.test.ts` "source watchers count only readers an effect depends on"
+pins each transition with exact `onWatchers` sequences.
 - **One per pair**, so a reader that reads two sources has two gates, and two
   readers of one source never share.
 
@@ -179,7 +200,11 @@ extending the bitfield without editing the ported core.
 Effects created inside a running reader are *owned* by it: linked to the parent
 and disposed when the parent re-runs (`pruneChildEffects`) or is disposed.
 Child-effect deps are ownership edges, not read edges, which is why they are
-detached before a re-run rather than purged as unread dependencies.
+detached before a re-run rather than purged as unread dependencies. When a
+parent and its child wake in the same burst, `enqueue` reverses the run it
+inserts so the parent runs first, and the parent's re-run disposes the stale
+child before it can run. "effect trees" in `graph.test.ts` pins the ordering
+and the pruning, including a derive that owns effects.
 
 ## Where to be careful
 

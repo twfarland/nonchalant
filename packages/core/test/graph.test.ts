@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
-import { source, effect, flush, untracked } from '../src/graph.ts'
+import { source, effect, flush, untracked, type Source } from '../src/graph.ts'
 import { derive } from '../src/index.ts'
 import { affects, createRecorder, type PathTree } from '../src/track.ts'
 import type { Json, Patch } from '../src/reconcile.ts'
@@ -761,5 +761,262 @@ describe('notification properties', () => {
       ),
       { numRuns: 400 },
     )
+  })
+})
+
+// ---------- granularity of shape observations ----------
+
+describe('shape observations stay shallow', () => {
+  const record = (reader: (s: State) => void): PathTree => {
+    const r = createRecorder()
+    reader(r.wrap(mkState() as unknown as Json) as unknown as State)
+    return r.finalize()
+  }
+
+  it('Object.keys depends on which keys exist, not on the values beneath them', () => {
+    const tree = record((s) => void Object.keys(s))
+    expect(affects(tree, [['set', '/items/0/done', true]] as Patch)).toBe(false)
+    expect(affects(tree, [['splice', '/items', 0, 1, []]] as Patch)).toBe(false)
+    expect(affects(tree, [['set', '/meta/tag', 'y']] as Patch)).toBe(false)
+    expect(affects(tree, [['set', '/added', 1]] as Patch)).toBe(true)
+    expect(affects(tree, [['del', '/total']] as Patch)).toBe(true)
+    expect(affects(tree, [['set', '/total', 1]] as Patch)).toBe(true)
+  })
+
+  it('an `in` check depends on that key alone, not on what it holds', () => {
+    const tree = record((s) => void ('meta' in s))
+    expect(affects(tree, [['set', '/meta/tag', 'y']] as Patch)).toBe(false)
+    expect(affects(tree, [['del', '/meta']] as Patch)).toBe(true)
+    expect(affects(tree, [['set', '/total', 1]] as Patch)).toBe(false)
+  })
+
+  it('array length readers ignore element replacement but wake on splices', () => {
+    const tree = record((s) => void s.items.length)
+    expect(affects(tree, [['set', '/items/2', null]] as Patch)).toBe(false)
+    expect(affects(tree, [['splice', '/items', 4, 0, [null]]] as Patch)).toBe(true)
+  })
+
+  it('a record key-set reader still wakes when a key is added by set', () => {
+    const tree = record((s) => void Reflect.ownKeys(s.meta))
+    expect(affects(tree, [['set', '/meta/added', 1]] as Patch)).toBe(true)
+  })
+
+  it('an effect over Object.keys runs once for a deep edit beneath a key', () => {
+    const src = source<State>(mkState())
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      void Object.keys(src()).length
+    })
+    const s = src()
+    src.publish({ ...s, items: s.items.map((it, i) => (i === 0 ? { ...it, done: true } : it)) })
+    flush()
+    expect(runs).toBe(1)
+    src.publish({ ...src(), extra: 1 } as State)
+    flush()
+    expect(runs).toBe(2)
+    stop()
+  })
+})
+
+// ---------- derive return values are raw ----------
+
+describe('derive returns raw values, never read proxies', () => {
+  it('a filtered list holds the snapshot items themselves', () => {
+    const snap = mkState()
+    snap.items[1] = { done: true, n: 1 }
+    const src = source<State>(snap)
+    const done = derive(() => src().items.filter((x) => x.done))
+    expect(done()).toHaveLength(1)
+    expect(done()[0]).toBe(snap.items[1])
+    expect(structuredClone(done())).toStrictEqual([{ done: true, n: 1 }])
+    done[Symbol.dispose]()
+  })
+
+  it('a returned subtree is the snapshot subtree, and stays so when watched', () => {
+    const snap = mkState()
+    const src = source<State>(snap)
+    const meta = derive(() => src().meta)
+    expect(meta()).toBe(snap.meta)
+    let seen: unknown
+    const stop = effect(() => void (seen = meta()))
+    expect(seen).toBe(snap.meta)
+    stop()
+    meta[Symbol.dispose]()
+  })
+
+  it('an unchanged subtree result is an equality cut for downstream readers', () => {
+    const src = source<State>(mkState())
+    const meta = derive(() => (src().total >= 0 ? src().meta : null))
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      void meta()
+    })
+    src.publish({ ...src(), total: 5 })
+    flush()
+    expect(runs).toBe(1)
+    stop()
+    meta[Symbol.dispose]()
+  })
+
+  it('nested fresh containers are unwrapped copy-on-write; non-plain values pass through', () => {
+    const snap = mkState()
+    const src = source<State>(snap)
+    const when = new Date(0)
+    const shaped = derive(() => ({ first: src().items[0], pair: [src().meta, 1], when }))
+    const v = shaped()
+    expect(v.first).toBe(snap.items[0])
+    expect(v.pair[0]).toBe(snap.meta)
+    expect(v.when).toBe(when)
+    shaped[Symbol.dispose]()
+  })
+})
+
+// ---------- watchers are watched readers ----------
+
+describe('source watchers count only readers an effect depends on', () => {
+  const watchedSource = (): { src: Source<{ n: number }>; log: number[] } => {
+    const log: number[] = []
+    const src = source<{ n: number }>({ n: 1 }, { onWatchers: (c) => void log.push(c) })
+    return { src, log }
+  }
+
+  it('a derive read once outside any effect is not a watcher', () => {
+    const { src, log } = watchedSource()
+    const d = derive(() => src().n)
+    expect(d()).toBe(1)
+    expect(log).toEqual([])
+    const stop = effect(() => void d())
+    expect(log).toEqual([1])
+    stop()
+    expect(log).toEqual([1, 0])
+    d[Symbol.dispose]()
+  })
+
+  it('a chain of unwatched derives counts once an effect reads its head', () => {
+    const { src, log } = watchedSource()
+    const d1 = derive(() => src().n)
+    const d2 = derive(() => d1() * 2)
+    expect(d2()).toBe(2)
+    expect(log).toEqual([])
+    const stop = effect(() => void d2())
+    expect(log).toEqual([1])
+    stop()
+    expect(log).toEqual([1, 0])
+    d2[Symbol.dispose]()
+    d1[Symbol.dispose]()
+  })
+
+  it('a derive that already had an unwatched reader counts when an effect joins, and not after', () => {
+    const { src, log } = watchedSource()
+    const d1 = derive(() => src().n)
+    const d2 = derive(() => d1() + 1)
+    expect(d2()).toBe(2) // d1 now has a subscriber, but nothing watches it
+    const stop = effect(() => void d1())
+    expect(log).toEqual([1])
+    stop()
+    expect(log).toEqual([1, 0]) // d2 still links d1, yet nothing watches either
+    d2[Symbol.dispose]()
+    d1[Symbol.dispose]()
+  })
+
+  it('an effect that stops reading a derive releases the source', () => {
+    const { src, log } = watchedSource()
+    const toggle = source<{ on: boolean }>({ on: true })
+    const d = derive(() => src().n)
+    const stop = effect(() => void (toggle().on ? d() : 0))
+    expect(log).toEqual([1])
+    toggle.publish({ on: false })
+    flush()
+    expect(log).toEqual([1, 0])
+    toggle.publish({ on: true })
+    flush()
+    expect(log).toEqual([1, 0, 1])
+    stop()
+    d[Symbol.dispose]()
+  })
+
+  it('effects reading the source directly count one each', () => {
+    const { src, log } = watchedSource()
+    const a = effect(() => void src().n)
+    const b = effect(() => void src().n)
+    a()
+    b()
+    expect(log).toEqual([1, 2, 1, 0])
+  })
+})
+
+// ---------- effect tree ordering and pruning ----------
+
+describe('effect trees', () => {
+  it('a woken parent runs before its woken child, and the child it re-creates runs once', () => {
+    const src = source<{ n: number }>({ n: 0 })
+    const log: string[] = []
+    const stop = effect(() => {
+      log.push(`parent ${src().n}`)
+      effect(() => void log.push(`child ${src().n}`))
+    })
+    log.length = 0
+    src.publish({ n: 1 })
+    flush()
+    expect(log).toEqual(['parent 1', 'child 1'])
+    stop()
+  })
+
+  it('re-running a parent disposes the previous child effects first', () => {
+    const src = source<{ n: number }>({ n: 0 })
+    const log: string[] = []
+    const stop = effect(() => {
+      const n = src().n
+      effect(() => () => void log.push(`child ${n} cleaned`))
+    })
+    src.publish({ n: 1 })
+    flush()
+    src.publish({ n: 2 })
+    flush()
+    expect(log).toEqual(['child 0 cleaned', 'child 1 cleaned'])
+    stop()
+    expect(log).toEqual(['child 0 cleaned', 'child 1 cleaned', 'child 2 cleaned'])
+  })
+
+  it('a child woken alone runs without its parent', () => {
+    const outer = source<{ n: number }>({ n: 0 })
+    const inner = source<{ n: number }>({ n: 0 })
+    let parentRuns = 0
+    let childRuns = 0
+    const stop = effect(() => {
+      parentRuns++
+      void outer().n
+      effect(() => {
+        childRuns++
+        void inner().n
+      })
+    })
+    inner.publish({ n: 1 })
+    flush()
+    expect([parentRuns, childRuns]).toEqual([1, 2])
+    stop()
+  })
+
+  it('a computed that owns child effects prunes them when it re-runs', () => {
+    const src = source<{ n: number }>({ n: 0 })
+    let live = 0
+    const d = derive(() => {
+      const n = src().n
+      effect(() => {
+        live++
+        return () => void live--
+      })
+      return n
+    })
+    const stop = effect(() => void d())
+    expect(live).toBe(1)
+    src.publish({ n: 1 })
+    flush()
+    expect(live).toBe(1)
+    stop()
+    d[Symbol.dispose]()
+    expect(live).toBe(0)
   })
 })
