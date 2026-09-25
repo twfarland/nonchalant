@@ -255,13 +255,47 @@ before `done` even if the effect flush has not run yet. An iterator opened on a
 finished process yields the last value, then `done`. Concurrent `next()` calls
 queue and settle in call order.
 
+## Instrumentation
+
+`instrument(sink)` stores one module-level `sink` (a second call replaces the
+first; the remover only clears its own). Every event site is written
+`sink?.({ ... })`. An optional call short-circuits its arguments, so with no
+sink the event object is never built and, for `yield`, the extra
+`reconcile(untracked(src), next)` never runs. That diff is the price of
+inspecting: the graph's `publish` diffs the same pair but keeps its patch
+private, and `graph.ts` stays out of this. `instrument.test.ts` pins it by
+counting how often a yielded record's keys are listed: once without a sink,
+twice with one.
+
+Where the events come from:
+
+- `spawn`: after the ownership link, before `drive()` starts, so it precedes
+  everything the body does, including the spawns of its first step. `id` is
+  a module counter (`lastId`), assigned for every spawn so an owner's id is
+  known even when the sink was installed after the owner spawned. The
+  registry passes its definition name through `internal.key`.
+- `cast`: `post`, which the handle's `cast` and `self.cast` share.
+- `call` and `reply`: the handle's `call` numbers the request from `lastCall`
+  (only while a sink is installed; `0` otherwise) and the reply closure
+  reports under the same number.
+- `yield`: inside `drive`, before `publish`, only while `running`.
+- `status`: in `setMeta`, after the no-change check.
+- `crash` and `restart`: in the `catch`, the crash first.
+- `exit`: in `transition`, before the final `setMeta`, so the reason precedes
+  the flags it causes.
+
+The sink runs synchronously inside the runtime, so it must not throw, and
+whatever it casts is itself reported re-entrantly. `@nonchalant/inspect`
+handles that by skipping the processes it owns (see [inspect.md](../inspect.md)).
+
 ## Tests
 
 `process.test.ts` (lifecycle, mailbox order, `latest()` conflation, crash and
 restart, ownership, call rejection paths), `process.lifecycle.test.ts` (how a
 process ends: iterators after return and crash, queued calls across a restart,
 yields after dispose, teardown spawns, parameter-binding throws,
-`onProcessError`, mailbox depth), `process.leaks.test.ts` (nothing
+`onProcessError`, mailbox depth), `instrument.test.ts` (the exact event
+sequence, ids and owners, the cost with no sink), `process.leaks.test.ts` (nothing
 retained after disposal. This test needs `gc({ execution: 'async' })`, since plain `gc()`
 false-fails under V8 conservative stack scanning), `types.check.ts` (the
 `@ts-expect-error` lines are regression checks for the type

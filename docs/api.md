@@ -289,3 +289,40 @@ fresh random one, so call ids are always namespaced per connection. `serve`
 throws at once on a negative or non-finite `heartbeatMs`, a non-integer
 `maxWatchesPerConnection`, a malformed `lookupRate`, or a non-positive
 `maxBufferedBytes`.
+
+## @nonchalant/inspect
+
+The process inspector: a recorder over core's `instrument` hook, time travel,
+and a panel. Depends on core and dom. [The inspector](inspect.md) is the
+guide.
+
+### The core hook
+
+Exported from `@nonchalant/core`; the inspector is built on it.
+
+| export | signature | what it does |
+|---|---|---|
+| `instrument` | `instrument(sink: (event: ProcessEvent) => void)` → `() => void` | Reports every process event to `sink`, synchronously, as it happens. One sink at a time; returns its remover. With none installed, each event site costs one check. |
+| `ProcessEvent` | type | A union on `type`: `spawn` (parent, name, key, args, state), `cast` (msg), `call` (msg, call), `reply` (call, value), `yield` (ops: the patch from the previous state), `status` (pending, stale, errored), `crash` (error), `restart` (attempt), `exit` (reason: `'done' \| 'crashed' \| 'disposed'`). Every event carries the process `id`. |
+
+### The recorder
+
+| export | signature | what it does |
+|---|---|---|
+| `inspect` | `inspect(opts?: { size?: number })` → `Inspector` | Installs the sink and records into a ring of `size` entries (default 1000). The inspector's own processes are not recorded. |
+| `Inspector` | `{ recording, tree, timeline, stateAt, adopt, [Symbol.dispose] }` | `recording: Process<Recording, RecorderMsg>` owns the data; `tree: Process<TreeNode[]>` and `timeline: Process<Entry[]>` derive from it; `stateAt(id, seq)` reconstructs a state; `adopt(fn)` marks what `fn` spawns as the inspector's own. Disposing stops recording. |
+| `Recording` | `{ size, seq, events: Entry[], procs: { [id]: ProcNode } }` | The recorded data, all plain JSON. |
+| `Entry` | type | One timeline row: a `ProcessEvent` other than `status`, summarized to JSON, plus its `seq`. |
+| `ProcNode` | type | One recorded process: id, parent, name, key, status, the three flags, its current `state`, and the `base`/`baseSeq` time travel starts from. |
+| `stateAt` | `stateAt(rec: Recording, id: number, seq: number)` → `Json \| null \| undefined` | A process's state just after event `seq`: `base` plus every retained yield patch up to `seq`. `undefined` if the process is unknown or `seq` is older than the ring retains. |
+| `record` | `record(rec: Recording, d: Draft)` → `Recording` | The recorder's reducer: fold one event in, trimming the ring. |
+| `clear` | `clear(rec: Recording)` → `Recording` | Drop every entry and every ended process. |
+| `tree` | `tree(procs)` → `TreeNode[]` | Processes not yet disposed, nested by ownership. |
+| `summarize` | `summarize(value: unknown)` → `Json` | Plain JSON by reference; anything else as a bracketed label. |
+| `draft` | `draft(e: ProcessEvent)` → `Draft` | An event with its live values summarized. |
+
+### The panel
+
+| export | signature | what it does |
+|---|---|---|
+| `mountInspector` | `mountInspector(el: Element, inspector?: Inspector)` → `Disposable & { inspector }` | Renders the tree, the timeline and the detail pane into `el`. Starts an inspector unless given one, and disposes the one it started. |
