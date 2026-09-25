@@ -123,7 +123,7 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
 
   const http = createServer((req, res) => {
     void (async () => {
-      if (req.method === 'GET' && req.url === '/schema') {
+      if (req.method === 'GET' && new URL(req.url ?? '/', 'http://localhost').pathname === '/schema') {
         if (!await authorize(req)) {
           res.statusCode = 401
           res.end()

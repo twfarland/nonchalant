@@ -339,11 +339,12 @@ describe('node host hardening', () => {
     await expect(serve(defs, { maxBufferedBytes: 0 })).rejects.toThrow('maxBufferedBytes')
   })
 
-  it('answers 404 for anything but GET /schema and for upgrades off the socket path', async () => {
+  it('answers 404 for anything but GET /schema (with or without a query) and for upgrades off the socket path', async () => {
     const host = await serve<Shop>({ cart: define(cart) }, { path: '/ws' })
     const http = `http://127.0.0.1:${host.port}`
     expect((await fetch(`${http}/nope`)).status).toBe(404)
     expect((await fetch(`${http}/schema`, { method: 'POST' })).status).toBe(404)
+    expect((await fetch(`${http}/schema?token=t`)).status).toBe(200) // a query string carries credentials, not a path
     expect(await handshake(`ws://127.0.0.1:${host.port}/elsewhere`)).toBe(404)
     expect(await handshake(host.url)).toBe(101)
     await until(() => host.sessions() === 0)
