@@ -10,7 +10,7 @@ import { stubModel } from '../agent/llm.ts'
 import { approvals, search } from '../agent/tools.ts'
 import {
   budget, researcher, supervisor, writer,
-  type Crew, type Pipeline, type PipelineMsg, type ResearchMsg, type Shared, type WorkerState, type WriteMsg,
+  type Crew, type Pipeline, type PipelineMsg, type Shared,
 } from './agents.ts'
 
 const waitFor = async (ready: () => boolean, what: string): Promise<void> => {

@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { cell, spawn, flush } from '@nonchalant/core'
-import type { Proc, Self, VNode } from '@nonchalant/core'
+import type { Proc, VNode } from '@nonchalant/core'
 import { h, mount, onRenderError } from '@nonchalant/dom'
 import { button, div, li, span, table, tbody, td, tr, ul } from '@nonchalant/dom/tags'
 

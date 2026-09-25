@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { define, registry, effect, derive } from '../src/index.ts'
-import type { Proc, Self } from '../src/index.ts'
+import type { Proc } from '../src/index.ts'
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 

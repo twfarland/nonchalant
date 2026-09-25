@@ -8,6 +8,8 @@
     "lib": ["es2023", "esnext.disposable", "dom"],
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "exactOptionalPropertyTypes": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,

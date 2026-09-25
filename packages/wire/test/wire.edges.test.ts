@@ -8,7 +8,7 @@ import { define, registry } from '@nonchalant/core'
 import type { Call, Cast, Definition, Json, Proc } from '@nonchalant/core'
 import { connect, WireError } from '../src/client.ts'
 import { expose, type Exposable, type ExposeOpts } from '../src/host.ts'
-import { decodeClient, decodeHost, encode, type HostMsg } from '../src/protocol.ts'
+import { decodeClient, decodeHost, type HostMsg } from '../src/protocol.ts'
 import { memoryPair, type Transport } from '../src/transport.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))

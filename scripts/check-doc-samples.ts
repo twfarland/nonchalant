@@ -71,7 +71,8 @@ for (const md of [join(root, 'README.md'), ...markdown(join(root, 'docs'))]) {
 
 writeFileSync(join(out, 'tsconfig.json'), JSON.stringify({
   extends: relative(out, join(root, 'tsconfig.json')).replace(/\\/g, '/'),
-  compilerOptions: { types: ['node'] },
+  // a sample declares what it shows; nothing after it reads those names
+  compilerOptions: { types: ['node'], noUnusedLocals: false, noUnusedParameters: false },
   include: ['*.ts'],
 }))
 

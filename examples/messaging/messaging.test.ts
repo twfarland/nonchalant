@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { define, registry, spawn } from '@nonchalant/core'
 import { memoryBus, memoryQueue } from './memory.ts'
-import { feed, worker, type WorkerState } from './processes.ts'
+import { feed, worker } from './processes.ts'
 import type { Job } from './ports.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))

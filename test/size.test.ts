@@ -1,6 +1,6 @@
 // Size budgets, CI-asserted. Each bundle is what an application
 // actually pays: entry + everything it pulls in, minified, gzipped. Budgets
-// carry ~25% headroom over measured size — tighten them, never loosen them
+// sit just above measured size — tighten them, never loosen them
 // silently (a regression should hurt).
 
 import { describe, it, expect } from 'vitest'
@@ -26,13 +26,13 @@ const gzipSize = (entryPoints: string[]): number => {
   return gzipSync(total).length
 }
 
-// measured 2026-08-24: core 7347, core+dom+tags 12446, wire 8270, durable 2065
-// (bytes, gzip). Durable bundles small because it uses one thing from core.
+// measured 2026-09-26: core 7784, core+dom+tags 12936, wire 9197, durable 1929
+// (bytes, gzip). Durable bundles small because it imports only types from core.
 const BUDGETS: [name: string, entries: string[], limit: number][] = [
   ['@nonchalant/core', ['packages/core/src/index.ts'], 8_000],
   ['core + dom + tags (a full app)', ['packages/core/src/index.ts', 'packages/dom/src/index.ts', 'packages/dom/src/tags.ts'], 13_000],
   ['@nonchalant/wire (incl. core)', ['packages/wire/src/index.ts'], 9_500],
-  ['@nonchalant/durable (incl. core)', ['packages/durable/src/index.ts'], 2_200],
+  ['@nonchalant/durable (incl. core)', ['packages/durable/src/index.ts'], 2_000],
 ]
 
 describe('bundle size budgets (min+gzip)', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { spawn, channel, cell, derive, flush } from '../src/index.ts'
+import { spawn, channel, cell, derive } from '../src/index.ts'
 import { effect } from '../src/graph.ts'
 import type { Call, Cast, Proc, Self } from '../src/index.ts'
 

@@ -12,11 +12,11 @@ import type { Process, VNode } from '@nonchalant/core'
 import { connect, webSocketTransport } from '@nonchalant/wire'
 import { mount } from '@nonchalant/dom'
 import { button, div, li, span, ul } from '@nonchalant/dom/tags'
-import { cart, type CartMsg, type CartState, type Item, type Shop } from './shared.ts'
+import { cart, type CartMsg, type CartState, type Item } from './shared.ts'
 
 // ——— the one line ———
 const shop = registry({ cart: define(cart) })                            // state lives in this tab
-// const shop = connect<Shop>(webSocketTransport('ws://127.0.0.1:4321/?token=alice-demo-token')) // state lives on the server
+// const shop = connect<Shop>(webSocketTransport('ws://127.0.0.1:4321/?token=alice-demo-token')) // state lives on the server (Shop is a type export of shared.ts)
 // ————————————————————
 void connect
 void webSocketTransport

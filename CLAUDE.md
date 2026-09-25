@@ -6,11 +6,18 @@ returns the typed handle; location-transparent). Read `docs/concepts.md` for
 the model; `README.md` is the front page.
 
 ## Commands
-- `pnpm check` — strict tsc over all packages, examples, and tests
+- `pnpm check` — strict tsc over all packages, examples, and tests; then
+  `check:boundaries` (core/wire/durable compile with no DOM lib, host with
+  Node only) and `check:docs` (every ```ts block in README.md and docs/
+  type-checks; `<!-- ts-prelude -->` supplies context, ```ts nocheck opts out)
 - `pnpm test` — vitest (unit, property, leak, perf, size, and golden budgets)
+- `pnpm build` — emit each package's `dist/` (.js + .d.ts; gitignored)
+- `pnpm verify:pack` — build, pack, and lint the tarballs (publint, attw)
 - `pnpm dev` — vite; the doc site at /, the example gallery at /examples/
 - `pnpm build:site` — the static Pages build (doc site + gallery) into `dist/`
-- `pnpm cart-server` — the shared-cart demo's WebSocket host
+- `pnpm cart-server` / `pnpm chat-server` — the demos' WebSocket hosts
+CI (`.github/workflows/ci.yml`) runs check + test on Node 22 and 24, and
+verify:pack, on every push and pull request.
 
 ## Hard rules
 - `strict` TS everywhere; zero `any` in public signatures. The
@@ -25,8 +32,11 @@ the model; `README.md` is the front page.
   documented anti-pattern.
 - **Budgets are CI assertions. Tighten them if you can; never loosen one to
   make a change fit.** They live in: `reconcile.perf.test.ts` (1-of-10k
-  ≤ 100µs), `examples/mario/mario.golden.test.ts` (1 view yield, ≤ 3 DOM
-  writes/frame, 0 structural ops), `test/size.test.ts` (gzip bundle caps),
+  ≤ 100µs; the env override can only tighten), `examples/mario/mario.golden.test.ts`
+  (1 view yield, exactly 2 DOM writes in the busiest frame, 0 structural ops),
+  `examples/js-framework-benchmark/bench.test.ts` (exact move/write/listener
+  counts per keyed-list operation), `test/size.test.ts` (gzip bundle caps),
+  `test/room-memory.test.ts` (heap per idle chat room),
   `process.leaks.test.ts` (nothing retained after dispose).
 - `packages/wire/spec/` is a cross-language contract. Changing the protocol or
   patch semantics means updating the vectors and `spec/README.md` together —
@@ -104,11 +114,13 @@ Structure:
 - `packages/core` — types (`types.ts`), reconcile/patches, the reactive graph
   (`system.ts` port + `graph.ts` + `track.ts`), the process runtime
   (`process.ts`), the registry.
-- `packages/dom` — `h.ts`/`tags.ts` constructors, `render.ts` sink.
+- `packages/dom` — `h.ts`/`tags.ts` constructors, `attrs.ts` (type-only
+  per-tag attribute and event typing), `render.ts` sink.
 - `packages/wire` — `protocol.ts` codec, transports, `client.ts` (connect),
   `host.ts` (expose), `spec/` conformance vectors.
 - `packages/durable` — `durable(proc)`: a message journal, an effect journal
-  (`step`), durable calls (`call`), and the eight-method `Store` port. The
+  (`step`), durable calls (`call`), and the seven-method `Store` port
+  (epoch-fenced; answers commit atomically with the cursor). The
   in-memory adapter is the only one in this repo, deliberately — a real store
   belongs wherever its driver does.
   Backend-facing but isomorphic; `docs/server.md` is its front page.
@@ -121,7 +133,7 @@ Structure:
   `messaging/` puts a bus and a work queue behind ports with in-memory
   adapters.
 - `docs/internals/` — contributor notes on core's mechanisms and invariants
-  (reconcile, track, graph, process, registry), with an architecture overview
+  (reconcile, track, graph, process, registry, the DOM sink), with an architecture overview
   in its README. Update these when you change how a mechanism works.
 - `index.html` + `site/` — the GitHub Pages doc site. Its demos in
   `site/demos/` are imported twice, as code that runs and as text that is
@@ -130,7 +142,11 @@ Structure:
 
 ## Known sharp edges (leave signposts if you touch them)
 - Ownership is ambient only during the synchronous window of a process
-  resumption: spawn before awaiting, or the child runs unowned.
+  resumption: spawn before awaiting, or the child runs unowned. (A `finally`
+  that disposal triggers is resumed inside the process's scope, so a spawn
+  there before any other await is owned.)
+- `packages/durable` imports only types from core, which is what keeps its
+  bundle small; importing a runtime helper from core will blow its budget.
 - Leak tests need `gc({ execution: 'async' })` — plain `gc()` false-fails
   under V8 conservative stack scanning.
 - happy-dom's MutationObserver misses characterData; DOM-write tests spy on
@@ -142,5 +158,6 @@ Structure:
 ## Status
 Implementation and docs are complete and tested. The Pages site is built and
 deployed by `.github/workflows/pages.yml` — it needs Settings → Pages → Source
-set to "GitHub Actions" once. Not yet done: npm scope claim and first publish,
-Changesets, js-framework-benchmark submission (the app exists in examples/).
+set to "GitHub Actions" once. Packages build and pass publint/attw but stay
+`private`. Not yet done: npm scope claim and first publish (Changesets is set
+up), js-framework-benchmark submission (the app exists in examples/).
