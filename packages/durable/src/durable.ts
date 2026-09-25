@@ -56,7 +56,7 @@ export interface DurableOpts<T, Args> {
   /** The snapshot schema version this code writes. Default 0. */
   version?: number
   /** Bring a snapshot committed under an older version up to date. Required once `version` moves. */
-  migrate?: (old: Json, from: number) => T
+  migrate?: (old: Json, from: number) => NoInfer<T>
   /**
    * How many times one message may crash the process before it is moved to the
    * dead letters and the cursor steps past it. Default: no limit.

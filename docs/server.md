@@ -31,7 +31,47 @@ timer expires.
 It does not add a runtime or scheduler. `durable(proc, opts)` returns a regular
 `Proc` that can be registered, accessed through the wire, and bound to a view.
 
+The process inside is written the way every process in this repo is written,
+except that its effects go through `step`:
+
 ```ts
+import type { Cast } from '@nonchalant/core'
+import type { DurableProc } from '@nonchalant/durable'
+
+type Order = { status: 'open' | 'charged' | 'shipped'; total: number; charged: number }
+type OrderMsg =
+  | Cast<{ type: 'add'; price: number }>
+  | Cast<{ type: 'checkout' }>
+
+declare const payments: { charge(amount: number, opts: { key: string }): Promise<{ amount: number }> }
+
+const order: DurableProc<Order, OrderMsg, { id: string }> = async function* (self, _args, d) {
+  let s: Order = d.restored ?? { status: 'open', total: 0, charged: 0 }   // the last committed state
+  yield s
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'add':
+        s = { ...s, total: s.total + msg.price }
+        break
+      case 'checkout': {
+        if (s.status !== 'open') continue                       // no state change, no yield
+        const receipt = await d.step('charge', (key) => payments.charge(s.total, { key }))
+        s = { ...s, status: 'charged', charged: receipt.amount }
+        yield s
+        await d.sleep('cool-off', 3600_000)                     // the deadline is journaled, not the timer
+        s = { ...s, status: 'shipped' }
+        break
+      }
+    }
+    yield s
+  }
+}
+```
+
+Registering it is the same as registering anything else:
+
+```ts
+import { define, registry } from '@nonchalant/core'
 import { durable, memoryStore } from '@nonchalant/durable'
 
 const orders = registry({
@@ -39,28 +79,13 @@ const orders = registry({
 })
 ```
 
-The process inside is written the way every process in this repo is written,
-except that its effects go through `step`:
-
-```ts
-const order: DurableProc<Order, OrderMsg, { id: string }> = async function* (self, args, d) {
-  let s: Order = d.restored ?? { status: 'new', charged: 0 }   // the last committed state
-  yield s
-  for await (const msg of self) {
-    const receipt = await d.step('charge', () => payments.charge(s.total, { key: args.id }))
-    s = { ...s, status: 'charged', charged: receipt.amount }
-    yield s
-    await d.sleep('cool-off', 24 * 3600_000)                   // the deadline is journaled, not the timer
-  }
-}
-```
-
 ### The transaction boundary is one message
 
 1. A message is journaled **before** it is handled.
 2. Each `step` is journaled as it completes.
-3. When the process asks for its **next** message, the state it produced and the
-   cursor past the handled message are committed together.
+3. When the process asks for its **next** message, the state it produced, the
+   cursor past the handled message, and the answers it gave to calls are
+   committed together, in one store transaction.
 
 If the process crashes before the commit, the message is delivered again.
 Completed effects are read from the journal instead of running again.
@@ -70,23 +95,104 @@ mailbox with acknowledgement behavior without changing the process code.
 
 ### What it guarantees, and what it does not
 
-- **Journaled steps are exactly-once.** A `step` whose result was written is
-  replaced by that result on replay; `fn` is not called.
-- **Everything else is at-least-once.** An effect that was *in flight* when the
-  process died runs again, because its result never landed. Give the outside
-  world an idempotency key, as `{ key: args.id }` does above.
+- **A step executes at least once and is recorded exactly once.** A `step`
+  whose result was written is replaced by that result on replay, and `fn` is not
+  called. An effect that was *in flight* when the process died runs again,
+  because its result never landed.
+- **Every step gets an idempotency key.** `fn` receives `key#seq#index` — the
+  process key, the message's sequence number, the step's position — which is the
+  same on every replay of that step. Hand it to the outside world, as
+  `payments.charge(…, { key })` does above, and the at-least-once execution
+  becomes exactly-once at the provider.
 - **The step sequence within one message must be stable.** On replay the
-  wrapper checks the name recorded at each index and throws if it drifted,
-  rather than pairing the wrong result with the wrong effect.
+  wrapper checks the name recorded at each index and throws, naming both, if it
+  drifted, rather than pairing the wrong result with the wrong effect.
 - **Messages must be plain data, and a call must carry an id.** `durable()`
-  accepts `Json | DurableCall`: a message that cannot be written down cannot be
-  redelivered, and a call without an idempotency key cannot be answered twice
-  safely. See [Durable calls](#durable-calls).
+  accepts `Json | DurableCall`, and a call without a `callId` that gets past the
+  types is refused at runtime: its caller's promise rejects and nothing is
+  journaled. See [Durable calls](#durable-calls).
 - **A refused write crashes the process.** Handling a message that could not be
   recorded cannot be recovered safely, so the process fails immediately.
-- **A mailbox is a single writer only while one node owns the name.** Several
-  hosts activating the same id need a lease or fencing token in the store.
-  That is a distributed-systems problem, and it is outside the library.
+
+### Poison messages
+
+A message that throws every time it is handled would crash every activation
+of its key forever, because the journal redelivers it first. `maxAttempts` bounds
+that:
+
+```ts
+const orderDef = define(
+  durable(order, {
+    store: memoryStore(),
+    key: (a: { id: string }) => a.id,
+    maxAttempts: 3,
+    onPoison: (key, dead) => console.error(`gave up on ${key} #${dead.seq}: ${dead.error}`),
+  }),
+  { restart: 'on-crash' },
+)
+```
+
+Each throw while handling a message is recorded in that message's step journal,
+so the count survives the crash it records. On the last attempt the message is
+moved to a dead letter, in the same commit that steps the cursor past it, and
+the state it was handed out against is kept. The crash still surfaces; with
+`restart: 'on-crash'` the next instance carries on from the message after. A
+store failure is not the message's fault and does not count, and neither does
+a host dying outright. Without `maxAttempts` a message is retried on every
+activation. `packages/durable/test/guarantees.test.ts` covers each case.
+
+### Changing the state's shape
+
+A snapshot is committed with the `version` the code declared (default 0). When
+the code moves on, give it the new version and a `migrate`:
+
+```ts
+type OrderV1 = Order & { currency: 'EUR' | 'USD' }
+declare const orderV1: DurableProc<OrderV1, OrderMsg, { id: string }>
+
+durable(orderV1, {
+  store: memoryStore(),
+  key: (a: { id: string }) => a.id,
+  version: 1,
+  migrate: (old, from): OrderV1 =>
+    from === 0 ? { ...(old as Order), currency: 'EUR' } : (old as OrderV1),   // version 0 meant EUR
+})
+```
+
+`migrate` runs once on activation, before the process sees `d.restored`; the
+next commit stores the result under the new version. A snapshot from another
+version with no `migrate` refuses to start rather than be misread. Messages
+still in the log are replayed as written, so a message shape change needs the
+handler to accept both for as long as old messages can be pending.
+
+### Several hosts, one key
+
+A mailbox is a single writer only while one activation owns the key. `load`
+claims the key by raising its **epoch**, and every write after it — `append`,
+`putStep`, `commit` — is conditional on that epoch. A write from an activation
+that has since been superseded changes nothing and rejects with `Fenced`; the
+wrapper then stops that activation (it ends, it does not crash, so no supervisor
+restarts it into a fight). Two hosts that both think they own a key therefore
+cannot interleave one log or overwrite each other's snapshot: the later claim
+wins (`guarantees.test.ts`, "two activations of one key").
+
+How that maps to real storage:
+
+- **Postgres:** `load` is `UPDATE instances SET epoch = epoch + 1 WHERE key = $1
+  RETURNING …`; every write runs in a transaction that begins with
+  `SELECT epoch FROM instances WHERE key = $1 FOR UPDATE` (or folds
+  `WHERE key = $1 AND epoch = $2` into the update) and throws `Fenced` on zero
+  rows.
+- **Redis:** keep the epoch in a key; `load` is `INCR`. Writes are one Lua script
+  that compares the epoch and aborts with `Fenced` on mismatch (or
+  `WATCH epoch` / `MULTI` / `EXEC`, treating a nil reply as `Fenced`).
+- **SQLite:** one writer per file already, so `BEGIN IMMEDIATE`, compare the
+  stored epoch, write, `COMMIT` — the compare catches a second process on the
+  same file.
+
+Fencing keeps the log correct; it does not decide who *should* own a key. That
+is placement — a registry per node, a lease, a consistent hash — and it stays
+outside the library.
 
 ### Durable calls
 
@@ -94,8 +200,8 @@ Calls into durable processes use a `callId`. The response is recorded under
 that ID, and retries with the same ID receive the recorded response:
 
 ```ts
-// the caller's side: journaled, and the id is derived from (key, message, name)
-// so a replay calls with the same one
+// the caller's side: a step whose idempotency key is the callId, so a replay
+// calls with the same one
 const receipt = await d.call('reserve', (callId) =>
   vault.call({ type: 'reserve', amount: 100, callId }))
 ```
@@ -107,8 +213,16 @@ This provides four behaviors:
   queueing a duplicate.
 - **A caller that dies after the answer landed retries and gets the same
   answer.** This matters when one agent delegates to another.
-- **A callee that answered but died before acknowledging does not re-handle the
-  message.** The recorded answer acknowledges it on the next activation.
+- **An answer is released only once it is committed.** The reply is recorded in
+  the same transaction that acknowledges the message, and the caller hears it
+  after that lands — so no store, however slow, can acknowledge an answered call
+  without its answer, and nobody is told something a crash could take back. If
+  the callee dies first, the caller's call rejects, the message is replayed
+  from its journal, and the retry gets the answer the replay committed.
+
+One consequence: a reply is released when the process asks for its next
+message, so a handler that replies and then sleeps holds the answer for the
+sleep. Reply at the end of the handler, or split the wait into its own message.
 
 A `call` from outside a durable process supplies its own id; that id is the
 idempotency key of the whole operation, so it should come from the thing being
@@ -116,25 +230,30 @@ done (an order number, a request id), not from a random.
 
 ### The store is a port
 
-Eight methods, in [`store.ts`](../packages/durable/src/store.ts): `load`,
-`append`, `pending`, `putStep`, `steps`, `commit`, `result`, `putResult`. The
-wrapper knows nothing about storage beyond them. An adapter is a plain object
-with no required base class or registration step.
+Seven methods, in [`store.ts`](../packages/durable/src/store.ts): `load`,
+`append`, `pending`, `putStep`, `steps`, `commit`, `result`. The wrapper knows
+nothing about storage beyond them. An adapter is a plain object with no
+required base class or registration step.
 
-The one ordering rule an adapter must honour is that `commit` writes the
-snapshot and the cursor together or writes neither. The one retention rule is
-that call results outlive the message that produced them, so a real adapter
-needs a window after which it forgets them.
+Two rules an adapter must honour. `commit` is one transaction: snapshot,
+version, cursor, answers, and dead letter land together or not at all. And
+every write carries the epoch `load` handed out and is refused with `Fenced`
+when it is stale. The one retention rule is that answers outlive the message
+that produced them, so a real adapter keeps them for a window and then forgets
+them — `memoryStore().prune(before)` is that window by hand; a real adapter runs
+it as a TTL (`DELETE … WHERE committed_at < $1` on a schedule, or `EXPIRE`).
 
 This repository ships only `memoryStore()`, which serves as the reference
 implementation and the target of crash-consistency tests. An adapter for a real
 store belongs in the repo that owns that driver: `commit` as one transaction,
-`append` as one insert, `result`/`putResult` as a keyed table with a TTL.
+`append` as one insert, `result` as a lookup in a keyed table with a TTL.
 
 Crash consistency is a property test, not a claim:
 `packages/durable/test/durable.test.ts` runs generated crash schedules against
 generated workloads and asserts the workflow lands exactly where the
-uninterrupted run landed.
+uninterrupted run landed, and `packages/durable/test/calls.test.ts` does the
+same for calls on a store slow enough that every write is overtaken, asserting
+that each call is answered one way and moves the state once.
 
 ## Agents
 
@@ -147,18 +266,30 @@ observed, and the registry makes them available by name. A tool can also hold a
 request until a person responds:
 
 ```ts
+type ApprovalMsg =
+  | Call<{ type: 'request'; tool: string; args: string }, boolean>
+  | Cast<{ type: 'decide'; ok: boolean }>
+type Request = Extract<ApprovalMsg, { type: 'request' }>
+
 // the approval tool holds the reply until somebody decides
-for await (const msg of self) {
-  switch (msg.type) {
-    case 'request':
-      waiting = [...waiting, { ...msg, reply: msg.reply }]
-      break
-    case 'decide':
-      waiting[0]?.reply(msg.ok)
-      waiting = waiting.slice(1)
-      break
+const approvals: Proc<{ pending: number }, ApprovalMsg, void> = async function* (self) {
+  let waiting: Request[] = []
+  yield { pending: 0 }
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'request':
+        waiting = [...waiting, msg]   // the message carries its own reply
+        break
+      case 'decide': {
+        const [head, ...rest] = waiting
+        if (head === undefined) continue
+        head.reply(msg.ok)
+        waiting = rest
+        break
+      }
+    }
+    yield { pending: waiting.length }
   }
-  yield state()
 }
 ```
 
@@ -239,9 +370,10 @@ code and tests them without a browser.
 Because delegation uses durable calls, restarting the supervisor during a
 pipeline does not repeat work already completed by other agents.
 
-Two limits apply. Fan-out uses `Promise.all` over several `d.call`s, and the
-step journal records them in completion order, so each call needs a distinct
-name. There is also no scheduler. If the node hosting a supervisor stops,
+Two limits apply. Fan-out uses `Promise.all` over several `d.call`s; each is
+keyed by the position it was started at, so the calls must be started in the
+same order on every replay (a `map` over state does that), and each should
+have its own name so a drift is caught by name. There is also no scheduler. If the node hosting a supervisor stops,
 something must look it up again before it can continue.
 
 ## Hosting
