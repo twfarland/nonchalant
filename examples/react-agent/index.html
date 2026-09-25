@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent, in React — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .turns { list-style: none; margin: 0.75rem 0; padding: 0; }
+  .turn { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.35rem 0.6rem;
+    border-left: 2px solid var(--line); }
+  .turn .who { flex: none; width: 5rem; font-size: 0.7rem; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.07em; }
+  .turn.question { border-left-color: var(--ink); background: var(--paper); }
+  .turn.question .who { color: var(--ink); }
+  .turn.question .said { font-weight: 500; }
+  .turn.answer { border-left-color: var(--accent); }
+  .turn.answer .who { color: var(--accent); }
+  .said.mono { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.85rem; }
+  .tag { display: inline-block; min-width: 4.5rem; margin-right: 0.5rem; color: var(--muted);
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .gate { border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.75rem 0;
+    max-width: 34rem; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>An agent, in React <span class="muted">— React draws it; processes run it</span></h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>This is the <a href="../agent/">agent demo</a>'s process tree — the agent loop, its tools, the approval gate, the durable journal — imported unchanged and rendered by React instead of by nonchalant's own DOM sink. Ask about a <em>process</em> or a <em>patch</em>, give it arithmetic, or say <em>refund 20</em> and it waits for you.</p>
+
+<p>Components read processes through <code>@nonchalant/react</code>. <code>useDerive</code> runs its function inside a derive, so a component subscribes to exactly the paths the function read. The transcript renders one memoised row per step; a streamed word re-renders the streaming line and nothing else.</p>
+<pre><code><span class="k">const</span> Turn = memo(<span class="k">function</span> Turn({ agent, at }: { agent: Agent; at: <span class="k">number</span> }) {
+  <span class="k">const</span> step = useDerive(() =&gt; agent()?.steps[at], [agent, at])
+  <span class="c">// …render one row</span>
+})</code></pre>
+
+<h2>The gate is a process</h2>
+<p>The agent's refund call is an ordinary <code>call()</code> that the approval process does not answer until somebody decides. The panel is a view of its queue, and the buttons are casts:</p>
+<pre><code><span class="k">function</span> Approvals({ queue }: { queue: Process&lt;ApprovalState | <span class="k">undefined</span>, ApprovalMsg&gt; }) {
+  <span class="k">const</span> asking = useDerive(() =&gt; queue()?.pending[0], [queue])
+  <span class="k">if</span> (asking === <span class="k">undefined</span>) <span class="k">return</span> <span class="k">null</span>
+  <span class="k">const</span> decide = (ok: <span class="k">boolean</span>) =&gt; (): <span class="k">void</span> =&gt; queue.cast({ type: <span class="s">'decide'</span>, ok })
+  <span class="c">// …approve / refuse buttons calling decide(true) / decide(false)</span>
+}</code></pre>
+
+<h2>Killing the machine</h2>
+<p><code>useLookup</code> keeps the agent's registry entry alive while the page shows it, and looks it up again if it is evicted. <strong>kill the machine</strong> evicts it; the page re-renders, the lookup activates a new process, and <code>durable()</code> rehydrates it from the journal — mid-question if that is where it was.</p>
+<pre><code><span class="c">// parts.ts</span>
+agent: () =&gt; brain.lookup(<span class="s">'agent'</span>, { id: <span class="s">'demo'</span> }),
+kill: () =&gt; brain.evict(<span class="s">'agent'</span>, { id: <span class="s">'demo'</span> }),
+
+<span class="c">// app.tsx</span>
+<span class="k">const</span> agent = useLookup(parts.agent)</code></pre>
+<p>The page runs under <code>StrictMode</code>. The test (<code>react-agent.test.tsx</code>) drives it end to end with a scripted model: the stream, the tool row, the gate, and the rehydration.</p>
+</aside>
+</div>
+<script type="module" src="./main.tsx"></script>
+</body>
+</html>
