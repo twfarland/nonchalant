@@ -40,6 +40,7 @@
     "@nonchalant/dom": "workspace:*",
     "@nonchalant/durable": "workspace:*",
     "@nonchalant/host": "workspace:*",
+    "@nonchalant/inspect": "workspace:*",
     "@nonchalant/react": "workspace:*",
     "@nonchalant/wire": "workspace:*",
     "react": "^19.3.0",

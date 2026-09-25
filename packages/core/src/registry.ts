@@ -165,6 +165,7 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
       }
       created.process = unscoped(() =>
         spawnProcess(def.proc, args, def.opts, Object.assign(created.hooks, {
+          key: name,
           onWatchers,
           onSettled: () => {
             if (entries.get(key) !== created) return
