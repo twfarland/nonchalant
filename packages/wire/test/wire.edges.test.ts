@@ -246,6 +246,17 @@ describe('principal namespacing', () => {
 // ---------- lookup rate ----------
 
 describe('lookup rate', () => {
+  it('refuses a rate that could never limit: zero window, NaN, or a negative burst', () => {
+    const link = memoryPair()
+    const reg = registry({ room: define(room) })
+    for (const lookupRate of [
+      { max: 2, perMs: 0 },
+      { max: Number.NaN, perMs: 1_000 },
+      { max: 2, perMs: 1_000, burst: -1 },
+      { max: 1.5, perMs: 1_000 },
+    ]) expect(() => expose(reg, link.host, { lookupRate })).toThrow(/lookupRate/)
+  })
+
   it('a lookup with no token left raises; a full period refills max tokens', async () => {
     let now = 1_000
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)

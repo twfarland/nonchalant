@@ -69,6 +69,9 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
   const watches = new Map<string, Watch>()
   const out = (msg: HostMsg): void => transport.send(encode(msg))
   const rate = opts?.lookupRate
+  // NaN or a zero window would make every refill NaN, and NaN < 1 never refuses
+  if (rate !== undefined && !(Number.isInteger(rate.max) && rate.max >= 0 && rate.perMs > 0 && Number.isInteger(rate.burst ?? rate.max) && (rate.burst ?? rate.max) >= 0))
+    throw new Error('nonchalant/wire: lookupRate needs non-negative integer max and burst and a positive perMs')
   let tokens = rate?.burst ?? rate?.max ?? 0
   let refilledAt = Date.now()
 

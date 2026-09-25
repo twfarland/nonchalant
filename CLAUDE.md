@@ -168,6 +168,10 @@ Structure:
 - A container that is both traversed and escaped records as traversal only
   (the read proxy can't see identity use) — documented approximation in
   `track.ts`.
+- A derive result is unwrapped only where it may hold read proxies, and a
+  container once found proxy-free is not walked again: a derive that mutates
+  and re-returns the same object (the mutate-in-place anti-pattern) can leak
+  a proxy out. Immutable updates never hit this.
 
 ## Status
 Implementation and docs are complete and tested. The Pages site is built and

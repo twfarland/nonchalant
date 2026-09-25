@@ -448,7 +448,8 @@ export const binding = (fn: () => void | (() => void)): Binding => start(fn) as 
  * Replace a binding's body and run it once now, on the same node: its links
  * are re-tracked in place (reads the new body repeats keep their gates) rather
  * than torn down and rebuilt. Called mid-run by its own body, the new body
- * runs right after the current run instead. A disposed binding ignores it.
+ * runs on the next flush instead, not synchronously. A disposed binding
+ * ignores it.
  */
 export function rebind(b: Binding, fn: () => void | (() => void)): void {
   const e = b as unknown as EffectNode

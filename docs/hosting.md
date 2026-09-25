@@ -173,9 +173,12 @@ limit multiplies with the number of connections:
   recently looked-up entries that nobody is watching are disposed, and a
   later lookup spawns them afresh. Watched entries are never evicted, so
   live processes can exceed the cap by the number that clients hold open;
-  set `maxWatchesPerConnection` to bound that too. A process whose state must
-  outlive eviction should be durable, so the respawn resumes from its journal
-  (see [Processes on the server](server.md)). Pass `Infinity` for no cap.
+  set `maxWatchesPerConnection` to bound that too. An entry holding unanswered
+  calls is also kept; one merely busy with a cast, or asleep, is not. A plain
+  process evicted that way loses its state. A process whose state must
+  outlive eviction should be durable, so the respawn resumes from its journal,
+  and a sleeping one comes back when a `scheduler` wakes it (see
+  [Processes on the server](server.md)). Pass `Infinity` for no cap.
 
 `packages/host/test/host.test.ts` checks the per-connection burst default, the
 shared bucket across several connections, and the registry cap.
