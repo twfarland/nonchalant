@@ -41,6 +41,11 @@ jobs:
 
       - run: pnpm test
 
+      # line/branch floors over packages/*/src (the perf file is excluded: it
+      # cannot hold its budget under instrumentation); once per run is enough
+      - if: matrix.node == 24
+        run: pnpm coverage
+
   pack:
     runs-on: ubuntu-latest
     name: build + pack + publint

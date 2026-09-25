@@ -11,6 +11,8 @@ the model; `README.md` is the front page.
   Node only) and `check:docs` (every ```ts block in README.md and docs/
   type-checks; `<!-- ts-prelude -->` supplies context, ```ts nocheck opts out)
 - `pnpm test` — vitest (unit, property, leak, perf, size, and golden budgets)
+- `pnpm coverage` — the unit project under v8 coverage, with floors (95%
+  statements/lines/functions, 92% branches) that CI enforces
 - `pnpm build` — emit each package's `dist/` (.js + .d.ts; gitignored)
 - `pnpm verify:pack` — build, pack, and lint the tarballs (publint, attw)
 - `pnpm dev` — vite; the doc site at /, the example gallery at /examples/
