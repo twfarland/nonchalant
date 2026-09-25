@@ -25,7 +25,7 @@
 </main>
 <aside class="explain">
 <h2>How it works</h2>
-<p>Each room is one process on the server, spawned the first time anyone looks its name up and evicted after an hour idle. A suspended generator is kilobytes, so one node process holds thousands of rooms — the registry, not your code, is the room lifecycle.</p>
+<p>Each room is one process on the server, spawned the first time anyone looks its name up and evicted after an hour idle. An idle room is about 7 KB of heap (<code>test/room-memory.test.ts</code> holds it under 8 KB), so one Node process holds thousands of rooms — the registry, not your code, is the room lifecycle.</p>
 <pre><code><span class="k">export</span> <span class="k">const</span> room: Proc&lt;RoomState, RoomMsg, { name: string }&gt; = <span class="k">async</span> <span class="k">function</span>* (self) {
   <span class="k">let</span> lines: ChatLine[] = []
   <span class="k">yield</span> { lines }

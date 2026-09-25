@@ -20,7 +20,8 @@ The main difference is that **there is no render loop**. A view function runs
 once and returns a tree containing live bindings. It does not run again after
 state changes, so dependency arrays and stable callback identities are not
 needed. In exchange, changing structure must be represented with keyed lists
-or replaceable regions rather than by returning a different tree.
+or [replaceable regions](concepts.md#views-and-sinks) (bindings that return a
+subtree) rather than by returning a different tree.
 
 ## From Solid
 

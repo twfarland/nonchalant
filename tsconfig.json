@@ -4,6 +4,7 @@
     "target": "es2022",
     "module": "esnext",
     "moduleResolution": "bundler",
+    "customConditions": ["source"],
     "lib": ["es2023", "esnext.disposable", "dom"],
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
@@ -13,5 +14,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "examples/**/*.ts", "site/**/*.ts", "test/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "examples/**/*.ts", "site/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

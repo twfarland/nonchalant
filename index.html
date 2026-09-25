@@ -108,7 +108,7 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
     </div>
     <div class="card">
       <h4>@nonchalant/durable</h4>
-      <p>Durable process support built from message and effect journals plus a six-method storage interface.</p>
+      <p>Durable process support built from message and effect journals plus a seven-method storage interface.</p>
     </div>
     <div class="card">
       <h4>@nonchalant/host</h4>
@@ -131,7 +131,8 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
       <tr><td><code>p.call(msg)</code></td><td>Sends a typed request and waits for its response. It is available for <code>Call</code> messages and rejects if the process crashes, finishes, or is disposed.</td></tr>
       <tr><td><code>p.pending</code> / <code>p.stale</code> / <code>p.error</code></td><td>Exposes lifecycle state through regular reads, using the same mechanism as application state.</td></tr>
       <tr><td><code>for await (v of p)</code></td><td>Iterates over current values. Slow consumers receive the newest value rather than a backlog.</td></tr>
-      <tr><td><code>p[Symbol.dispose]()</code></td><td>Closes the mailbox, aborts the signal, runs finalizers, and disposes any owned child processes.</td></tr>
+      <tr><td><code>p[Symbol.dispose]()</code></td><td>Starts teardown now: closes the mailbox, aborts the signal, and asks the generator to return. Owned children are disposed once it settles. It does not wait for asynchronous <code>finally</code> work.</td></tr>
+      <tr><td><code>await p[Symbol.asyncDispose]()</code></td><td>Starts the same teardown and resolves once this process and its owned children have finished their finalizers.</td></tr>
     </tbody>
   </table>
   </div>
@@ -265,7 +266,7 @@ yield s                                     // diffed → only /total readers wa
                                             // a binding on items[3].done sleeps through it
 </code></pre>
 
-  <p>Dependencies are recorded automatically. While a binding runs, a temporary proxy tracks the paths it reads. This removes the need for dependency arrays and manual memoization. Views are created once, while keyed lists and replaceable regions handle structural changes.</p>
+  <p>Dependencies are recorded automatically. While a binding runs, a temporary proxy tracks the paths it reads. This removes the need for dependency arrays and manual memoization. Views are created once. Structure changes through keyed lists and replaceable regions: a binding that returns a subtree, which the renderer patches or swaps in place.</p>
 
   <p>CI enforces the following performance, size, and cleanup limits:</p>
 
@@ -409,7 +410,7 @@ const receipt = await d.call('reserve', (callId) =>
 
   <p>This prevents a retry from repeating completed work. Calls with the same ID share one result, callers can recover a response after restarting, and a callee does not repeat a message after recording its answer.</p>
 
-  <p>Storage is defined by an eight-method <strong>port</strong>. It requires no base class or registration, and the durable wrapper does not depend on a particular database. This repository includes an in-memory adapter as the reference implementation and as the target of the crash-consistency tests. Production database adapters can live with the corresponding database drivers.</p>
+  <p>Storage is defined by a seven-method <strong>port</strong>. It requires no base class or registration, and the durable wrapper does not depend on a particular database. This repository includes an in-memory adapter as the reference implementation and as the target of the crash-consistency tests. Production database adapters can live with the corresponding database drivers.</p>
 
   <div class="scroll">
   <table>

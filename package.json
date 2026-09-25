@@ -6,8 +6,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && pnpm check:boundaries && pnpm check:docs",
+    "check:boundaries": "tsc -p packages/core/tsconfig.json && tsc -p packages/wire/tsconfig.json && tsc -p packages/durable/tsconfig.json && tsc -p packages/host/tsconfig.json",
+    "check:docs": "node --experimental-strip-types --no-warnings scripts/check-doc-samples.ts",
     "test": "vitest run",
+    "build": "pnpm -r run build",
+    "changeset": "changeset",
+    "verify:pack": "node --experimental-strip-types --no-warnings scripts/verify-pack.ts",
     "test:watch": "vitest",
     "dev": "vite --open /",
     "build:site": "vite build",
@@ -16,6 +21,7 @@
     "chat-server": "vite-node examples/chat/server.ts"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@types/node": "^26.2.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.2",

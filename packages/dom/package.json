@@ -2,14 +2,56 @@
   "name": "@nonchalant/dom",
   "version": "0.0.0",
   "private": true,
+  "description": "The DOM sink for nonchalant: h(), tag constructors, and mount().",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/twfarland/nonchalant.git",
+    "directory": "packages/dom"
+  },
+  "homepage": "https://github.com/twfarland/nonchalant#readme",
+  "bugs": "https://github.com/twfarland/nonchalant/issues",
   "type": "module",
   "sideEffects": false,
-  "exports": {
-    ".": "./src/index.ts",
-    "./tags": "./src/tags.ts"
+  "engines": {
+    "node": ">=22"
   },
-  "license": "MIT",
-  "dependencies": {
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tags": {
+      "source": "./src/tags.ts",
+      "types": "./dist/tags.d.ts",
+      "import": "./dist/tags.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./tags": {
+        "types": "./dist/tags.d.ts",
+        "import": "./dist/tags.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node --experimental-strip-types --no-warnings ../../scripts/build.ts"
+  },
+  "peerDependencies": {
+    "@nonchalant/core": "workspace:^"
+  },
+  "devDependencies": {
     "@nonchalant/core": "workspace:*"
   }
 }

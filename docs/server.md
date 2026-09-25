@@ -70,6 +70,13 @@ const order: DurableProc<Order, OrderMsg, { id: string }> = async function* (sel
 
 Registering it is the same as registering anything else:
 
+<!-- ts-prelude
+import type { Cast } from '@nonchalant/core'
+import type { DurableProc } from '@nonchalant/durable'
+type Order = { status: 'open' | 'charged' | 'shipped'; total: number; charged: number }
+type OrderMsg = Cast<{ type: 'add'; price: number }> | Cast<{ type: 'checkout' }>
+declare const order: DurableProc<Order, OrderMsg, { id: string }>
+-->
 ```ts
 import { define, registry } from '@nonchalant/core'
 import { durable, memoryStore } from '@nonchalant/durable'
@@ -120,6 +127,15 @@ A message that throws every time it is handled would crash every activation
 of its key forever, because the journal redelivers it first. `maxAttempts` bounds
 that:
 
+<!-- ts-prelude
+import type { Cast } from '@nonchalant/core'
+import { define } from '@nonchalant/core'
+import { durable, memoryStore } from '@nonchalant/durable'
+import type { DurableProc } from '@nonchalant/durable'
+type Order = { status: 'open' | 'charged' | 'shipped'; total: number; charged: number }
+type OrderMsg = Cast<{ type: 'add'; price: number }> | Cast<{ type: 'checkout' }>
+declare const order: DurableProc<Order, OrderMsg, { id: string }>
+-->
 ```ts
 const orderDef = define(
   durable(order, {
@@ -146,6 +162,13 @@ activation. `packages/durable/test/guarantees.test.ts` covers each case.
 A snapshot is committed with the `version` the code declared (default 0). When
 the code moves on, give it the new version and a `migrate`:
 
+<!-- ts-prelude
+import type { Cast } from '@nonchalant/core'
+import type { DurableProc } from '@nonchalant/durable'
+type Order = { status: 'open' | 'charged' | 'shipped'; total: number; charged: number }
+type OrderMsg = Cast<{ type: 'add'; price: number }> | Cast<{ type: 'checkout' }>
+import { durable, memoryStore } from '@nonchalant/durable'
+-->
 ```ts
 type OrderV1 = Order & { currency: 'EUR' | 'USD' }
 declare const orderV1: DurableProc<OrderV1, OrderMsg, { id: string }>
@@ -199,6 +222,13 @@ outside the library.
 Calls into durable processes use a `callId`. The response is recorded under
 that ID, and retries with the same ID receive the recorded response:
 
+<!-- ts-prelude
+import type { Call } from '@nonchalant/core'
+import type { Process } from '@nonchalant/core'
+import type { Durable } from '@nonchalant/durable'
+declare const d: Durable<{ reserved: number }>
+declare const vault: Process<{ balance: number }, Call<{ type: 'reserve'; amount: number; callId: string }, string>>
+-->
 ```ts
 // the caller's side: a step whose idempotency key is the callId, so a replay
 // calls with the same one
@@ -265,6 +295,9 @@ tools, and a page bound to their state.
 observed, and the registry makes them available by name. A tool can also hold a
 request until a person responds:
 
+<!-- ts-prelude
+import type { Call, Cast, Proc } from '@nonchalant/core'
+-->
 ```ts
 type ApprovalMsg =
   | Call<{ type: 'request'; tool: string; args: string }, boolean>
@@ -320,6 +353,10 @@ Backends commonly use pub/sub systems and work queues. Both can sit behind
 ports. `examples/messaging` defines these interfaces and provides in-memory
 adapters:
 
+<!-- ts-prelude
+import type { Json } from '@nonchalant/core'
+type Job = { id: string; body: Json }
+-->
 ```ts
 export interface Bus {
   publish(topic: string, event: Json): Promise<void>

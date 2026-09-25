@@ -7,7 +7,7 @@
 import { cp, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig, type Plugin } from 'vite'
+import { defaultClientConditions, defaultServerConditions, defineConfig, type Plugin } from 'vite'
 
 const root = dirname(fileURLToPath(import.meta.url))
 
@@ -81,6 +81,10 @@ const chatIsLocalOnly = (): Plugin => ({
 })
 
 export default defineConfig({
+  // the `source` export condition points @nonchalant/* at src/*.ts, so the
+  // site and the examples build from source rather than from a stale dist/
+  resolve: { conditions: ['source', ...defaultClientConditions] },
+  ssr: { resolve: { conditions: ['source', ...defaultServerConditions] } },
   build: {
     // mermaid is a lazy chunk: only readers who expand a diagram pay for it
     chunkSizeWarningLimit: 1_500,

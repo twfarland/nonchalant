@@ -2,13 +2,48 @@
   "name": "@nonchalant/wire",
   "version": "0.0.0",
   "private": true,
+  "description": "Location-transparent processes for nonchalant: the wire protocol, transports, connect() and expose().",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/twfarland/nonchalant.git",
+    "directory": "packages/wire"
+  },
+  "homepage": "https://github.com/twfarland/nonchalant#readme",
+  "bugs": "https://github.com/twfarland/nonchalant/issues",
   "type": "module",
   "sideEffects": false,
-  "exports": {
-    ".": "./src/index.ts"
+  "engines": {
+    "node": ">=22"
   },
-  "license": "MIT",
-  "dependencies": {
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "spec"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node --experimental-strip-types --no-warnings ../../scripts/build.ts"
+  },
+  "peerDependencies": {
+    "@nonchalant/core": "workspace:^"
+  },
+  "devDependencies": {
     "@nonchalant/core": "workspace:*"
   }
 }

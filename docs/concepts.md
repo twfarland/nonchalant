@@ -12,7 +12,7 @@ its published snapshots, and its lifecycle. The handle is what you hold after
 
 | member | what it does |
 |---|---|
-| `p()` | Read the latest value synchronously. Inside a derive, effect, or view binding, this also subscribes by path. |
+| `p()` | Read the latest value synchronously. Inside a tracked context (a view binding, or `derive` and `effect`, both below), this also subscribes by path. |
 | `p.cast(msg)` | Fire-and-forget message. Only exists if `In` has `Cast` messages. |
 | `p.call(msg)` | Request/response, typed. Only exists if `In` has `Call` messages. Rejects if the process crashes, finishes, or is disposed. |
 | `p.pending` | True while the process is working toward its next yield. |
@@ -25,6 +25,10 @@ its published snapshots, and its lifecycle. The handle is what you hold after
 `In` is a discriminated union whose members are spelled `Cast<Msg>` for a
 one-way message and `Call<Req, Res>` for one that expects an answer:
 
+<!-- ts-prelude
+import type { Call, Cast } from '@nonchalant/core'
+type Item = { name: string; price: number }
+-->
 ```ts
 type CartMsg =
   | Cast<{ type: 'add'; item: Item }>
@@ -58,6 +62,9 @@ and tests.
   `maxRestarts` times. Queued messages replay; pending calls reject.
 - `mailbox: n`: cap the queue; overflow drops the oldest and logs a warning.
 
+[Error handling](errors.md) lists what a crash, a restart, and each kind of
+call rejection look like from the outside.
+
 Ownership: whatever a process spawns belongs to it and dies with it. The
 attachment happens during the synchronous part of each step. Spawn before
 you `await`, or the child ends up unowned. Registry processes are unowned
@@ -82,6 +89,15 @@ wait. `examples/router/about.ts` shows the pattern.
 iterable, disposable, `error`). It recomputes when something it read changes,
 and notifies its readers only when its *result* changes. This equality check
 prevents unchanged results from propagating through a chain of derivations.
+
+## effect and untracked
+
+`effect(fn)` runs `fn` now and again whenever something it read changes, and
+returns a function that stops it. `fn` may return a cleanup, which runs before
+each re-run and when the effect stops. Effects are for pushing state out to
+something that is not a process: the document title, a scroll position, a
+log. `untracked(fn)` runs `fn` without recording its reads, for the one read
+inside a tracked context that should not subscribe.
 
 ## The graph (why updates are exact)
 
@@ -124,8 +140,13 @@ Tests: `graph.test.ts` (exact wake counts, glitch freedom), `reconcile.test.ts`
 
 A view is a function call producing plain data (`VNode`); a sink turns it into
 something real. The DOM sink renders static structure once; each thunk or
-process in the tree becomes a small live region with its own effect. Lists
-reconcile by key within the list. Matching keys patch existing nodes,
+process in the tree becomes a small live region with its own effect. A binding
+that returns a subtree (a thunk returning a `VNode`, or a view process yielding
+one) is a **replaceable region**: when it produces a different tree, the sink
+patches the region in place where tags match and replaces it where they don't,
+and nothing outside the region is touched. Replaceable regions and keyed lists
+are how structure changes, since the view function itself never runs again.
+Lists reconcile by key within the list. Matching keys patch existing nodes,
 `key: 0` is valid, identical vnodes are skipped entirely, and removals can wait for an `exit`
 transition. A promise in a slot occupies only its own slot while pending;
 a binding that throws keeps its previous content and reports the failure.
@@ -135,12 +156,22 @@ of the console.
 Attribute values follow the platform: `false` and `null` remove an attribute,
 `true` sets it to the empty string, and anything else is stringified. The
 exception is `aria-*`, which takes enumerated strings rather than presence, so a
-boolean there renders as `"true"` or `"false"` � an absent `aria-pressed` means
+boolean there renders as `"true"` or `"false"` — an absent `aria-pressed` means
 "not a toggle", which is not what `false` is claiming.
 
-Strings are never parsed as markup, so HTML in application data remains inert
-text. Tests also cover tables, SVG, and other common string-renderer
-failure modes, in `packages/dom/test/dom.test.ts`.
+Strings are never parsed as markup: text becomes text nodes and attribute
+values go through `setAttribute`, so HTML in application data remains inert
+text. That rules out markup injection, not every injection: a URL attribute
+still carries whatever URL it is given, and `on*` attributes take functions
+from your code, so treat user-supplied URLs as untrusted (the sink's
+attribute policy is listed under `@nonchalant/dom` in the
+[API reference](api.md#nonchalantdom)).
+Tests also cover tables, SVG, and other common string-renderer failure modes,
+in `packages/dom/test/dom.test.ts`.
+
+There is no server-side rendering or hydration yet. The DOM sink builds every
+node on the client; a server holds processes and sends state over the wire,
+never HTML.
 
 CI limits these paths to one text write for one changed label in a
 50-row list; one view yield and ≤ 3 DOM writes per frame for Mario
@@ -150,7 +181,7 @@ CI limits these paths to one text write for one changed label in a
 
 `registry(defs)` + `define(proc, opts)` + `lookup(name, args)`. Lookup is
 get-or-spawn, keyed by name plus the arguments. Argument order is ignored, so `{a, b}`
-and `{b, a}` are the same key). Subscribers to values or lifecycle metadata
+and `{b, a}` are the same key. Subscribers to values or lifecycle metadata
 count as watchers; plain reads don't. The idle timer starts at lookup and
 restarts when the last watcher leaves; after eviction the next lookup starts
 fresh. One mechanism, three jobs: dependency
@@ -178,8 +209,12 @@ flowchart LR
     T <--> T2
 ```
 `expose(reg, transport, opts?)` serves a registry or any object with a
-`lookup` method, which is the seam per-connection scoping uses, and `opts`
-carries `maxWatches` to cap how many refs one session may hold open.
+`lookup` method, which is the seam per-connection scoping uses. The same
+gateway can `admit` each client message (pass it through, replace it, or
+refuse it) and carry a `principal` that namespaces the session's call ids.
+`opts` carries `maxWatches` to cap how many refs one session may hold open and
+`lookupRate` to limit how fast it may look them up. The full list is in the
+[API reference](api.md#nonchalantwire).
 `connect(transport)` gives you the same lookup interface backed by the other
 side. Under the hood each remote process is a local process that applies
 incoming patches. Remote reads therefore keep the same path-level precision as
@@ -224,5 +259,6 @@ your own data shapes when the write path is performance-sensitive.
 |---|---|
 | reconcile: 1 change in 10k ≤ 100 µs | `reconcile.perf.test.ts` |
 | Mario: 1 view yield, ≤ 3 DOM writes/frame, 0 node churn | `mario.golden.test.ts` |
-| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB | `test/size.test.ts` |
+| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB, durable ≤ 2.2 KB | `test/size.test.ts` |
+| an idle registry process (a chat room) ≤ 8 KB of heap | `test/room-memory.test.ts` |
 | nothing retained after dispose | `process.leaks.test.ts` |

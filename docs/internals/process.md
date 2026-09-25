@@ -149,7 +149,7 @@ set keeps it cheap; fan out in userland if you need more.
 `currentScope` is an ambient module-level pointer, set by `step()` only around
 a resumption:
 
-```ts
+```ts nocheck
 const step = <R>(fn: () => Promise<R>): Promise<R> => {
   const prev = currentScope
   currentScope = core
@@ -223,7 +223,7 @@ mark stale (through `transition`) and dispose children.
 
 The handle *is* the read function, with everything else installed onto it:
 
-```ts
+```ts nocheck
 const read = (): T | undefined => src() as unknown as T | undefined
 Object.defineProperties(read, { pending: …, stale: …, error: … })
 p['cast'] = …; p['call'] = …

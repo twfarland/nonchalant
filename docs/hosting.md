@@ -4,7 +4,7 @@
 need no setup. Do not treat that default as a deployment policy. A public host
 should normally set both an origin policy and an authorization function:
 
-```ts
+```ts nocheck
 import { serve } from '@nonchalant/host'
 
 const host = await serve(definitions, {
@@ -19,7 +19,7 @@ appropriate for browser-only applications and rejects clients that omit the
 header. A callback receives `undefined` for clients without an origin, which
 lets you make an explicit decision for command-line, server, or native clients:
 
-```ts
+```ts nocheck
 allowedOrigins: (origin, request) =>
   origin === 'https://app.example' ||
   (origin === undefined && isTrustedService(request))
@@ -37,7 +37,7 @@ still submit arguments that refer to another user's data. Use `scope` to create
 a gateway for each accepted connection. The server then controls which
 processes the session can reach:
 
-```ts
+```ts nocheck
 const host = await serve(definitions, {
   port: 4321,
   allowedOrigins: ['https://app.example'],
@@ -73,6 +73,15 @@ client watching it goes stale and its state is lost. The host therefore
 delivers only messages that are objects with a string `type`, and the
 gateway's `admit` screens the rest before delivery:
 
+<!-- ts-prelude
+import { define } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
+import { serve } from '@nonchalant/host'
+import type { IncomingMessage } from 'node:http'
+declare const room: Proc<{ lines: string[] }, Cast<{ type: 'post'; from: string; text: string }>, { name: string }>
+const definitions = { room: define(room) }
+declare function sessionFromRequest(r: IncomingMessage): Promise<{ userId: string; team: string; displayName: string } | null>
+-->
 ```ts
 import type { Json } from '@nonchalant/core'
 

@@ -5,7 +5,7 @@ runnable version in `examples/`.
 
 ## Widget state with `cell`
 
-```ts
+```ts nocheck
 function cell<T>(initial: T): Process<T, T> {
   return spawn<T, T, void>(async function* (self) {
     for await (const next of self) yield next
@@ -23,7 +23,7 @@ in flight the loop isn't listening, and when it comes back it picks up the
 most recent query, ignoring everything in between. `self.signal` cancels the
 in-flight request if the process is disposed.
 
-```ts
+```ts nocheck
 for await (const { q } of self.latest()) {
   yield { q, results, pending: true }
   try {
@@ -47,7 +47,7 @@ result instead of watching status fields go by. `examples/form`.
 
 ## A small query cache
 
-```ts
+```ts nocheck
 const users = registry({
   user: define(async function* (self, { id }: { id: number }) {
     yield await fetchUser(id)
@@ -92,7 +92,7 @@ a variant that groups a whole slider drag into one undo step is in
 Start a process on pointerdown, yield offsets while the pointer moves, and
 dispose it on pointerup. Disposal also removes the gesture's subscriptions.
 
-```ts
+```ts nocheck
 el.addEventListener('pointerdown', (down: PointerEvent) => {
   const gesture = spawn(async function* (self: Self<PointerEvent>) {
     for await (const move of self)
@@ -122,6 +122,12 @@ only its own entry. Changing the selection then removes one key and adds
 another, which wakes exactly two rows. This is what `createSelector` does in
 signal libraries, written as a process:
 
+<!-- ts-prelude
+import { spawn } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
+import { a, td, tr } from '@nonchalant/dom/tags'
+declare const row: { id: number; label: string }
+-->
 ```ts
 type Selection = { readonly [id: number]: true }
 type SelectMsg = Cast<{ type: 'select'; id: number }>
@@ -212,7 +218,7 @@ map to the existing primitives:
 Most of these mappings are short enough to keep near the code that uses them.
 Two patterns that carry more lifecycle logic are shown below:
 
-```ts
+```ts nocheck
 // merge: pump several processes into one mailbox
 function merge<T>(...sources: Process<T>[]): Process<T | undefined, T> {
   return spawn<T, T, void>(async function* (self) {
@@ -270,7 +276,7 @@ Process state lives in generator locals, so durability is a contract you
 write, not a feature you enable: load before the first yield, checkpoint at
 transition boundaries, let eviction deactivate.
 
-```ts
+```ts nocheck
 const accounts = registry({
   account: define(async function* (self: Self<AccountMsg>, { id }: { id: string }) {
     let s = (await store.load(id)) ?? initialAccount   // hydrate on activation
@@ -306,7 +312,7 @@ A pending remote call already rejects on crash, completion, disconnect, and
 dispose. A host handler that never replies can still leave it pending. A
 deadline is a race, not a protocol feature:
 
-```ts
+```ts nocheck
 function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   return Promise.race([
@@ -327,7 +333,7 @@ each remote handle retains its last value, sets `stale`, and records the error.
 A successful re-lookup clears both fields. Because `stale` and `error` are
 reactive, a connection indicator can be one derive:
 
-```ts
+```ts nocheck
 const status = derive(() => (cart.stale ? 'reconnecting…' : 'live'))
 ```
 

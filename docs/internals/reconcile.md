@@ -5,7 +5,7 @@ sits on top of it.
 
 Two pure functions and an op vocabulary:
 
-```ts
+```ts nocheck
 reconcile(prev: Json, next: Json): Patch    // diff
 applyPatch(doc: Json, patch: Patch): Json   // apply, without mutating anything
 ```
