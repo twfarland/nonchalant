@@ -24,7 +24,7 @@ const there = connect<Lab>(portTransport(worker))
 const onWorker = cell(true)
 
 const grinder = derive<Grinder>(() =>
-  onWorker() ? (there.lookup('primes') as Grinder) : (here.lookup('primes') as Grinder))
+  onWorker() ? there.lookup('primes') : here.lookup('primes'))
 const state = derive<PrimesState | undefined>(() => grinder()())
 
 const cast = (msg: Casts<PrimesMsg>): void => grinder().cast(msg)

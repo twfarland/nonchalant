@@ -4,11 +4,11 @@
 // in-tab and server versions use: all that changed is the transport.
 
 import { cell, define, registry, spawn } from '@nonchalant/core'
-import type { Process, Self } from '@nonchalant/core'
+import type { Self } from '@nonchalant/core'
 import { connect, expose, portTransport, type MessageEndpoint, type Transport } from '@nonchalant/wire'
 import { mount } from '@nonchalant/dom'
 import { button, div, span } from '@nonchalant/dom/tags'
-import { primes, type Lab, type PrimesMsg, type PrimesState } from '../../examples/worker/primes.ts'
+import { primes, type Lab } from '../../examples/worker/primes.ts'
 
 const worker = typeof Worker === 'undefined'
   ? null
@@ -25,7 +25,7 @@ const link = (): Transport => {
 }
 
 export function run(host: Element): Disposable {
-  const grinder = connect<Lab>(link()).lookup('primes') as Process<PrimesState | undefined, PrimesMsg>
+  const grinder = connect<Lab>(link()).lookup('primes')
 
   // proof that this thread is idle: a hand drawn per frame, and the worst gap
   // between two frames while the grinder was running

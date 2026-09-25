@@ -29,7 +29,9 @@ interface RuntimeDef {
   opts: DefineOpts<unknown> | undefined
 }
 
-/** Declare a schema entry: the generator a name resolves to, plus its spawn/evict options. */
+/** Declare a schema entry: the generator a name resolves to, plus its spawn/evict options. `initial` decides T | undefined vs T for lookups. */
+export function define<T, In, A>(proc: Proc<T, In, A>, opts: DefineOpts<T> & { initial: T }): Definition<T, In, A, never>
+export function define<T, In, A>(proc: Proc<T, In, A>, opts?: DefineOpts<T>): Definition<T, In, A>
 export function define<T, In, A>(proc: Proc<T, In, A>, opts?: DefineOpts<T>): Definition<T, In, A> {
   if (opts?.evict !== undefined && (!Number.isFinite(opts.evict) || opts.evict < 0))
     throw new Error('nonchalant: evict must be a finite non-negative duration')

@@ -10,7 +10,7 @@ import type { Process, Self, VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { button, div, h2, input, li, span, ul } from '@nonchalant/dom/tags'
 import { memoryBus, memoryQueue } from './memory.ts'
-import { feed, worker, type Feed, type FeedMsg, type WorkerMsg, type WorkerState } from './processes.ts'
+import { feed, worker, type WorkerMsg, type WorkerState } from './processes.ts'
 import type { Job, QueueStats } from './ports.ts'
 
 type Worker = Process<WorkerState | undefined, WorkerMsg>
@@ -51,7 +51,7 @@ const lives = { w1: cell(0), w2: cell(0) }
 const workerAt = (name: 'w1' | 'w2'): Process<Worker> =>
   derive<Worker>(() => {
     void lives[name]()
-    return crew.lookup('worker', { name }) as Worker
+    return crew.lookup('worker', { name })
   })
 const workers = { w1: workerAt('w1'), w2: workerAt('w2') }
 
@@ -91,7 +91,7 @@ function Publish(): VNode {
 }
 
 function FeedPanel(topic: string): VNode {
-  const stream = feeds.lookup('feed', { topic }) as Process<Feed | undefined, FeedMsg>
+  const stream = feeds.lookup('feed', { topic })
 
   return div({ class: 'panel' },
     div({}, span({ class: 'tag' }, `#${topic}`),

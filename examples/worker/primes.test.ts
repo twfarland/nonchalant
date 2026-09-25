@@ -4,11 +4,8 @@
 
 import { describe, it, expect } from 'vitest'
 import { define, registry, spawn } from '@nonchalant/core'
-import type { Process } from '@nonchalant/core'
 import { connect, expose, portTransport, type MessageEndpoint } from '@nonchalant/wire'
-import { CHUNK, primes, type Lab, type PrimesMsg, type PrimesState } from './primes.ts'
-
-type Grinder = Process<PrimesState | undefined, PrimesMsg>
+import { CHUNK, primes, type Lab } from './primes.ts'
 
 const until = async (ready: () => boolean, what: string): Promise<void> => {
   const deadline = Date.now() + 5000
@@ -42,7 +39,7 @@ describe('primes over a port', () => {
     const { port1, port2 } = new MessageChannel()
     const stopHosting = expose(registry({ primes: define(primes) }), portTransport(port1 as unknown as MessageEndpoint))
     const there = connect<Lab>(portTransport(port2 as unknown as MessageEndpoint))
-    const remote = there.lookup('primes') as Grinder
+    const remote = there.lookup('primes')
 
     await until(() => remote() !== undefined, 'the first snapshot')
     remote.cast({ type: 'start' })

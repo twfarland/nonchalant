@@ -22,7 +22,7 @@ const me = cell(`guest-${Math.floor(Math.random() * 1000)}`)
 const roomName = cell('lobby')
 
 // get-or-spawn on both sides: the same name is the same room everywhere
-const room = (): Room => conn.lookup('room', { name: roomName() }) as Room
+const room = (): Room => conn.lookup('room', { name: roomName() })
 
 // ---------- components ----------
 

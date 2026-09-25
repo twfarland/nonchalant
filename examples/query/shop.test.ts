@@ -15,22 +15,22 @@ describe('the shop schema', () => {
     const users = shop.lookup('users')
     const ada = shop.lookup('user', { id: 1 })
     await until(() => users() !== undefined && ada() !== undefined)
-    expect(ada().name).toBe('Ada')
+    expect(ada()!.name).toBe('Ada')
 
     const updated = await ada.call({ type: 'rename', name: 'Ada Lovelace' })
     expect(updated.name).toBe('Ada Lovelace')
 
-    await until(() => ada().name === 'Ada Lovelace') // the yield right behind the reply
-    await until(() => users().some((u) => u.name === 'Ada Lovelace')) // the explicit ripple
+    await until(() => ada()!.name === 'Ada Lovelace') // the yield right behind the reply
+    await until(() => users()!.some((u) => u.name === 'Ada Lovelace')) // the explicit ripple
   }, 15_000)
 
   it('a failed write rejects the call; the restart policy re-syncs from the server', async () => {
     const ada = shop.lookup('user', { id: 1 })
     await until(() => ada() !== undefined)
-    const before = ada().name
+    const before = ada()!.name
 
     await expect(ada.call({ type: 'rename', name: '' })).rejects.toThrow(/name is required/)
     await until(() => ada.error === undefined && ada.stale === false) // restarted and refetched
-    expect(ada().name).toBe(before) // back in sync with the server
+    expect(ada()!.name).toBe(before) // back in sync with the server
   }, 15_000)
 })
