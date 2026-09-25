@@ -1,0 +1,53 @@
+{
+  "name": "@nonchalant/react",
+  "version": "0.0.0",
+  "private": true,
+  "description": "React hooks for nonchalant: keep React as the renderer, let processes own the state.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/twfarland/nonchalant.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/twfarland/nonchalant#readme",
+  "bugs": "https://github.com/twfarland/nonchalant/issues",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node --experimental-strip-types --no-warnings ../../scripts/build.ts"
+  },
+  "peerDependencies": {
+    "@nonchalant/core": "workspace:^",
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@nonchalant/core": "workspace:*",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}

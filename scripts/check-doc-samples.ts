@@ -1,6 +1,6 @@
 // Type-checks the TypeScript samples in README.md and docs/**/*.md.
 //
-// Every ```ts block is written out as its own module and compiled under the
+// Every ```ts or ```tsx block is written out as its own module and compiled under the
 // repository's strict settings, so a sample that drifts from the API fails
 // `pnpm check`. Errors are reported against the Markdown file and line.
 //
@@ -49,19 +49,19 @@ mkdirSync(out, { recursive: true })
 for (const md of [join(root, 'README.md'), ...markdown(join(root, 'docs'))]) {
   const lines = readFileSync(md, 'utf8').split(/\r?\n/)
   for (let i = 0; i < lines.length; i++) {
-    const open = /^```ts(?:\s+(.*))?$/.exec(lines[i]!)
+    const open = /^```(tsx?)(?:\s+(.*))?$/.exec(lines[i]!)
     if (open === null) continue
     const start = i + 1
     let end = start
     while (end < lines.length && lines[end] !== '```') end++
     const body = lines.slice(start, end)
     i = end
-    if ((open[1] ?? '').split(/\s+/).includes('nocheck') || body[0]?.trim() === '// @nocheck') {
+    if ((open[2] ?? '').split(/\s+/).includes('nocheck') || body[0]?.trim() === '// @nocheck') {
       skipped++
       continue
     }
     const prelude = preludeAbove(lines, start - 1)
-    const name = `${relative(root, md).replace(/[\\/.]/g, '_')}_${start + 1}.ts`
+    const name = `${relative(root, md).replace(/[\\/.]/g, '_')}_${start + 1}.${open[1]}`
     // the trailing export makes an import-free sample a module, so samples
     // never collide in the global scope
     writeFileSync(join(out, name), `${[...prelude.code, ...body].join('\n')}\nexport {}\n`)
@@ -73,7 +73,7 @@ writeFileSync(join(out, 'tsconfig.json'), JSON.stringify({
   extends: relative(out, join(root, 'tsconfig.json')).replace(/\\/g, '/'),
   // a sample declares what it shows; nothing after it reads those names
   compilerOptions: { types: ['node'], noUnusedLocals: false, noUnusedParameters: false },
-  include: ['*.ts'],
+  include: ['*.ts', '*.tsx'],
 }))
 
 try {
@@ -82,7 +82,7 @@ try {
 } catch (e) {
   const output = String((e as { stdout?: unknown }).stdout ?? e)
   const byFile = new Map(samples.map((s) => [s.file, s]))
-  const located = output.replace(/^(?:.*[\\/])?([^\\/\s(]+\.ts)\((\d+),(\d+)\)/gm, (whole, file: string, line: string, col: string) => {
+  const located = output.replace(/^(?:.*[\\/])?([^\\/\s(]+\.tsx?)\((\d+),(\d+)\)/gm, (whole, file: string, line: string, col: string) => {
     const s = byFile.get(file)
     if (s === undefined) return whole
     const n = Number(line)
