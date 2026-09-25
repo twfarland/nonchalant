@@ -17,8 +17,8 @@ function NewTodo(store: Store): VNode {
     class: 'new-todo',
     placeholder: 'What needs to be done?',
     autofocus: true,
-    onkeydown: (e: KeyboardEvent) => {
-      const el = e.target as HTMLInputElement
+    onkeydown: (e) => {
+      const el = e.currentTarget
       const title = el.value.trim()
       if (e.key === 'Enter' && title !== '') {
         store.cast({ type: 'add', title })
@@ -52,8 +52,8 @@ function ToggleAll(store: Store): VNode {
       class: 'toggle-all',
       type: 'checkbox',
       checked: () => remaining(store()) === 0 && store().todos.length > 0,
-      onchange: (e: Event) =>
-        store.cast({ type: 'toggle-all', done: (e.target as HTMLInputElement).checked }),
+      onchange: (e) =>
+        store.cast({ type: 'toggle-all', done: e.currentTarget.checked }),
     }),
     label({ for: 'toggle-all' }, 'Mark all as complete'))
 }

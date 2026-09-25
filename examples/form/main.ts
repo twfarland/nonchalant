@@ -43,9 +43,9 @@ function SignupForm(): VNode {
   const status = cell('')
   return form({
       class: 'card',
-      onsubmit: (e: Event) => {
+      onsubmit: (e) => {
         e.preventDefault()
-        const el = (e.target as HTMLFormElement).elements.namedItem('email') as HTMLInputElement
+        const el = e.currentTarget.elements.namedItem('email') as HTMLInputElement
         status.cast('…')
         void store.call({ type: 'submit', email: el.value }).then(
           (res) => status.cast(res.ok ? 'welcome aboard' : (res.error ?? 'failed')),

@@ -182,12 +182,14 @@ describe('bulk clear', () => {
 describe('authoring lints (console.warn, once per message)', () => {
   it('camelCase onClick warns once across many elements', () => {
     const warns = lints()
+    // @ts-expect-error the types refuse camelCase listeners too; this is the untyped-caller path
     mount(container(), div({}, button({ onClick: () => {} }), button({ onClick: () => {} })))
     expect(warns().filter((w) => w.includes('onClick'))).toHaveLength(1)
   })
 
   it('an object attribute value warns instead of silently rendering [object Object]', () => {
     const warns = lints()
+    // @ts-expect-error the types refuse style objects too; this is the untyped-caller path
     mount(container(), div({ style: { color: 'red' } }))
     expect(warns().filter((w) => w.includes('style was given an object'))).toHaveLength(1)
   })
@@ -236,6 +238,7 @@ describe('attribute-level injection', () => {
     const warns = lints()
     const root = container()
     const adds = spyMethod(eventTargetProto(), 'addEventListener')
+    // @ts-expect-error the types refuse string handlers too; this is the untyped-caller path
     mount(root, button({ onclick: 'window.__pwned = true', onmouseover: 'x()' }))
     const btn = root.querySelector('button')!
     expect(btn.hasAttribute('onclick')).toBe(false)

@@ -60,8 +60,8 @@ export function run(host: Element): Disposable {
     input({
       type: 'text',
       placeholder: 'add a todo, then press Enter',
-      onkeydown: (e: KeyboardEvent) => {
-        const el = e.target as HTMLInputElement
+      onkeydown: (e) => {
+        const el = e.currentTarget
         const title = el.value.trim()
         if (e.key === 'Enter' && title !== '') {
           store.cast({ type: 'add', title })
