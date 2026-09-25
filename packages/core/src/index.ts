@@ -12,8 +12,8 @@ export type {
 export { reconcile, applyPatch } from './reconcile.ts'
 export type { Json, Op, Patch } from './reconcile.ts'
 export { flush, effect, untracked } from './graph.ts'
-export { channel, onProcessError } from './process.ts'
-export type { SpawnOpts } from './process.ts'
+export { channel, onProcessError, instrument } from './process.ts'
+export type { SpawnOpts, ProcessEvent } from './process.ts'
 export { define, registry } from './registry.ts'
 export type { DefineOpts, RegistryHandle, RegistryOpts } from './registry.ts'
 

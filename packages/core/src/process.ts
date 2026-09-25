@@ -21,7 +21,7 @@
 
 import { source, untracked } from './graph.ts'
 import { iterate, NONE } from './iterate.ts'
-import type { Json } from './reconcile.ts'
+import { reconcile, type Json, type Patch } from './reconcile.ts'
 import type { Proc, Process, Self } from './types.ts'
 
 export interface SpawnOpts<T> {
@@ -203,6 +203,7 @@ export function channel<In>(signal?: AbortSignal): Self<In> & Disposable {
 // ---------- ownership scope ----------
 
 interface ProcessCore {
+  id: number
   children: Set<ProcessCore>
   dispose(): void
   settled(): Promise<void>
@@ -244,6 +245,42 @@ export function onProcessError(handler: (error: unknown, name: string) => void):
   }
 }
 
+// ---------- instrumentation ----------
+
+/**
+ * What the runtime reports to an `instrument` sink. Payloads are the live
+ * values (messages, replies, errors), not copies; `yield` carries the patch
+ * the yield produced rather than the whole state. `state` on `spawn` is the
+ * initial value, so spawn state + every yield's ops = the current state.
+ */
+export type ProcessEvent =
+  | { type: 'spawn'; id: number; parent: number | null; name: string; key: string | undefined; args: unknown; state: unknown }
+  | { type: 'cast'; id: number; msg: unknown }
+  | { type: 'call'; id: number; msg: unknown; call: number }
+  | { type: 'reply'; id: number; call: number; value: unknown }
+  | { type: 'yield'; id: number; ops: Patch }
+  | { type: 'status'; id: number; pending: boolean; stale: boolean; errored: boolean }
+  | { type: 'crash'; id: number; error: unknown }
+  | { type: 'restart'; id: number; attempt: number }
+  | { type: 'exit'; id: number; reason: 'done' | 'crashed' | 'disposed' }
+
+// every emit site is `sink?.(...)`: with no sink the argument is never built
+let sink: ((event: ProcessEvent) => void) | undefined
+let lastId = 0
+let lastCall = 0
+
+/**
+ * Report every process event to `fn`, synchronously, as it happens. One sink
+ * at a time; returns its remover. Events a sink causes (a cast from inside
+ * it) are reported to it re-entrantly.
+ */
+export function instrument(fn: (event: ProcessEvent) => void): () => void {
+  sink = fn
+  return () => {
+    if (sink === fn) sink = undefined
+  }
+}
+
 // ---------- spawn ----------
 
 type Meta = { pending: boolean; stale: boolean; errored: boolean }
@@ -253,7 +290,7 @@ export function spawnProcess<T, In, A>(
   proc: Proc<T, In, A>,
   args: A,
   opts?: SpawnOpts<T>,
-  internal?: { onWatchers?: (count: number) => void; onSettled?: () => void; busy?: () => boolean },
+  internal?: { onWatchers?: (count: number) => void; onSettled?: () => void; busy?: () => boolean; key?: string },
 ): Process<T | undefined, In> {
   const mailboxBound = opts?.mailbox
   if (mailboxBound !== undefined && (!Number.isInteger(mailboxBound) || mailboxBound < 0))
@@ -281,11 +318,13 @@ export function spawnProcess<T, In, A>(
       ? { onWatchers: (count) => { metaWatchers = count; reportWatchers() } }
       : undefined,
   )
+  const id = ++lastId
   let m: Meta = { pending: true, stale: false, errored: false }
   const setMeta = (patch: Partial<Meta>): void => {
     const next = { ...m, ...patch }
     if (next.pending === m.pending && next.stale === m.stale && next.errored === m.errored) return
     m = next
+    sink?.({ type: 'status', id, ...next })
     meta.publish(next)
   }
 
@@ -301,8 +340,9 @@ export function spawnProcess<T, In, A>(
   // goes through here: final meta, then every open iterator ends. Values
   // publish only while 'running', so a body still unwinding after its end
   // cannot un-stale the handle.
-  const transition = (to: Phase, patch: Partial<Meta>): void => {
+  const transition = (to: Exclude<Phase, 'running'>, patch: Partial<Meta>): void => {
     phase = to
+    sink?.({ type: 'exit', id, reason: to })
     setMeta(patch)
     for (const end of [...closers]) end()
   }
@@ -329,12 +369,18 @@ export function spawnProcess<T, In, A>(
 
   let completion: Promise<void> = Promise.resolve()
   const core: ProcessCore = {
+    id,
     children: new Set(),
     dispose: () => disposeProcess(),
     settled: () => completion,
   }
   const parent = currentScope
   if (parent !== null) parent.children.add(core)
+  sink?.({ type: 'spawn', id, parent: parent && parent.id, name: proc.name, key: internal?.key, args, state: opts?.initial })
+  const post = (msg: In): void => {
+    sink?.({ type: 'cast', id, msg })
+    mailbox.push(msg)
+  }
 
   const childSettlements = new Set<Promise<void>>()
   const disposeChildren = (): void => {
@@ -364,9 +410,10 @@ export function spawnProcess<T, In, A>(
       controller = new AbortController()
       try {
         // inside the try: a throw while binding the parameters is a crash
-        const g = (gen = proc(selfFor(mailbox, controller.signal, (msg) => mailbox.push(msg)), args))
+        const g = (gen = proc(selfFor(mailbox, controller.signal, post), args))
         for (let r = await step(() => g.next()); !r.done; r = await step(() => g.next())) {
           if (phase !== 'running') continue
+          sink?.({ type: 'yield', id, ops: reconcile(untracked(src), r.value as unknown as Json) })
           src.publish(r.value as unknown as Json)
           hasValue = true
           errorValue = undefined
@@ -375,6 +422,7 @@ export function spawnProcess<T, In, A>(
         if (phase === 'running') transition('done', { pending: false })
       } catch (err) {
         if (phase === 'running') {
+          sink?.({ type: 'crash', id, error: err })
           errorValue = err
           controller.abort()
           // queued calls reject with the crash and never reach a restarted
@@ -390,6 +438,7 @@ export function spawnProcess<T, In, A>(
           if (report && !opts?.quiet) void Promise.resolve().then(() => report(err, proc.name))
           if (opts?.restart === 'on-crash' && restarts < (opts.maxRestarts ?? 3)) {
             restarts++
+            sink?.({ type: 'restart', id, attempt: restarts })
             setMeta({ pending: true, stale: true, errored: true })
             continue
           }
@@ -443,10 +492,13 @@ export function spawnProcess<T, In, A>(
         reject(new Error(`nonchalant: call on ${phase} process`))
         return
       }
+      const ref = sink ? ++lastCall : 0
+      sink?.({ type: 'call', id, msg, call: ref })
       const full = {
         ...msg,
         reply: (res: unknown): void => {
           pendingCalls.delete(full)
+          sink?.({ type: 'reply', id, call: ref, value: res })
           resolve(res)
         },
       }
@@ -465,7 +517,7 @@ export function spawnProcess<T, In, A>(
     },
   })
   const p = read as unknown as Record<PropertyKey, unknown>
-  p['cast'] = (msg: In): void => mailbox.push(msg)
+  p['cast'] = post
   p['call'] = call
   // the value source is a subtree dep (every yield wakes); the raw snapshot
   // is read untracked so iteration hands out values, not tracking proxies
