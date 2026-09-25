@@ -273,28 +273,47 @@ describe('crashes', () => {
 })
 
 describe('mailbox depth', () => {
-  it('200k queued casts drain in linear time', async () => {
-    const n = 200_000
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    let total = 0
-    const p = spawn(async function* (self: Self<number>) {
-      yield 0
-      await gate
-      for await (const m of self) {
-        total += m
-        if (total === n) yield total
-      }
-    }, undefined)
-    await tick()
-    for (let i = 0; i < n; i++) p.cast(1)
-    const start = performance.now()
-    release()
-    while (total < n) await tick()
-    const elapsed = performance.now() - start
-    // O(n) per dequeue measured ~7s at this depth; O(1) drains in tens of ms
-    expect(elapsed).toBeLessThan(1_000)
-    expect(p()).toBe(n)
-    p[Symbol.dispose]()
-  })
+  it('queued casts drain in linear time: 4x the backlog costs under 8x the time', async () => {
+    // a ratio of two drains on the same runner survives a slow runner where a
+    // wall-clock bound does not. O(1) dequeue scales ~4x from 50k to 200k and
+    // O(n) dequeue ~16x; each figure is the quietest of three runs
+    const drain = async (n: number): Promise<number> => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      let drained!: () => void
+      const done = new Promise<void>((resolve) => { drained = resolve })
+      let total = 0
+      const p = spawn(async function* (self: Self<number>) {
+        yield 0
+        await gate
+        for await (const m of self) {
+          total += m
+          if (total === n) {
+            drained()
+            yield total
+          }
+        }
+      }, undefined)
+      await tick()
+      for (let i = 0; i < n; i++) p.cast(1)
+      const start = performance.now()
+      release()
+      await done
+      const elapsed = performance.now() - start
+      await tick()
+      expect(p()).toBe(n)
+      p[Symbol.dispose]()
+      return elapsed
+    }
+    const quietest = async (n: number): Promise<number> => {
+      let best = Number.POSITIVE_INFINITY
+      for (let run = 0; run < 3; run++) best = Math.min(best, await drain(n))
+      return best
+    }
+
+    await drain(50_000) // warmup: let the JIT settle
+    const small = await quietest(50_000)
+    const large = await quietest(200_000)
+    expect(large / small).toBeLessThan(8)
+  }, 60_000) // a quadratic mailbox takes ~25 s here; let the ratio, not the timeout, report it
 })

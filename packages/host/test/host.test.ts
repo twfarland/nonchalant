@@ -15,6 +15,23 @@ const until = async (cond: () => boolean, tries = 200): Promise<void> => {
   if (!cond()) throw new Error('condition never became true')
 }
 
+// Resolves once the host has answered a frame sent now. Frames on one socket
+// arrive in order, so anything this socket sent earlier (a pong, say) has been
+// handled by then. The probe is a call on a ref nobody watches: it costs no
+// lookup and the host answers it at once.
+let probes = 0
+const roundTrip = (ws: WebSocket): Promise<void> =>
+  new Promise((resolve) => {
+    const ref = `probe-${++probes}`
+    const onMessage = (data: unknown): void => {
+      if ((JSON.parse(String(data)) as { ref?: string }).ref !== ref) return
+      ws.off('message', onMessage)
+      resolve()
+    }
+    ws.on('message', onMessage)
+    ws.send(JSON.stringify({ op: 'call', ref, id: 1, msg: { type: 'probe' } }))
+  })
+
 type CartState = { items: string[]; total: number }
 type CartMsg =
   | Cast<{ type: 'add'; item: string; price: number }>
@@ -253,11 +270,11 @@ describe('node host over real websockets', () => {
 
       vi.advanceTimersByTime(1_000) // round 1: both pinged
       await until(() => pongs === 1)
-      await new Promise((resolve) => setTimeout(resolve, 20)) // the pong crosses back to the host
+      await roundTrip(live) // the pong is on the wire ahead of this, so the host has it
       vi.advanceTimersByTime(1_000) // round 2: the silent one missed its pong
       await until(() => host.sessions() === 1)
       await until(() => pongs === 2)
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await roundTrip(live)
       vi.advanceTimersByTime(1_000) // round 3: the live one answered, so it stays
       await until(() => pongs === 3)
       expect(host.sessions()).toBe(1)
