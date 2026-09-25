@@ -5,37 +5,40 @@
 //
 // The transaction boundary is one message. A message is journaled before it is
 // handled; the effects inside it are journaled as they complete; and when the
-// process requests its *next* message, the state it produced and the cursor
-// past that message are committed together. Crash anywhere in between and the
-// message is redelivered with its completed effects already answered — so the
-// generator re-runs, and the effects do not.
+// process requests its *next* message, the state it produced, the cursor past
+// that message, and the answers it gave to calls are committed together. Crash
+// anywhere in between and the message is redelivered with its completed effects
+// already answered — so the generator re-runs, and the effects do not.
 //
 // Calls are durable too, which is what makes a durable process worth calling: a
-// call carries an idempotency key, its answer is recorded under that key, and a
+// call carries an idempotency key, its answer is committed under that key, and a
 // retry with the same key is answered from the record instead of running again.
-// One process crashing therefore does not make another do its work twice.
+// An answer is released to the caller only once it is committed, so nobody is
+// ever told something a crash could take back.
 //
 // `Self` being an interface is what makes all of this possible: the process
 // iterates a mailbox that acknowledges, and cannot tell.
 
-import { channel } from '@nonchalant/core'
 import type { Json, Proc, Self } from '@nonchalant/core'
-import type { Store, StepRecord } from './store.ts'
+import { Fenced } from './store.ts'
+import type { DeadLetter, Logged, Store, StepRecord } from './store.ts'
 
 export interface Durable<T> {
-  /** The last committed state, or undefined on a first activation. Start from it. */
+  /** The last committed state (migrated to the current version), or undefined on a first activation. Start from it. */
   readonly restored: T | undefined
   /**
-   * Run an effect at most once. On a replay the recorded result is returned and
-   * `fn` is not called — so anything non-deterministic (a clock, an id, a
-   * charge) belongs inside one of these.
+   * Run an effect and record its result. Execution is at-least-once — an
+   * effect in flight when the process dies runs again — and recording is
+   * exactly-once: once the result is written, a replay returns it and `fn` is
+   * not called. So anything non-deterministic (a clock, an id, a charge)
+   * belongs inside one of these. `fn` receives an idempotency key, stable
+   * across replays of this step, to hand to the outside world.
    */
-  step<R extends Json>(name: string, fn: () => R | Promise<R>): Promise<R>
+  step<R extends Json>(name: string, fn: (idempotencyKey: string) => R | Promise<R>): Promise<R>
   /**
-   * A call to another process, journaled on both sides. The id handed to `invoke`
-   * is derived from this process, the message being handled, and `name`, so a
-   * replay calls with the same id — and a durable callee answers it from its
-   * record rather than doing the work twice.
+   * A call to another process, journaled on both sides: a step whose
+   * idempotency key is the callId, so a replay calls with the same id — and a
+   * durable callee answers it from its record rather than doing the work twice.
    */
   call<R extends Json>(name: string, invoke: (callId: string) => Promise<R>): Promise<R>
   /** A sleep whose deadline is journaled: after a restart it waits out the remainder, not the whole duration. */
@@ -44,12 +47,23 @@ export interface Durable<T> {
 
 export type DurableProc<T, In, Args> = (self: Self<In>, args: Args, durable: Durable<T>) => AsyncGenerator<T>
 
-export interface DurableOpts<Args> {
+export interface DurableOpts<T, Args> {
   store: Store
   /** The storage identity of this instance — usually the registry lookup args. */
   key: (args: Args) => string
   /** Wall clock, for `sleep`. Injected so tests do not wait. Default `Date.now`. */
   now?: () => number
+  /** The snapshot schema version this code writes. Default 0. */
+  version?: number
+  /** Bring a snapshot committed under an older version up to date. Required once `version` moves. */
+  migrate?: (old: Json, from: number) => T
+  /**
+   * How many times one message may crash the process before it is moved to the
+   * dead letters and the cursor steps past it. Default: no limit.
+   */
+  maxAttempts?: number
+  /** Told after a message is dead-lettered. */
+  onPoison?: (key: string, dead: DeadLetter) => void
 }
 
 /**
@@ -59,21 +73,7 @@ export interface DurableOpts<Args> {
  */
 export type DurableCall = { readonly callId: string; readonly reply: (res: never) => void }
 
-interface Envelope<In> {
-  seq: number
-  msg: In
-  callId?: string
-}
-
-interface Incoming {
-  reply?: (res: Json) => void
-  callId?: string
-}
-
-const isCall = (msg: unknown): msg is Incoming & { reply: (res: Json) => void; callId: string } => {
-  const m = msg as Incoming
-  return typeof m?.reply === 'function' && typeof m.callId === 'string'
-}
+type Reply = (res: Json | Promise<never>) => void
 
 /** The request without its reply: what gets written down. */
 const plainly = (msg: object): Json => {
@@ -99,42 +99,61 @@ const delay = (ms: number, signal: AbortSignal): Promise<void> =>
 
 export function durable<T extends Json, In extends Json | DurableCall, Args>(
   proc: DurableProc<T, In, Args>,
-  opts: DurableOpts<Args>,
+  opts: DurableOpts<T, Args>,
 ): Proc<T, In, Args> {
-  const now = opts.now ?? Date.now
+  const { store, now = Date.now, version = 0, migrate, maxAttempts = Infinity } = opts
 
   return async function* (self: Self<In>, args: Args): AsyncGenerator<T> {
-    const { store } = opts
     const key = opts.key(args)
-    const loaded = (await store.load(key)) ?? { snapshot: undefined, cursor: 0 }
+    const loaded = await store.load(key)
+    const { epoch } = loaded
 
     let cursor = loaded.cursor
     let latest = loaded.snapshot as T | undefined
-    let handling = 0 // the message in flight; 0 before the first one
-    let stepIndex = 0
-    let recorded: StepRecord[] = []
-
-    const inbox = channel<Envelope<In>>(self.signal)
-    // callers waiting on an answer right now; a replayed call has none, and its
-    // answer is recorded for whoever asks again
-    const waiting = new Map<string, ((value: Json) => void)[]>()
-
-    /** The reply the inner process is handed: record first, then tell anyone listening. */
-    const replyFor = (callId: string) => (value: Json) => {
-      void (async () => {
-        await store.putResult(key, callId, value)
-        for (const waiter of waiting.get(callId) ?? []) waiter(value)
-        waiting.delete(callId)
-      })()
+    if (latest !== undefined && loaded.version !== version) {
+      if (migrate === undefined)
+        throw new Error(`nonchalant/durable: no migrate for '${key}' from version ${loaded.version} to ${version}`)
+      latest = migrate(latest, loaded.version)
     }
 
-    const restore = (msg: Json, callId: string | undefined): In =>
-      callId === undefined ? (msg as In) : ({ ...(msg as object), reply: replyFor(callId) } as unknown as In)
+    let current: Logged | undefined // the message in flight
+    let handling = 0 // its seq; 0 before the first one
+    let before: T | undefined // the state it was handed out against
+    let inside = false // true while user code handles it: a throw now is the message's fault
+    let stepIndex = 0
+    let recorded: StepRecord[] = []
+    let answers: [string, Json][] = []
+
+    // journaled messages waiting for the process; one reader, ended by the signal
+    const inbox: Logged[] = []
+    let wake = (): void => {}
+    const push = (logged: Logged): void => {
+      inbox.push(logged)
+      wake()
+    }
+    self.signal.addEventListener('abort', () => wake(), { once: true })
+
+    // callers waiting on an answer; a replayed call starts with none, so a
+    // retry under its id attaches instead of being journaled twice
+    const waiting = new Map<string, Reply[]>()
+    const settle = (callId: string, answer: Json): void => {
+      for (const reply of waiting.get(callId) ?? []) reply(answer)
+      waiting.delete(callId)
+    }
+
+    // a store failure is never the message's fault, so it must not count as an attempt
+    const write = <R>(p: Promise<R>): Promise<R> =>
+      p.catch((e: unknown) => {
+        inside = false
+        throw e
+      })
 
     // everything the log holds past the cursor goes in first, in order: a
     // restart is a redelivery, not a special mode
-    for (const logged of await store.pending(key, cursor))
-      inbox.cast({ seq: logged.seq, msg: restore(logged.msg, logged.callId), ...(logged.callId === undefined ? {} : { callId: logged.callId }) })
+    for (const logged of await store.pending(key, cursor)) {
+      if (logged.callId !== undefined) waiting.set(logged.callId, [])
+      push(logged)
+    }
 
     // A store that will not accept a message must crash the process rather than
     // drop it: handling a message that was never written down is the one thing
@@ -151,25 +170,25 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     // outside messages and the process's own self-casts
     let appending: Promise<void> = Promise.resolve()
     const journal = (msg: In): void => {
-      if (broken) return
       appending = appending.then(async () => {
         if (broken) return
         try {
-          if (isCall(msg)) {
-            const { callId, reply } = msg
-            const answered = await store.result(key, callId)
-            if (answered !== undefined) {
-              reply(answered) // asked before and already answered: no work, no log entry
-              return
-            }
-            waiting.set(callId, [...(waiting.get(callId) ?? []), reply])
-            if (waiting.get(callId)!.length > 1) return // already in flight under this id
-            const seq = await store.append(key, plainly(msg), callId)
-            inbox.cast({ seq, msg: restore(plainly(msg), callId), callId })
+          const { reply, callId } = msg as { reply?: Reply; callId?: unknown }
+          if (typeof reply !== 'function') {
+            push({ seq: await write(store.append(key, epoch, msg as Json)), msg: msg as Json })
             return
           }
-          const seq = await store.append(key, msg as Json)
-          inbox.cast({ seq, msg })
+          // enforced here as well as in the types: a call journaled without an
+          // id could never be answered from the record, and its reply would be
+          // replayed as data
+          if (typeof callId !== 'string') return reply(Promise.reject(new Error('nonchalant/durable: a call needs a callId')))
+          const attached = waiting.get(callId)
+          if (attached !== undefined) return void attached.push(reply) // already in flight under this id
+          waiting.set(callId, [reply])
+          const answered = await store.result(key, callId)
+          if (answered !== undefined) return settle(callId, answered) // asked and answered before: no work, no log entry
+          const plain = plainly(msg as object)
+          push({ seq: await write(store.append(key, epoch, plain, callId)), msg: plain, callId })
         } catch (e) {
           broken = true
           fail(e)
@@ -178,76 +197,102 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     }
 
     void (async () => {
-      for await (const msg of self) journal(msg)
+      for await (const msg of self) {
+        // a crashed instance's reader may still be waiting on a restarted
+        // process's mailbox: hand what it takes to the new instance
+        if (self.signal.aborted) return self.cast(msg)
+        journal(msg)
+      }
     })()
 
-    const commit = async (): Promise<void> => {
-      if (handling <= cursor || latest === undefined) return
-      await store.commit(key, latest, handling)
+    const commit = async (dead?: DeadLetter): Promise<void> => {
+      if (handling <= cursor) return
+      const results = answers
+      answers = []
+      await write(store.commit(key, epoch, dead === undefined
+        ? { snapshot: latest, version, cursor: handling, results }
+        : { snapshot: before, version, cursor: handling, results: [], dead }))
       cursor = handling
+      for (const [callId, answer] of results) settle(callId, answer)
     }
 
-    const deliver = (source: AsyncIterator<Envelope<In>>): AsyncIterator<In> => ({
+    // `newest` skips to the last message queued; the ones it passes over are acknowledged with it
+    const deliver = (newest: boolean): AsyncIterator<In> => ({
       async next(): Promise<IteratorResult<In>> {
-        for (;;) {
-          await commit() // asking for the next message is what finishes the last one
-          const r = await Promise.race([source.next(), failed])
-          if (r.done === true) return { value: undefined as never, done: true }
-          const { seq, msg, callId } = r.value
-          // a call answered before the crash is acknowledged, not handled again
-          if (callId !== undefined && (await store.result(key, callId)) !== undefined) {
-            handling = seq
-            continue
-          }
-          handling = seq
-          stepIndex = 0
-          recorded = await store.steps(key, seq)
-          return { value: msg, done: false }
+        inside = false
+        await commit() // asking for the next message is what finishes the last one
+        while (inbox.length === 0 && !self.signal.aborted)
+          await Promise.race([new Promise<void>((resolve) => (wake = resolve)), failed])
+        if (self.signal.aborted) return { value: undefined as never, done: true }
+        current = (newest ? inbox.splice(0).pop() : inbox.shift()) as Logged
+        const { seq, msg, callId } = current
+        handling = seq
+        before = latest
+        stepIndex = 0
+        recorded = await store.steps(key, seq)
+        inside = true
+        // a call's reply is recorded with the commit, and released once it lands
+        return {
+          value: (callId === undefined ? msg : { ...(msg as object), reply: (res: Json) => answers.push([callId, res]) }) as In,
+          done: false,
         }
-      },
-      async return(): Promise<IteratorResult<In>> {
-        await source.return?.()
-        return { value: undefined as never, done: true }
       },
     })
 
     const inner: Self<In> = {
       signal: self.signal,
       cast: journal,
-      latest: () => ({ [Symbol.asyncIterator]: () => deliver(inbox.latest()[Symbol.asyncIterator]()) }),
-      [Symbol.asyncIterator]: () => deliver(inbox[Symbol.asyncIterator]()),
+      latest: () => ({ [Symbol.asyncIterator]: () => deliver(true) }),
+      [Symbol.asyncIterator]: () => deliver(false),
     }
 
-    const step = async <R extends Json>(name: string, fn: () => R | Promise<R>): Promise<R> => {
+    const step = async <R extends Json>(name: string, fn: (idempotencyKey: string) => R | Promise<R>): Promise<R> => {
+      const seq = handling
       const index = stepIndex++
       const done = recorded.find((s) => s.index === index)
       if (done !== undefined) {
+        // the order of steps within one message must not depend on anything unrecorded
         if (done.name !== name)
-          throw new Error(
-            `nonchalant/durable: step ${index} of this message was '${done.name}' and is now '${name}' — ` +
-              'the order of steps within one message must not depend on anything unrecorded',
-          )
+          throw new Error(`nonchalant/durable: step order drifted in '${key}' #${seq}: step ${index} was '${done.name}', now '${name}'`)
         return done.result as R
       }
-      const result = await fn()
-      await store.putStep(key, handling, index, name, result as Json)
+      const result = await fn(`${key}#${seq}#${index}`)
+      await write(store.putStep(key, epoch, seq, index, name, result))
       return result
     }
 
     const ctx: Durable<T> = {
       restored: latest,
       step,
-      call: (name, invoke) => step(name, () => invoke(`${key}#${handling}#${name}`)),
+      call: step,
       sleep: async (name, ms) => {
-        const deadline = await step(`${name}:deadline`, () => now() + ms)
-        const left = deadline - now()
+        const left = (await step(`${name}:deadline`, () => now() + ms)) - now()
         if (left > 0) await delay(left, self.signal)
       },
     }
 
-    for await (const value of proc(inner, args, ctx)) {
-      latest = value
-      yield value
+    try {
+      for await (const value of proc(inner, args, ctx)) {
+        latest = value
+        yield value
+      }
+      await commit() // a process that returns acknowledges its last message
+    } catch (e) {
+      // superseded by a later activation: stop, and leave the key to it
+      if (e instanceof Fenced) return
+      // attempts live in the step journal at negative indices, so they survive
+      // the crash they record; a host dying outright is not counted
+      if (inside && maxAttempts !== Infinity) {
+        const attempts = recorded.filter((s) => s.index < 0).length + 1
+        const error = String(e)
+        if (attempts < maxAttempts) await write(store.putStep(key, epoch, handling, -attempts, 'attempt', error))
+        else {
+          const dead = { ...(current as Logged), error }
+          await commit(dead)
+          opts.onPoison?.(key, dead)
+        }
+      }
+      throw e
     }
   }
 }
