@@ -113,6 +113,42 @@ el.addEventListener('pointerdown', (down: PointerEvent) => {
 
 Runnable version, with a draggable box: `examples/drag`.
 
+## Selecting one row of thousands
+
+A binding wakes when a path it read changes. If every row compares against
+one selected id, every row read the same value, so changing the selection
+wakes all of them. Yield a set-shaped object instead and have each row read
+only its own entry. Changing the selection then removes one key and adds
+another, which wakes exactly two rows. This is what `createSelector` does in
+signal libraries, written as a process:
+
+```ts
+type Selection = { readonly [id: number]: true }
+type SelectMsg = Cast<{ type: 'select'; id: number }>
+
+const selection: Proc<Selection, SelectMsg, void> = async function* (self) {
+  let sel: Selection = {}
+  yield sel
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'select':
+        sel = { [msg.id]: true }
+        break
+    }
+    yield sel
+  }
+}
+
+const selected = spawn(selection, undefined, { initial: {} })
+
+tr({ key: row.id, class: () => (selected()[row.id] === true ? 'danger' : '') },
+  td({}, a({ onclick: () => selected.cast({ type: 'select', id: row.id }) }, row.label)))
+```
+
+Multi-select uses the same shape: add or remove one key per message.
+`examples/js-framework-benchmark` holds it to budget: selecting a row among
+1,000 runs two bindings and writes two attributes (`bench.test.ts`).
+
 ## A spreadsheet built from derives
 
 Give every cell a derive that parses its formula and reads the cells it

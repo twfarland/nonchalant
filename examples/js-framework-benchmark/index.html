@@ -14,11 +14,11 @@
 </main>
 <aside class="explain">
 <h2>How it works</h2>
-<p>The standard krausest benchmark table: one state process, one keyed thunk hole. Selection is its own process, so selecting a row wakes exactly two rows — the old and the new — not the table.</p>
-<pre><code>tr({ key: row.id, class: () =&gt; (selected() === row.id ? <span class="s">'danger'</span> : <span class="s">''</span>) },
+<p>The standard krausest benchmark table: one state process, one keyed thunk hole. Selection is its own process yielding <code>{ [id]: true }</code>; each row reads only its own entry, so selecting a row wakes exactly two rows &mdash; the old and the new &mdash; not the table. <code>bench.test.ts</code> holds every operation to a count budget: a swap is two DOM moves, a select two attribute writes.</p>
+<pre><code>tr({ key: row.id, class: () =&gt; (selected()[row.id] === <span class="k">true</span> ? <span class="s">'danger'</span> : <span class="s">''</span>) },
   td({ class: <span class="s">'col-md-1'</span> }, String(row.id)),
   td({ class: <span class="s">'col-md-4'</span> },
-    a({ onclick: () =&gt; selected.cast(row.id) }, row.label)),
+    a({ onclick: () =&gt; selected.cast({ type: <span class="s">'select'</span>, id: row.id }) }, row.label)),
   <span class="c">// ...</span>
 )</code></pre>
 </aside>
