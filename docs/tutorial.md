@@ -218,7 +218,10 @@ const user = shop.lookup('user', { userId })
 
 This provides shared dependencies without prop drilling and caches process
 instances by name and arguments. The registry counts watchers, evicts idle
-entries, and starts a fresh process on the next lookup. These lifecycle rules are covered by
+entries, and starts a fresh process on the next lookup. When the arguments come
+from user input, `registry(defs, { maxEntries: 1_000 })` caps how many entries
+it keeps: past the cap, the least recently used unwatched ones are disposed.
+These lifecycle rules are covered by
 `packages/core/test/registry.test.ts`.
 
 ## 8. Use a remote registry

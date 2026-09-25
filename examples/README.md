@@ -23,7 +23,7 @@ local server.
 | `messaging/` | ⏱ pub/sub and a work queue as ports, with in-memory adapters |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
 | `shared-cart/` | the same cart and view using either a local or remote registry |
-| `mario/` | ⏱ the golden demo: 1 view yield, ≤ 3 DOM writes/frame, CI-asserted |
+| `mario/` | ⏱ the golden demo: 1 view yield, ≤ 2 DOM writes/frame, CI-asserted |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | the standard krausest benchmark app, keyed |
 

@@ -276,7 +276,7 @@ yield s                                     // diffed → only /total readers wa
     <tbody>
       <tr><td>1 changed row in 10,000 diffs in ≤ 100 µs</td><td><code>reconcile.perf.test.ts</code></td></tr>
       <tr><td>One changed label in a 50-row list is one DOM write</td><td><code>dom.test.ts</code></td></tr>
-      <tr><td>A 60 fps game: 1 view yield, ≤ 3 DOM writes per frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
+      <tr><td>A 60 fps game: 1 view yield, ≤ 2 DOM writes per frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
       <tr><td>core ≤ 8 KB gzip, core + DOM ≤ 13 KB, wire ≤ 9.5 KB</td><td><code>size.test.ts</code></td></tr>
       <tr><td>Nothing retained after dispose</td><td><code>process.leaks.test.ts</code></td></tr>
     </tbody>
@@ -344,8 +344,22 @@ export const room: Proc&lt;RoomState, RoomMsg, { name: string }&gt; = async func
   <p>The server registers the process, and browser tabs reach it through the same lookup API used locally. The name and arguments identify the room, so every lookup for the same room reaches the same process.</p>
 
 <pre><code data-ts>
-// the server
-const host = await serve({ room: define(room, { evict: 3_600_000 }) }, { port: 4322 })
+// the server (examples/chat/server.ts)
+const host = await serve({ room: define(room, { evict: 3_600_000 }) }, {
+  port: 4322,
+  allowedOrigins: loopback,
+  scope: (request, reg) =&gt; {
+    const from = nickname(request)                       // identity fixed at the handshake
+    return {
+      lookup: (name: string, args: unknown) =&gt; {
+        if (name !== 'room') throw new Error(`not exposed: ${name}`)
+        return reg.lookup('room', roomArgs(args))         // args checked before any spawn
+      },
+      admit: (_name, msg) =&gt; admitPost(msg, from),     // every post rebuilt with its sender
+    }
+  },
+  maxWatchesPerConnection: 64,
+})
 
 // a tab
 const conn = connect&lt;ChatSchema&gt;(webSocketTransport('ws://127.0.0.1:4322/'))
@@ -365,6 +379,8 @@ const lobby = conn.lookup('room', { name: 'lobby' })   // get-or-spawn, on the s
   H -- "patch" --> T1
   H -- "patch" --> T2</pre></div>
   </details>
+
+  <p>The <code>scope</code> function runs once per connection and returns the gateway that connection's lookups and messages go through. Here it fixes the sender's name at the handshake, validates room arguments before anything spawns, and uses <code>admit</code> to rebuild every post with that name as <code>from</code>, so a client can neither speak as someone else nor crash a room with a malformed message.</p>
 
   <p>The registry manages each room's lifetime. The first lookup starts it, later lookups share it, and the registry evicts it one hour after the last tab leaves. Suspended generators use little memory, allowing one Node process to host many rooms. If the server stops, tabs retain their latest snapshot with <code>stale: true</code>. Once the transport reconnects, a new lookup supplies a full snapshot.</p>
 

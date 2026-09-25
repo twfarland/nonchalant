@@ -11,6 +11,7 @@ invariants, and changes that can break them.
 | [graph.md](graph.md) | `graph.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
 | [process.md](process.md) | `process.ts` | mailbox, drive loop, ownership, dispose ordering |
 | [registry.md](registry.md) | `registry.ts` | key encoding, sharing, refcounting, eviction |
+| [dom.md](dom.md) | `dom/src/render.ts` | regions, keyed LIS moves, rebinding, listeners, exit |
 
 ## One update path
 
@@ -107,6 +108,7 @@ the full list.
 | shared state respawns or lingers | [registry.md](registry.md) for watcher counting and the idle timer |
 | effects run in the wrong order or too late | [graph.md](graph.md) for scheduling and `flush` |
 | a remote handle behaves unlike a local one | `wire/client.ts`; each remote ref is a local pump process |
+| the DOM writes, moves, or re-listens more than expected | [dom.md](dom.md) for no-op skipping, `keepers`, and `dispatch` |
 
 ## Budgets
 
@@ -116,8 +118,8 @@ enforces it:
 | budget | enforced in |
 |---|---|
 | reconcile: 1 change in 10k ≤ 100 µs | `packages/core/test/reconcile.perf.test.ts` |
-| Mario: 1 view yield, ≤ 3 DOM writes/frame, 0 structural ops | `examples/mario/mario.golden.test.ts` |
-| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB | `test/size.test.ts` |
+| Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 structural ops | `examples/mario/mario.golden.test.ts` |
+| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB, durable ≤ 2 KB | `test/size.test.ts` |
 | nothing retained after dispose | `packages/core/test/process.leaks.test.ts` |
 
 ## Test environment notes

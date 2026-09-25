@@ -15,7 +15,7 @@ A process fails when its generator throws. From the outside:
 | `p.stale` | `true` |
 | `p.error` | the thrown value |
 | `p.pending` | `false` (or `true` while a restart is under way) |
-| pending `p.call(...)` | rejects with the thrown value |
+| pending or queued `p.call(...)` | rejects with the thrown value |
 | later `p.call(...)` | rejects at once: `nonchalant: call on crashed process` |
 
 All three reads are tracked, so a view can show a failure the way it shows
@@ -34,9 +34,11 @@ div({},
 
 **Restarting.** `restart: 'on-crash'` re-runs the generator from its original
 arguments after a throw, up to `maxRestarts` times (default 3; `Infinity` is
-allowed). Queued messages survive into the new instance and are handled there;
-calls that were pending when it crashed reject. Readers see `stale` until the
-restarted instance yields. Once the budget is spent, the crash is terminal.
+allowed). Queued casts survive into the new instance and are handled there.
+Every call that was waiting, whether the crashed instance had taken it or it
+was still queued, rejects with the thrown value and is removed from the
+mailbox, so a caller that was told "failed" is never also served by the
+restarted instance. Readers see `stale` until the restarted instance yields. Once the budget is spent, the crash is terminal.
 Children the crashed instance spawned are disposed with it.
 
 **Throwing on purpose.** Because a crash rejects the pending call, throwing is
@@ -58,9 +60,29 @@ crashing anything: `spawn` with an invalid `mailbox` or `maxRestarts`, `define`
 with an invalid `evict`, `lookup` of a name the schema does not have, and
 reading a `derive` that was disposed before it ever produced a value.
 
-> TODO(integrator): `onProcessError(handler)` (workstream A) is where crash
-> reports can be routed. Describe what it receives, when it fires (every
-> crash, or only terminal ones), and its default.
+Also thrown synchronously: `registry` with a `maxEntries` that is not
+positive.
+
+**Observing crashes.** By default a crash is visible only on the handle and in
+the calls it rejects; nothing is logged. `onProcessError` routes every crash to
+one handler, including the ones a restart recovers from, which the handle alone
+would hide once the restarted instance yields:
+
+<!-- ts-prelude
+declare const report: (error: unknown, context: { process: string }) => void
+-->
+```ts
+import { onProcessError } from '@nonchalant/core'
+
+const stop = onProcessError((error, name) => {
+  report(error, { process: name })   // name is the generator function's name
+})
+stop()                               // removes this handler
+```
+
+The handler runs a microtask after the crash, so one that throws surfaces as an
+unhandled rejection rather than disturbing the process. There is one handler at
+a time; installing another replaces it.
 
 ## Derives and effects
 
@@ -108,6 +130,12 @@ arrives as a `WireError`, whose `detail` is the JSON the host sent (at least
 | the facade was disposed | `true` | reject: `process disposed` |
 | lookup of a name not in the host's schema | `true` / `WireError` | reject |
 | lookup past the host's watch cap | `true` / `WireError('watch limit reached')` | reject |
+| lookup past the host's rate limit | `true` / `WireError('lookup rate exceeded')` | reject |
+| lookup with a different protocol revision | `true` / `WireError('protocol mismatch: host speaks 3, lookup carried …')` | reject |
+| a call whose message is not an object with a string `type` | unchanged | that call rejects: `invalid message: expected an object with a string type` |
+| a call the gateway's `admit` refused (returned `undefined` or threw) | unchanged | that call rejects: `message refused` |
+| a call on a ref the host is not watching | unchanged | that call rejects: `no such process` |
+| a call to a process that accepts no calls | unchanged | that call rejects: `not callable` |
 
 A dropped connection is not terminal. On reconnect the client looks every live
 process up again, receives its full state, and diffs it against the value it
@@ -116,14 +144,12 @@ retried across a disconnect (the host may or may not have run it), so a caller
 that needs at-least-once delivery retries itself, and one that needs
 exactly-once calls a durable process with a call id.
 
-Landed from workstream C, not yet reconciled with the source in this branch:
-a lookup whose protocol version does not match the host's raises; a message
-the gateway's `admit` refuses raises to that client; lookups past
-`lookupRate` raise; casts made while disconnected are queued per ref (the
-newest 64) rather than dropped; replies are not ordered against yields.
-
-> TODO(integrator): give each of these its row in the table above, with the
-> exact `detail.message`.
+A cast that fails the same checks (malformed, refused by `admit`, or sent to
+an unknown ref) is dropped without a reply: a cast has nowhere to report to.
+Casts made while disconnected are not lost: the client queues the newest 64
+per ref and sends them right after the re-lookup. Replies are not ordered
+against yields, so after `await p.call(...)` the value `p()` may not yet show
+that call's effect; return what the caller needs in the reply.
 
 ## Durable processes
 
@@ -141,23 +167,40 @@ can go wrong:
   crashes it where it happens. Either way the journal still says where to
   resume.
 - **Steps run in a different order on replay.** `step` throws
-  `nonchalant/durable: step N of this message was 'a' and is now 'b'`. The
+  `nonchalant/durable: step order drifted in '<key>' #<seq>: step <n> was 'a', now 'b'`. The
   order of steps within a message must not depend on anything unrecorded;
   put the non-deterministic input inside a `step`.
 - **A retried call.** A call carries a `callId`; if the process already
   answered that id, the retry gets the recorded answer and nothing runs again.
-
-> TODO(integrator): workstream D added `maxAttempts` and `onPoison(key, dead)`
-> (a message that keeps crashing becomes a dead letter), fencing (`Fenced`:
-> an older activation that loses its lease stops committing), and
-> `version`/`migrate` for stored snapshots. Describe how each failure
-> surfaces here.
+  A call without a string `callId` is refused before it is journaled: it
+  rejects with `nonchalant/durable: a call needs a callId`.
+- **A message that crashes every time.** With `maxAttempts: n`, each crash
+  while handling a message is recorded against it in the step journal (store
+  failures and a host dying outright do not count). On the `n`th crash the
+  message is committed as a dead letter: the state rolls back to what it was
+  before the message, the cursor steps past it, `onPoison(key, dead)` is
+  called with the message and the last error, and the crash still happens, so
+  the next activation starts on the following message. Without `maxAttempts`
+  a poison message is redelivered on every activation. `memoryStore().dead(key)` lists a
+  key's dead letters.
+- **Two activations of one key.** Each `load` raises the key's epoch, and every
+  write carries the epoch its activation loaded. A write from an older
+  activation rejects with `Fenced` and changes nothing; the durable process
+  that meets it returns quietly (it ends rather than crashing) and leaves the
+  key to the newer activation. Callers still attached to the old one see a
+  finished process.
+- **A snapshot from another version.** A key committed under a different
+  `version` is passed through `migrate(old, from)` on load. With no `migrate`,
+  the process crashes on activation with
+  `nonchalant/durable: no migrate for '<key>' from version <from> to <to>`,
+  before any message is handled.
 
 ## Hosting
 
 `serve` refuses a connection before any process sees it: a failed
 `authorize` or origin check rejects the upgrade, and a `scope` that throws
 rejects it with a 500. Once connected, a message larger than
-`maxPayloadBytes` closes the socket with code 1009, and a missed heartbeat
-terminates it. On the client these all look like a dropped connection.
+`maxPayloadBytes` closes the socket with code 1009, a missed heartbeat
+terminates it, and so does more than `maxBufferedBytes` of output queued for a
+client that has stopped reading. On the client these all look like a dropped connection.
 [Hosting safely](hosting.md) covers which limits to set.

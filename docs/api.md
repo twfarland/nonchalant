@@ -22,17 +22,14 @@ The runtime. No dependencies, no DOM.
 | `cell` | `cell<T>(initial: T)` → `Process<T, T>` | Sugar for widget state: a process whose messages are its next values. | [Process](concepts.md#process-from-the-outside) |
 | `channel` | `channel<In>(signal?: AbortSignal)` → `Self<In> & Disposable` | A standalone mailbox implementing `Self`, for middleware and for driving a generator in tests. Iteration ends when `signal` aborts or the channel is disposed. | [Self](concepts.md#self-from-the-inside) |
 | `mount` | `mount<Out>(sink: Sink<Out>, view: ProcessBase<Out \| undefined> \| Out)` → `Disposable` | Attaches a view to any sink. `@nonchalant/dom` exports a DOM-specific `mount` that most code uses instead. | [Views and sinks](concepts.md#views-and-sinks) |
-
-> TODO(integrator): `onProcessError(handler)` landed from workstream A. Add its
-> row here: signature, what it receives, what it returns (a restore function,
-> like `onRenderError`?), and the default (console).
+| `onProcessError` | `onProcessError(handler: (error: unknown, name: string) => void)` → `() => void` | Observes every process crash, including ones a restart recovers from: the thrown value and the generator function's name, a microtask after the crash. One handler at a time; returns its remover. With none installed, a crash shows only on the handle and in rejected calls. | [Error handling](errors.md#processes) |
 
 `SpawnOpts<T>`:
 
 | option | type | default | meaning |
 |---|---|---|---|
 | `initial` | `T` | none | First readable value; decides `Process<T>` vs `Process<T \| undefined>`. |
-| `restart` | `'never' \| 'on-crash'` | `'never'` | `'on-crash'` re-runs the generator from its args after a throw; queued messages replay, pending calls reject. |
+| `restart` | `'never' \| 'on-crash'` | `'never'` | `'on-crash'` re-runs the generator from its args after a throw; queued casts replay, pending and queued calls reject. |
 | `maxRestarts` | `number` (non-negative integer or `Infinity`) | `3` | Restart budget; past it the crash is terminal. |
 | `mailbox` | `number` (non-negative integer) | unbounded | Queue bound; overflow drops the oldest message (a dropped call rejects) with a one-time warning. |
 
@@ -42,11 +39,11 @@ The runtime. No dependencies, no DOM.
 |---|---|---|
 | `p()` | `T` | The latest yield. Subscribes by path inside a tracked context; a plain snapshot elsewhere. |
 | `p.cast(msg)` | `(msg: Casts<In>) => void` | Fire-and-forget. Present only when `In` has `Cast` members. |
-| `p.call(msg)` | `(msg: Req) => Promise<Res>` | Request/response. Present only when `In` has `Call` members. Rejects on crash, finish, or dispose. |
+| `p.call(msg)` | `(msg: Req) => Promise<Res>` | Request/response. Present only when `In` has `Call` members. Rejects on crash, finish, or dispose; a call rejected by a crash never runs in a restarted instance. |
 | `p.pending` | `boolean` | Working toward its next yield. |
 | `p.stale` | `boolean` | The value survived a crash, a disposal, or a lost connection. |
 | `p.error` | `unknown` | The last failure, if any. |
-| `p[Symbol.asyncIterator]()` | `AsyncIterator<T>` | A lossy latest-value stream; each iterator is its own subscription. |
+| `p[Symbol.asyncIterator]()` | `AsyncIterator<T>` | A lossy latest-value stream; each iterator is its own subscription. It ends when the process returns, crashes terminally, or is disposed. |
 | `p[Symbol.dispose]()` | `void` | Starts teardown; does not wait for async `finally` work. |
 | `p[Symbol.asyncDispose]()` | `Promise<void>` | Starts teardown and resolves when this process and its owned children have settled. |
 
@@ -62,23 +59,27 @@ The runtime. No dependencies, no DOM.
 
 | export | signature | what it does | concept |
 |---|---|---|---|
-| `define` | `define(proc, opts?: DefineOpts<T>)` → `Definition<T, In, A>` | A schema entry: the generator a name resolves to, plus spawn options and `evict`. | [Registry](concepts.md#registry) |
-| `registry` | `registry<S>(defs: S)` → `RegistryHandle<S>` | A local registry over a typed schema. | [Registry](concepts.md#registry) |
-| `RegistryHandle.lookup` | `lookup(name, args?)` → `ProcessOf<S[name]>` | Get-or-spawn by name plus arguments (argument key order ignored). Throws for a name not in the schema. | [Registry](concepts.md#registry) |
+| `define` | `define(proc, opts?: DefineOpts<T>)` → `Definition<T, In, A>`; with `opts.initial`, `Definition<T, In, A, never>` | A schema entry: the generator a name resolves to, plus spawn options and `evict`. | [Registry](concepts.md#registry) |
+| `registry` | `registry<S>(defs: S, opts?: RegistryOpts)` → `RegistryHandle<S>` | A local registry over a typed schema. | [Registry](concepts.md#registry) |
+| `RegistryHandle.lookup` | `lookup(name, args?)` → `ProcessOf<S[name]>` | Get-or-spawn by name plus arguments (argument key order ignored). Reads are `T \| undefined` unless the definition has `initial`. Throws for a name not in the schema. | [Registry](concepts.md#registry) |
 | `RegistryHandle.evict` | `evict(name, args?)` → `void` | Disposes and forgets one entry, or every entry under the name. | [Registry](concepts.md#registry) |
 
 `DefineOpts<T>` is `SpawnOpts<T>` plus `evict?: number`: milliseconds to keep an
 unwatched process alive (finite, non-negative; omit to never auto-evict).
 
-> TODO(integrator): if a registry-wide option such as `maxEntries` landed, add
-> its row here and its failure mode to errors.md.
+`RegistryOpts` is `{ maxEntries?: number }` (positive; omit for no cap). Past
+the cap, the least recently looked-up *unwatched* entries are disposed.
+Watched entries are never evicted, so a registry whose every entry is watched
+can sit above the cap until watchers leave. A watcher is an effect, or a
+derive or iterator an effect reads through; a derive read only as a snapshot
+does not keep an entry alive.
 
 ### Diff and patch
 
 | export | signature | what it does | concept |
 |---|---|---|---|
-| `reconcile` | `reconcile(prev: Json, next: Json)` → `Patch` | The structural diff every yield goes through: ops on RFC 6901 paths. | [The graph](concepts.md#the-graph-why-updates-are-exact) |
-| `applyPatch` | `applyPatch(doc: Json, patch: Patch)` → `Json` | Applies a patch without mutating `doc`. Throws on a malformed path or out-of-range splice. | [Wire](concepts.md#wire) |
+| `reconcile` | `reconcile(prev: Json, next: Json)` → `Patch` | The structural diff every yield goes through: ops on RFC 6901 paths. A record key whose value is `undefined` counts as absent. | [The graph](concepts.md#the-graph-why-updates-are-exact) |
+| `applyPatch` | `applyPatch(doc: Json, patch: Patch)` → `Json` | Applies a patch without mutating `doc`. Throws on a malformed path, a non-canonical array index (RFC 6901: digits, no leading zero), or an out-of-range splice. | [Wire](concepts.md#wire) |
 
 ### Types
 
@@ -91,12 +92,12 @@ unwatched process alive (finite, non-negative; omit to never auto-evict).
 | `Process<T, In>` | The outside face: `ProcessBase<T>` plus `cast` and `call` where `In` allows them. |
 | `ProcessBase<T>` | Read, `pending`, `stale`, `error`, iteration, and disposal. |
 | `Self<In>` | The inside face: an `AsyncIterable<In>` mailbox, `signal`, `latest()`, `cast`. |
-| `Proc<T, In, Args>` | `(self: Self<In>, args: Args) => AsyncGenerator<T>`: what `spawn` runs. |
-| `Definition<T, In, Args>` | A phantom-typed schema entry. |
+| `Proc<T, In, Args>` | `(self: Self<In>, args: Args) => AsyncGenerator<T, unknown, undefined>`: what `spawn` runs. A return value is not a `T`, so driving one by hand needs a `done` check before reading `next().value`. |
+| `Definition<T, In, Args, Before = undefined>` | A phantom-typed schema entry. `Before` is what a read returns ahead of the first yield: `undefined`, or `never` when `define` got `initial`. |
 | `Schema` | `{ [name: string]: Definition<unknown, unknown, unknown> }`. |
 | `Registry<S>` | Anything with a typed `lookup`: a local registry or a `connect()` connection. |
 | `ProcessOf<D>` / `ArgsOf<D>` | The process and argument types a definition resolves to. |
-| `RegistryHandle<S>`, `DefineOpts<T>`, `SpawnOpts<T>` | See above. |
+| `RegistryHandle<S>`, `RegistryOpts`, `DefineOpts<T>`, `SpawnOpts<T>` | See above. |
 | `VNode` | `{ tag, ns?, attrs, children }`: a view node as plain data. |
 | `Slot` | What a child position accepts: primitives, `VNode`, thunks, processes, promises, async iterables, arrays of slots. |
 | `Sink<Out>` | A render target: `{ mount(view): Disposable }`. |
@@ -110,22 +111,48 @@ Views as plain data, and the DOM sink.
 |---|---|---|---|
 | `mount` | `mount(container: Element, view: View)` → `Disposable` | Renders a `VNode`, a thunk, or a view process into `container`. Disposal unbinds every binding beneath. | [Views and sinks](concepts.md#views-and-sinks) |
 | `domSink` | `domSink(container: Element)` → `Sink<VNode>` | The DOM sink for core's generic `mount(sink, view)`. | [Views and sinks](concepts.md#views-and-sinks) |
-| `h` | `h(tag: string, attrs?: Attrs, ...children: Slot[])` → `VNode` | The generic constructor, for SVG, MathML, custom elements, or any tag without a named export. | [Views and sinks](concepts.md#views-and-sinks) |
-| `tagFn` | `tagFn(tag: string)` → `TagFn` | Makes a named constructor like the ones in `/tags`. | |
+| `h` | `h<K extends string>(tag: K, attrs?: AttrsFor<K>, ...children: Slot[])` → `VNode` | The generic constructor, for SVG, MathML, custom elements, or any tag without a named export. | [Views and sinks](concepts.md#views-and-sinks) |
+| `tagFn` | `tagFn<K extends string>(tag: K)` → `TagFn<K>` | Makes a named constructor like the ones in `/tags`. | |
 | `onRenderError` | `onRenderError(handler: RenderErrorHandler)` → `() => void` | Routes render failure reports (a throwing binding, a rejected slot promise) away from `console.error`. Returns a restore function. | [Error handling](errors.md#rendering) |
-| `Attrs` | type | `key`, `exit`, `ns`, and any other attribute: a static value, an `on*` listener function, or a binding. | |
-| `TagFn` | type | `(attrs?: Attrs, ...children: Slot[]) => VNode`. | |
+| `Attrs` | type | Untyped attributes: `key`, `exit`, `ns`, and any other name as a static value, an `on*` listener function, or a binding. What the sink reads, and the escape hatch. | |
+| `AttrsFor<K>` | type | The attributes for tag name `K`: `HtmlAttrs` for an HTML tag, `SvgAttrs` for an SVG tag, `Attrs` for anything else or for `K = string`. | |
+| `HtmlAttrs<E, M>` | type | An HTML element's writable attribute-backed properties (under their attribute names: `for`, `tabindex`, `colspan`), `data-*`, `aria-*`, and lowercase `on*` listeners typed from its event map. | |
+| `SvgAttrs<E>` | type | Typed lowercase `on*` listeners; every other name is unchecked `Attrs`. | |
+| `TagFn<K>` | type | `(attrs?: AttrsFor<K>, ...children: Slot[]) => VNode`. | |
 | `View` | type | `VNode \| ProcessBase<VNode \| undefined> \| (() => VNode \| null \| undefined)`. | |
 | `RenderErrorHandler` | type | `(what: string, error: unknown) => void`. | |
 
 **Attributes.** `false` and `null` remove an attribute, `true` sets it empty,
 anything else is stringified; `aria-*` renders booleans as `"true"`/`"false"`.
-`on*` names take functions and become listeners. Text and attribute values are
-never parsed as HTML.
+`value`, `checked`, and `selected` are set as properties, after the element's
+children exist, so a `<select value>` can match an option declared inside it.
+Text and attribute values are never parsed as HTML.
 
-> TODO(integrator): the URL policy (blocking `javascript:` URLs, and which
-> attributes it covers) and typed attrs landed in another workstream. Describe
-> both here; concepts.md and SECURITY.md link to this section for it.
+**URL and handler policy.** Two attribute-level injection routes are closed in
+the sink:
+
+- A `javascript:` URL in `href`, `src`, `action`, `formaction`, or
+  `xlink:href` is removed instead of set. The scheme is tested after stripping
+  U+0000–U+0020 (the characters browsers ignore there), so `' java	script:'`
+  is caught too. Other schemes, `data:` included, pass: treat user-supplied
+  URLs as untrusted and allow-list them yourself.
+- An `on*` attribute takes only a function. Any other value (a string of
+  script, say) sets no attribute and no listener, and warns once in the
+  console.
+
+Both are enforced by the "attribute-level injection" tests in
+`packages/dom/test/render.test.ts`. Console warnings, once per distinct
+message, also flag camelCase listeners (`onClick` listens for an event named
+`Click`, which never fires) and object attribute values.
+
+**Typed attributes.** Named tags and `h('tag', …)` check attributes per
+element: `input({ value })` accepts a string, number, or a binding to one;
+`div({ onlick })` and `div({ onClick })` are type errors; a listener's
+`currentTarget` is the element's own type. SVG listeners are typed, but SVG
+attributes (`d`, `fill`, `viewBox`) are not in the DOM lib, so they are
+unchecked. For a name the DOM lib does not know, widen the tag:
+`h(tag as string, attrs)` takes plain `Attrs`. The negative cases live in
+`packages/dom/test/attrs.check.ts`.
 
 **`@nonchalant/dom/tags`** exports one `TagFn` per HTML element: `html head body
 title header footer main nav section article aside h1`–`h6 div p ul ol li dl dt
@@ -142,7 +169,7 @@ The protocol, its codec, transports, and both ends of a connection. Isomorphic.
 
 | export | signature | what it does | concept |
 |---|---|---|---|
-| `connect` | `connect<S>(transport: Transport)` → `Connection<S>` | A registry whose lookups are served by the other end. Remote processes have the full Process face; `close()` tears it down. | [Wire](concepts.md#wire) |
+| `connect` | `connect<S>(transport: Transport)` → `Connection<S>` | A registry whose lookups are served by the other end. Remote processes have the full Process face; `close()` tears it down. Casts made while disconnected queue per ref (the newest 64) and are sent after the re-lookup; calls made while disconnected reject at once. A call's reply is not ordered against the process's yields. | [Wire](concepts.md#wire) |
 | `expose` | `expose(reg: Exposable, transport: Transport, opts?: ExposeOpts)` → `() => void` | Serves a registry, or any `Exposable` gateway, over a transport. Returns a disposer that releases every watch. | [Wire](concepts.md#wire) |
 | `WireError` | `class WireError extends Error { detail: Json }` | What remote failures reject and throw with. `detail` is the JSON the host sent. | [Error handling](errors.md#the-wire) |
 | `webSocketTransport` | `webSocketTransport(url, opts?: { retryDelay? })` → `Transport & { close() }` | A reconnecting WebSocket client. Redials with exponential backoff (base 500 ms, up to 8×, jittered to 50–100%). | [Wire](concepts.md#wire) |
@@ -151,6 +178,7 @@ The protocol, its codec, transports, and both ends of a connection. Isomorphic.
 | `broadcastChannelTransport` | `broadcastChannelTransport(name)` → `Transport & { close(); announce() }` | A bus between tabs. The hosting tab calls `announce()` once it serves. | [Wire](concepts.md#wire) |
 | `memoryPair` | `memoryPair()` → `MemoryLink` | An in-memory client/host pair with `disconnect()`, `reconnect()`, and `settle()`, for tests. | [Testing](testing.md) |
 | `encode` | `encode(msg: ClientMsg \| HostMsg)` → `string` | Serializes a protocol message. | [Protocol](PROTOCOL.md) |
+| `PROTOCOL` | `3` | The protocol revision. Every lookup carries it as `v`; a host answers a lookup with a different `v` with a raise. `GET /schema` on `@nonchalant/host` reports it too. | [Protocol](PROTOCOL.md) |
 | `decodeClient` / `decodeHost` | `(data: string)` → `ClientMsg \| null` / `HostMsg \| null` | Validates and decodes one direction; `null` for garbage or the wrong direction. | [Protocol](PROTOCOL.md) |
 
 | type | what it is |
@@ -161,25 +189,24 @@ The protocol, its codec, transports, and both ends of a connection. Isomorphic.
 | `MessageEndpoint` | `{ postMessage(data), addEventListener('message', fn), start?() }` |
 | `WebSocketTransportOpts` | `{ retryDelay?: number }` |
 | `Connection<S>` | `Registry<S> & { close(): void }` |
-| `Exposable` | `{ lookup(name, ...args): unknown }`: the gateway `expose` serves. |
-| `ExposeOpts` | `{ maxWatches?: number }`: caps the refs one session may watch. |
+| `Exposable` | The gateway `expose` serves: `lookup(name: string, ...args: unknown[]): unknown`, plus two optional members below. A registry is one. |
+| `ExposeOpts` | `{ maxWatches?: number; lookupRate?: { max: number; perMs: number } }`, below. |
 | `ClientMsg` / `HostMsg` | The eight protocol ops: `lookup cast call exit` / `yield reply done raise`. |
 
-Landed from workstream C, not yet reconciled with the source in this branch:
+`Exposable` members:
 
-- `PROTOCOL`: the protocol revision constant. Lookups carry `v: 3`, and a host
-  answers a lookup with a mismatched version with a raise.
-- `Exposable.admit?(name, msg)`: returns the message, a replacement, or
-  `undefined` to refuse it. The host only delivers objects with a string
-  `type`.
-- `Exposable.principal?`: namespaces client call ids, so one session's ids
-  cannot collide with another's.
-- `ExposeOpts.lookupRate?: { max, perMs }`: a per-session lookup rate limit.
-- Casts made while disconnected are queued per ref (the newest 64) and sent on
-  reconnect. Replies are not ordered against yields.
+| member | type | meaning |
+|---|---|---|
+| `lookup` | `(name: string, ...args: unknown[]) => unknown` | Resolves a client lookup. Throwing answers the lookup with a raise. |
+| `admit?` | `(name: string, msg: { type: string } & { [key: string]: Json }) => Json \| undefined` | Screens each client message for the process looked up under `name`. Return it, or a replacement (say, with the sender stamped from the session), to deliver it; return `undefined` or throw to refuse it. A refused call rejects; a refused cast is dropped. Runs after the host's own check that the message is an object with a string `type`, which applies with or without `admit`. |
+| `principal?` | `string` | Who the session acts for. A string `callId` in a call's message is rewritten into this principal's namespace before delivery, so one client cannot collide with, or read, another's recorded answers by reusing an id. Omit to deliver ids untouched. |
 
-> TODO(integrator): confirm each signature above against `packages/wire/src`
-> and fold these into the tables.
+`ExposeOpts`:
+
+| option | default | meaning |
+|---|---|---|
+| `maxWatches` | no cap | Refs one session may watch at once. A lookup past it raises; a re-lookup on an existing ref is always allowed. |
+| `lookupRate` | no cap | `{ max, perMs }`: lookups one session may make per fixed window. A lookup past it raises. `@nonchalant/host` sets 100 per 10 s. |
 
 ## @nonchalant/durable
 
@@ -188,29 +215,49 @@ storage port. Isomorphic. [Processes on the server](server.md) is the guide.
 
 | export | signature | what it does |
 |---|---|---|
-| `durable` | `durable(proc: DurableProc<T, In, Args>, opts: DurableOpts)` → `Proc<T, In, Args>` | Wraps a process so each message is journaled before it is handled and its state is committed with the cursor after. The result is an ordinary `Proc`. |
-| `memoryStore` | `memoryStore()` → `MemoryStore` | The in-memory `Store` adapter, for tests and demos. `keys()` counts stored keys. |
+| `durable` | `durable<T extends Json, In extends Json \| DurableCall, Args>(proc: DurableProc<T, In, Args>, opts: DurableOpts<T, Args>)` → `Proc<T, In, Args>` | Wraps a process so each message is journaled before it is handled, and its state, cursor, and call answers are committed together when the process asks for the next one. The result is an ordinary `Proc`. |
+| `memoryStore` | `memoryStore(now?: () => number)` → `MemoryStore` | The in-memory `Store` adapter, for tests and demos. `now` (default `Date.now`) stamps committed answers for `prune`. |
+| `Fenced` | `class Fenced extends Error` | What a store write rejects with when a later `load` of the same key has claimed it. A durable process that meets it returns quietly and leaves the key to the newer activation. |
 
 | type | what it is |
 |---|---|
-| `DurableProc<T, In, Args>` | `(self, args, durable: Durable<T>) => AsyncGenerator<T>` |
-| `Durable<T>` | `restored` (last committed state), `step(name, fn)` (an effect run at most once), `call(name, invoke)` (a call with a replay-stable id), `sleep(name, ms)` (a journaled deadline). |
-| `DurableOpts` | `{ store: Store; key: (args) => string; now?: () => number }` |
-| `DurableCall` | A call a durable process accepts: it carries its own `callId`. |
-| `Store` | The storage port: `load append pending putStep steps commit result putResult`. `commit` must write snapshot and cursor together or not at all. |
-| `Loaded`, `Logged`, `StepRecord` | The records `Store` methods pass. |
-| `MemoryStore` | `Store & { keys(): number }` |
+| `DurableProc<T, In, Args>` | `(self: Self<In>, args: Args, durable: Durable<T>) => AsyncGenerator<T>` |
+| `Durable<T>` | `restored: T \| undefined` (the last committed state, migrated); `step(name, fn: (idempotencyKey: string) => R \| Promise<R>)` (an effect recorded exactly once; `fn` gets `${key}#${seq}#${index}`, stable across replays); `call(name, invoke: (callId: string) => Promise<R>)` (a call with a replay-stable id); `sleep(name, ms)` (a journaled deadline). |
+| `DurableOpts<T, Args>` | Below. |
+| `DurableCall` | `{ readonly callId: string; readonly reply: (res: never) => void }`: a call a durable process accepts carries its own id. |
+| `Store` | The storage port, seven methods, below. |
+| `Loaded` | `{ snapshot: Json \| undefined; version: number; cursor: number; epoch: number }`: what `load` returns. |
+| `Logged` | `{ seq: number; msg: Json; callId?: string }`: one journaled message. |
+| `StepRecord` | `{ index: number; name: string; result: Json }`: one recorded effect; negative indices record failed attempts. |
+| `Commit` | `{ snapshot: Json \| undefined; version: number; cursor: number; results: [string, Json][]; dead?: DeadLetter }`: one message's acknowledgement. |
+| `DeadLetter` | `Logged & { error: string }`: a message given up on, with its last failure. |
+| `MemoryStore` | `Store & { keys(): number; dead(key): DeadLetter[]; prune(before: number): void }`: a key count for reclamation tests, a key's dead letters, and a retention sweep that forgets answers committed before `before`. |
 
-Landed from workstream D, not yet reconciled with the source in this branch:
+`DurableOpts<T, Args>`:
 
-- `DurableOpts<T, Args>` gains a type parameter and the options `version`,
-  `migrate(old, from)`, `maxAttempts`, and `onPoison(key, dead)`.
-- New exports `Fenced`, `Commit`, and `DeadLetter`.
-- The `Store` port has seven methods.
-- `memoryStore(now?)`, with `dead(key)` and `prune(before)`.
-- `step`'s `fn` receives a stable idempotency key, `${key}#${seq}#${index}`.
+| option | default | meaning |
+|---|---|---|
+| `store` | required | The `Store` adapter. |
+| `key` | required | `(args: Args) => string`: the storage identity of an instance, usually from its lookup args. |
+| `now` | `Date.now` | Wall clock for `sleep`; injected so tests do not wait. |
+| `version` | `0` | The snapshot schema version this code writes. |
+| `migrate` | none | `(old: Json, from: number) => T`: brings a snapshot committed under another version up to date. Required once `version` moves. |
+| `maxAttempts` | no limit | How many times one message may crash the process before it is dead-lettered and the cursor steps past it. |
+| `onPoison` | none | `(key: string, dead: DeadLetter) => void`: told after a message is dead-lettered. |
 
-> TODO(integrator): rewrite the durable tables above from the landed source.
+`Store` methods. Every write carries the epoch `load` handed out and must
+change nothing and reject with `Fenced` if the key has been claimed since;
+`commit` is one transaction.
+
+| method | signature | job |
+|---|---|---|
+| `load` | `(key) => Promise<Loaded>` | Claim the key (raise its epoch) and return the acknowledged state. |
+| `append` | `(key, epoch, msg: Json, callId?) => Promise<number>` | Journal an inbound message before it is handled; returns its sequence number. |
+| `pending` | `(key, cursor) => Promise<Logged[]>` | Messages after `cursor`, in order: what a restart replays. |
+| `putStep` | `(key, epoch, seq, index, name, result: Json) => Promise<void>` | Record one completed effect, or a failed attempt, of message `seq`. |
+| `steps` | `(key, seq) => Promise<StepRecord[]>` | What is already recorded for that message. |
+| `commit` | `(key, epoch, commit: Commit) => Promise<void>` | Acknowledge one message: snapshot, version, cursor, answers, and any dead letter land together or not at all. |
+| `result` | `(key, callId) => Promise<Json \| undefined>` | The answer already given to that call, if any. |
 
 ## @nonchalant/host
 
@@ -218,7 +265,7 @@ The Node WebSocket host. [Hosting safely](hosting.md) is the guide.
 
 | export | signature | what it does |
 |---|---|---|
-| `serve` | `serve<S>(defs: S, opts?: ServeOpts<S>)` → `Promise<HostHandle<S>>` | Hosts a registry over WebSockets; resolves once listening. Each connection is its own `expose` session. `GET /schema` serves the name list. |
+| `serve` | `serve<S>(defs: S, opts?: ServeOpts<S>)` → `Promise<HostHandle<S>>` | Hosts a registry over WebSockets; resolves once listening. Each connection is its own `expose` session. `GET /schema` serves `{ protocol, names }`. |
 | `ServeOpts<S>` | type | See below. |
 | `OriginPolicy` | `(origin: string \| undefined, request) => boolean \| Promise<boolean>` | A callback form of `allowedOrigins`. |
 | `HostHandle<S>` | `{ registry, port, url, sessions(), close() }` | The running host; `registry` is host-side access to the same processes. |
@@ -229,14 +276,15 @@ The Node WebSocket host. [Hosting safely](hosting.md) is the guide.
 | `path` | `'/'` | WebSocket path. |
 | `allowedOrigins` | any origin | Array of origins, or an `OriginPolicy`. An array rejects clients with no `Origin`. |
 | `authorize` | allow | Authenticates the schema request and the upgrade. |
-| `scope` | the shared registry | Builds the `Exposable` each connection's lookups go through. Throwing rejects the upgrade (500). |
+| `scope` | the shared registry | `(request, reg) => Exposable \| Promise<Exposable>`: builds the gateway each connection's lookups and messages go through, once per connection, after `authorize`. Throwing rejects the upgrade (500). |
 | `maxPayloadBytes` | 1 MiB | Larger client messages close the connection (code 1009). |
 | `maxWatchesPerConnection` | no cap | Lookups past it raise to that client. |
-| `heartbeatMs` | 30 000 (0 disables)\* | Pings each socket; a missed pong terminates it and releases its watches. |
-| `maxBufferedBytes` | 8 MiB\* | Output buffered for one slow client before it is dropped. |
-| lookup rate | 100 per 10 s\* | Per-connection lookup limit (`ExposeOpts.lookupRate`). |
+| `lookupRate` | `{ max: 100, perMs: 10_000 }` | Lookups per connection per fixed window; one past it raises to that client. |
+| `heartbeatMs` | 30 000 (0 disables) | Pings each socket; a missed pong terminates it and releases its watches. |
+| `maxBufferedBytes` | 8 MiB | Outbound bytes one socket may have queued before the host terminates it. |
 
-\* Landed from workstream C; the source in this branch predates it.
-
-> TODO(integrator): confirm the starred defaults and option names against
-> `packages/host/src/index.ts`.
+Each connection is a principal: the one its `scope` gateway names, or else a
+fresh random one, so call ids are always namespaced per connection. `serve`
+throws at once on a negative or non-finite `heartbeatMs`, a non-integer
+`maxWatchesPerConnection`, a malformed `lookupRate`, or a non-positive
+`maxBufferedBytes`.

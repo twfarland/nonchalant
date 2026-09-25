@@ -59,7 +59,8 @@ and tests.
 - `initial`: the first readable value. With it, `p()` is `T`; without,
   `T | undefined` until the first yield.
 - `restart: 'on-crash'`: rerun the generator from `args` after a throw, up to
-  `maxRestarts` times. Queued messages replay; pending calls reject.
+  `maxRestarts` times. Queued casts replay; pending and queued calls reject,
+  and a rejected call never runs in the restarted instance.
 - `mailbox: n`: cap the queue; overflow drops the oldest and logs a warning.
 
 [Error handling](errors.md) lists what a crash, a restart, and each kind of
@@ -67,7 +68,11 @@ call rejection look like from the outside.
 
 Ownership: whatever a process spawns belongs to it and dies with it. The
 attachment happens during the synchronous part of each step. Spawn before
-you `await`, or the child ends up unowned. Registry processes are unowned
+you `await`, or the child ends up unowned. One resumption outside a normal step
+also owns its spawns: the one disposal causes by closing the mailbox, so a
+`finally` that disposal runs can spawn cleanup work (a flush, a goodbye
+message) that is disposed with the process, provided it spawns before its
+first `await`. Registry processes are unowned
 because shared state should not end with the caller that happened to start it.
 
 Disposal is cooperative. The synchronous symbol establishes the teardown
@@ -148,7 +153,15 @@ and nothing outside the region is touched. Replaceable regions and keyed lists
 are how structure changes, since the view function itself never runs again.
 Lists reconcile by key within the list. Matching keys patch existing nodes,
 `key: 0` is valid, identical vnodes are skipped entirely, and removals can wait for an `exit`
-transition. A promise in a slot occupies only its own slot while pending;
+transition; an exiting element is marked `inert`, so it leaves the focus order
+and the accessibility tree while it animates. Surviving nodes that are already
+in relative order stay put and only the rest move: n − LIS moves for n
+survivors whose longest increasing subsequence of old positions is LIS, the
+minimum, using `moveBefore` where the browser has it so focus and animations
+survive the move (`keyed.property.test.ts`; swapping two of 1,000 rows is two
+moves, in `examples/js-framework-benchmark/bench.test.ts`). A write the DOM
+already holds is skipped, so a binding that re-runs, or a row re-rendered with
+fresh closures, costs a read. A promise in a slot occupies only its own slot while pending;
 a binding that throws keeps its previous content and reports the failure.
 `onRenderError(handler)` routes those reports to your error reporting instead
 of the console.
@@ -161,11 +174,20 @@ boolean there renders as `"true"` or `"false"` — an absent `aria-pressed` mean
 
 Strings are never parsed as markup: text becomes text nodes and attribute
 values go through `setAttribute`, so HTML in application data remains inert
-text. That rules out markup injection, not every injection: a URL attribute
-still carries whatever URL it is given, and `on*` attributes take functions
-from your code, so treat user-supplied URLs as untrusted (the sink's
+text. Two attribute-level routes are closed as well: a `javascript:` URL in
+`href`, `src`, `action`, `formaction`, or `xlink:href` is removed (checked
+after stripping the control and space characters browsers ignore), and an
+`on*` attribute accepts only a function, never a string of script. Other URLs
+pass through as given, so treat user-supplied URLs as untrusted (the sink's
 attribute policy is listed under `@nonchalant/dom` in the
 [API reference](api.md#nonchalantdom)).
+
+Attributes are typed per tag: `input({ value })` checks `value`, a misspelled
+or camelCase listener (`onClick`) is a type error, and a listener's
+`currentTarget` has the element's type. SVG listeners are typed but SVG
+attributes are not, since the DOM lib doesn't describe them. For a tag or
+attribute the DOM lib doesn't know, `h(tag as string, attrs)` takes untyped
+attributes.
 Tests also cover tables, SVG, and other common string-renderer failure modes,
 in `packages/dom/test/dom.test.ts`.
 
@@ -174,17 +196,24 @@ node on the client; a server holds processes and sends state over the wire,
 never HTML.
 
 CI limits these paths to one text write for one changed label in a
-50-row list; one view yield and ≤ 3 DOM writes per frame for Mario
-(`examples/mario/mario.golden.test.ts`).
+50-row list (`dom.test.ts`); one view yield and at most 2 DOM writes per frame
+for Mario (`examples/mario/mario.golden.test.ts`); and exact insert, move,
+write, and listener counts for each js-framework-benchmark operation on 1,000
+rows (`examples/js-framework-benchmark/bench.test.ts`).
 
 ## Registry
 
 `registry(defs)` + `define(proc, opts)` + `lookup(name, args)`. Lookup is
 get-or-spawn, keyed by name plus the arguments. Argument order is ignored, so `{a, b}`
-and `{b, a}` are the same key. Subscribers to values or lifecycle metadata
-count as watchers; plain reads don't. The idle timer starts at lookup and
+and `{b, a}` are the same key. A read returns `T | undefined` until the first
+yield, unless the definition has `initial`. Subscribers to values or lifecycle
+metadata count as watchers: an effect, or a derive or iterator an effect reads
+through. Plain reads don't, and neither does a derive that is only ever read
+as a snapshot. The idle timer starts at lookup and
 restarts when the last watcher leaves; after eviction the next lookup starts
-fresh. One mechanism, three jobs: dependency
+fresh. `registry(defs, { maxEntries })` caps the cache: past it, the least
+recently looked-up unwatched entries are disposed, so distinct arguments cannot
+grow memory without bound. One mechanism, three jobs: dependency
 injection, query caching, and remote addressing over a transport.
 Tests: `registry.test.ts`.
 
@@ -258,7 +287,8 @@ your own data shapes when the write path is performance-sensitive.
 | budget | enforced in |
 |---|---|
 | reconcile: 1 change in 10k ≤ 100 µs | `reconcile.perf.test.ts` |
-| Mario: 1 view yield, ≤ 3 DOM writes/frame, 0 node churn | `mario.golden.test.ts` |
-| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB, durable ≤ 2.2 KB | `test/size.test.ts` |
+| Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 node churn | `mario.golden.test.ts` |
+| js-framework-benchmark: exact DOM operation counts per operation (swap = 2 moves, clear = one bulk removal) | `bench.test.ts` |
+| bundle sizes: core ≤ 8 KB gzip, app ≤ 13 KB, wire ≤ 9.5 KB, durable ≤ 2 KB | `test/size.test.ts` |
 | an idle registry process (a chat room) ≤ 8 KB of heap | `test/room-memory.test.ts` |
 | nothing retained after dispose | `process.leaks.test.ts` |
