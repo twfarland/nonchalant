@@ -49,11 +49,13 @@ export interface ExposeOpts {
    */
   maxWatches?: number
   /**
-   * Cap on lookups per time window for this session (fixed window). Each
-   * distinct lookup may spawn a process, so this bounds how fast one session
-   * can grow the registry; a lookup past it raises. Omit for no cap.
+   * Cap on this session's lookups, as a token bucket: `max` tokens refill
+   * evenly over each `perMs`, up to `burst` (default `max`) held at once, and
+   * the bucket starts full. Each distinct lookup may spawn a process, so this
+   * bounds how fast one session can grow the registry; a lookup with no token
+   * left raises. Omit for no cap.
    */
-  lookupRate?: { max: number; perMs: number }
+  lookupRate?: { max: number; perMs: number; burst?: number }
 }
 
 interface Watch {
@@ -67,8 +69,8 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
   const watches = new Map<string, Watch>()
   const out = (msg: HostMsg): void => transport.send(encode(msg))
   const rate = opts?.lookupRate
-  let windowStart = 0
-  let lookups = 0
+  let tokens = rate?.burst ?? rate?.max ?? 0
+  let refilledAt = Date.now()
 
   const errorJson = (e: unknown, id?: number): Json => {
     const base: { message: string; id?: number } = { message: e instanceof Error ? e.message : String(e) }
@@ -88,11 +90,10 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
     if (opts?.maxWatches !== undefined && watches.size >= opts.maxWatches) return 'watch limit reached'
     if (rate !== undefined) {
       const now = Date.now()
-      if (now - windowStart >= rate.perMs) {
-        windowStart = now
-        lookups = 0
-      }
-      if (++lookups > rate.max) return 'lookup rate exceeded'
+      tokens = Math.min(rate.burst ?? rate.max, tokens + ((now - refilledAt) * rate.max) / rate.perMs)
+      refilledAt = now
+      if (tokens < 1) return 'lookup rate exceeded'
+      tokens--
     }
     return undefined
   }

@@ -246,7 +246,7 @@ describe('principal namespacing', () => {
 // ---------- lookup rate ----------
 
 describe('lookup rate', () => {
-  it('a lookup past the window cap raises; the next window admits again', async () => {
+  it('a lookup with no token left raises; a full period refills max tokens', async () => {
     let now = 1_000
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
     try {
@@ -265,6 +265,38 @@ describe('lookup rate', () => {
       client.send({ op: 'lookup', ref: 'r4', name: 'room', v: 3 })
       await until(() => client.received.length === 4)
       expect(client.received[3]?.op).toBe('yield')
+      client.unsubscribe()
+      stop()
+      reg.evict('room')
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('burst admits a page load beyond max at once, then tokens refill at max per perMs', async () => {
+    let now = 1_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const link = memoryPair()
+      const reg = registry({ room: define(room) })
+      const stop = expose(reg, link.host, { lookupRate: { max: 2, perMs: 1_000, burst: 5 } })
+      const client = rawClient(link.client)
+      const ops = async (refs: string[]): Promise<string[]> => {
+        const from = client.received.length
+        for (const ref of refs) client.send({ op: 'lookup', ref, name: 'room', v: 3 })
+        await until(() => client.received.length === from + refs.length)
+        return client.received.slice(from).map((m) => `${m.op} ${m.ref}`).sort()
+      }
+
+      expect(await ops(['a1', 'a2', 'a3', 'a4', 'a5', 'a6'])).toStrictEqual([
+        'raise a6', 'yield a1', 'yield a2', 'yield a3', 'yield a4', 'yield a5',
+      ])
+      now += 500 // half a period: one token back
+      expect(await ops(['b1', 'b2'])).toStrictEqual(['raise b2', 'yield b1'])
+      now += 60_000 // a long idle refills only up to burst
+      expect(await ops(['c1', 'c2', 'c3', 'c4', 'c5', 'c6'])).toStrictEqual([
+        'raise c6', 'yield c1', 'yield c2', 'yield c3', 'yield c4', 'yield c5',
+      ])
       client.unsubscribe()
       stop()
       reg.evict('room')

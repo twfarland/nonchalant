@@ -133,6 +133,7 @@ arrives as a `WireError`, whose `detail` is the JSON the host sent (at least
 | lookup of a name not in the host's schema | `true` / `WireError` | reject |
 | lookup past the host's watch cap | `true` / `WireError('watch limit reached')` | reject |
 | lookup past the host's rate limit | `true` / `WireError('lookup rate exceeded')` | reject |
+| lookup past the host's rate limit across all connections | `true` / `WireError('host lookup rate exceeded')` | reject |
 | lookup with a different protocol revision | `true` / `WireError('protocol mismatch: host speaks 3, lookup carried …')` | reject |
 | a call whose message is not an object with a string `type` | unchanged | that call rejects: `invalid message: expected an object with a string type` |
 | a call the gateway's `admit` refused (returned `undefined` or threw) | unchanged | that call rejects: `message refused` |

@@ -191,7 +191,7 @@ The protocol, its codec, transports, and both ends of a connection. Isomorphic.
 | `WebSocketTransportOpts` | `{ retryDelay?: number }` |
 | `Connection<S>` | `Registry<S> & { close(): void }` |
 | `Exposable` | The gateway `expose` serves: `lookup(name: string, ...args: unknown[]): unknown`, plus two optional members below. A registry is one. |
-| `ExposeOpts` | `{ maxWatches?: number; lookupRate?: { max: number; perMs: number } }`, below. |
+| `ExposeOpts` | `{ maxWatches?: number; lookupRate?: { max: number; perMs: number; burst?: number } }`, below. |
 | `ClientMsg` / `HostMsg` | The eight protocol ops: `lookup cast call exit` / `yield reply done raise`. |
 
 `Exposable` members:
@@ -207,7 +207,7 @@ The protocol, its codec, transports, and both ends of a connection. Isomorphic.
 | option | default | meaning |
 |---|---|---|
 | `maxWatches` | no cap | Refs one session may watch at once. A lookup past it raises; a re-lookup on an existing ref is always allowed. |
-| `lookupRate` | no cap | `{ max, perMs }`: lookups one session may make per fixed window. A lookup past it raises. `@nonchalant/host` sets 100 per 10 s. |
+| `lookupRate` | no cap | `{ max, perMs, burst? }`: a token bucket for one session's lookups. `max` tokens refill evenly over each `perMs`, up to `burst` (default `max`) held at once; the bucket starts full. A lookup with no token left raises. `@nonchalant/host` sets 100 per 10 s with a burst of 500. |
 
 ## @nonchalant/durable
 
@@ -269,6 +269,7 @@ The Node WebSocket host. [Hosting safely](hosting.md) is the guide.
 | `serve` | `serve<S>(defs: S, opts?: ServeOpts<S>)` → `Promise<HostHandle<S>>` | Hosts a registry over WebSockets; resolves once listening. Each connection is its own `expose` session. `GET /schema` serves `{ protocol, names }`. |
 | `ServeOpts<S>` | type | See below. |
 | `OriginPolicy` | `(origin: string \| undefined, request) => boolean \| Promise<boolean>` | A callback form of `allowedOrigins`. |
+| `RateLimit` | `{ max: number; perMs: number; burst?: number }` | A token bucket: `max` tokens per `perMs`, up to `burst` (default `max`) at once. |
 | `HostHandle<S>` | `{ registry, port, url, sessions(), close() }` | The running host; `registry` is host-side access to the same processes. |
 
 | option | default | meaning |
@@ -280,12 +281,15 @@ The Node WebSocket host. [Hosting safely](hosting.md) is the guide.
 | `scope` | the shared registry | `(request, reg) => Exposable \| Promise<Exposable>`: builds the gateway each connection's lookups and messages go through, once per connection, after `authorize`. Throwing rejects the upgrade (500). |
 | `maxPayloadBytes` | 1 MiB | Larger client messages close the connection (code 1009). |
 | `maxWatchesPerConnection` | no cap | Lookups past it raise to that client. |
-| `lookupRate` | `{ max: 100, perMs: 10_000 }` | Lookups per connection per fixed window; one past it raises to that client. |
+| `lookupRate` | `{ max: 100, perMs: 10_000, burst: 500 }` | Token bucket for one connection's lookups; one with no token left raises to that client. |
+| `totalLookupRate` | `{ max: 1_000, perMs: 1_000, burst: 10_000 }` | The same bucket shared by every connection; one past it raises `host lookup rate exceeded`. |
+| `maxEntries` | 10 000 | Registry cap: past it the least recently looked-up unwatched entries are disposed. `Infinity` for no cap. |
 | `heartbeatMs` | 30 000 (0 disables) | Pings each socket; a missed pong terminates it and releases its watches. |
 | `maxBufferedBytes` | 8 MiB | Outbound bytes one socket may have queued before the host terminates it. |
 
 Each connection is a principal: the one its `scope` gateway names, or else a
 fresh random one, so call ids are always namespaced per connection. `serve`
 throws at once on a negative or non-finite `heartbeatMs`, a non-integer
-`maxWatchesPerConnection`, a malformed `lookupRate`, or a non-positive
-`maxBufferedBytes`.
+`maxWatchesPerConnection`, a malformed `lookupRate` or `totalLookupRate`, a
+non-positive `maxBufferedBytes`, or a `maxEntries` that is neither a positive
+integer nor `Infinity`.
