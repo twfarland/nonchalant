@@ -266,8 +266,11 @@ const host = await serve({ cart: define(cartProc) }, {
 The open default is convenient for the local example, not a production
 security policy. Origin checks protect browser handshakes; authorization
 decides who may connect; the `scope` option decides which processes each
-connection's lookups may reach. Alternatively, processes can enforce record and
-operation access themselves. See [Hosting safely](hosting.md).
+connection's lookups may reach. The gateway `scope` returns can also `admit`
+or refuse each message a client sends, and name a `principal` so one client's
+call ids cannot collide with another's; lookups are rate-limited per
+connection. Alternatively, processes can enforce record and operation access
+themselves. See [Hosting safely](hosting.md).
 
 ## Where to next
 

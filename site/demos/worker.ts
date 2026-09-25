@@ -3,11 +3,11 @@
 // its state. The lookup, the casts, and the patches are the same ones the
 // in-tab and server versions use: all that changed is the transport.
 
-import { cell, define, registry, spawn } from '@nonchalant/core'
+import { define, registry, spawn } from '@nonchalant/core'
 import type { Process, Self } from '@nonchalant/core'
 import { connect, expose, portTransport, type MessageEndpoint, type Transport } from '@nonchalant/wire'
 import { mount } from '@nonchalant/dom'
-import { button, div, span } from '@nonchalant/dom/tags'
+import { button, div } from '@nonchalant/dom/tags'
 import { primes, type Lab, type PrimesMsg, type PrimesState } from '../../examples/worker/primes.ts'
 
 const worker = typeof Worker === 'undefined'

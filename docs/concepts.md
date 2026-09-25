@@ -62,6 +62,9 @@ and tests.
   `maxRestarts` times. Queued messages replay; pending calls reject.
 - `mailbox: n`: cap the queue; overflow drops the oldest and logs a warning.
 
+[Error handling](errors.md) lists what a crash, a restart, and each kind of
+call rejection look like from the outside.
+
 Ownership: whatever a process spawns belongs to it and dies with it. The
 attachment happens during the synchronous part of each step. Spawn before
 you `await`, or the child ends up unowned. Registry processes are unowned
@@ -206,8 +209,12 @@ flowchart LR
     T <--> T2
 ```
 `expose(reg, transport, opts?)` serves a registry or any object with a
-`lookup` method, which is the seam per-connection scoping uses, and `opts`
-carries `maxWatches` to cap how many refs one session may hold open.
+`lookup` method, which is the seam per-connection scoping uses. The same
+gateway can `admit` each client message (pass it through, replace it, or
+refuse it) and carry a `principal` that namespaces the session's call ids.
+`opts` carries `maxWatches` to cap how many refs one session may hold open and
+`lookupRate` to limit how fast it may look them up. The full list is in the
+[API reference](api.md#nonchalantwire).
 `connect(transport)` gives you the same lookup interface backed by the other
 side. Under the hood each remote process is a local process that applies
 incoming patches. Remote reads therefore keep the same path-level precision as
