@@ -12,12 +12,13 @@ export type {
 export { reconcile, applyPatch } from './reconcile.ts'
 export type { Json, Op, Patch } from './reconcile.ts'
 export { flush, effect, untracked } from './graph.ts'
-export { channel } from './process.ts'
+export { channel, onProcessError } from './process.ts'
 export type { SpawnOpts } from './process.ts'
 export { define, registry } from './registry.ts'
 export type { DefineOpts, RegistryHandle } from './registry.ts'
 
-import { computed, effect, source } from './graph.ts'
+import { computed, source } from './graph.ts'
+import { iterate, NONE } from './iterate.ts'
 import { spawnProcess, type SpawnOpts } from './process.ts'
 import type { Proc, Process, ProcessBase, Self, Sink as SinkT } from './types.ts'
 
@@ -64,71 +65,13 @@ export function derive<T>(fn: () => T): Process<T> {
     }
     const v = c.read()
     // a failed update leaves the graph clean with the stale value; keep throwing
-    // until a recompute succeeds and clears `error`
-    if (error !== undefined) throw error
+    // until a recompute succeeds and clears `errored`
+    if (errored) throw error
     return v
   }
 
-  const asyncIterator = (): AsyncIterator<T> => {
-    let buffered = false
-    let latest: T | undefined
-    let failure: unknown
-    let failed = false
-    let done = disposed
-    let wake: (() => void) | undefined
-    const signalWake = (): void => {
-      const w = wake
-      wake = undefined
-      if (w) w()
-    }
-    let stop = (): void => {}
-    if (!done) {
-      stop = effect(() => {
-        try {
-          latest = read()
-          buffered = true
-        } catch (e) {
-          failure = e
-          failed = true
-        }
-        signalWake()
-      })
-    }
-    const finish = (): void => {
-      if (!done) {
-        done = true
-        stop()
-        closers.delete(finish)
-        signalWake()
-      }
-    }
-    if (!done) closers.add(finish)
-    return {
-      async next(): Promise<IteratorResult<T>> {
-        while (!buffered && !failed && !done) {
-          await new Promise<void>((resolve) => {
-            wake = resolve
-          })
-        }
-        if (failed) {
-          failed = false
-          const e = failure
-          failure = undefined
-          finish()
-          throw e
-        }
-        if (buffered) {
-          buffered = false
-          return { value: latest as T, done: false }
-        }
-        return { value: undefined as never, done: true }
-      },
-      async return(): Promise<IteratorResult<T>> {
-        finish()
-        return { value: undefined as never, done: true }
-      },
-    }
-  }
+  const asyncIterator = (): AsyncIterator<T> =>
+    iterate(() => (disposed ? NONE : read()), closers, !disposed)
 
   Object.defineProperties(read, {
     pending: { get: () => false },

@@ -139,6 +139,39 @@ describe.skipIf(gcNow === undefined)('leak suite (nothing retained after dispose
     expect(await collected(refs)).toBe(true)
   })
 
+  it('consumed mailbox messages are released while the process lives', async () => {
+    const refs: WeakRef<object>[] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let seen = 0
+    const p = spawn(
+      async function* (self: Self<{ blob: number[] }>) {
+        yield 0
+        await gate // let a queue build behind the head
+        for await (const msg of self) {
+          seen++
+          yield msg.blob.length
+        }
+      },
+      undefined,
+      { initial: 0 },
+    )
+    await tick()
+    const enqueue = (): void => {
+      for (let i = 0; i < 5; i++) {
+        const msg = { blob: new Array(10_000).fill(i) }
+        refs.push(new WeakRef(msg))
+        p.cast(msg)
+      }
+    }
+    enqueue()
+    release()
+    while (seen < 5) await tick()
+    // the newest is still the body's loop binding while it parks for more
+    expect(await collected(refs.slice(0, 4))).toBe(true)
+    p[Symbol.dispose]()
+  })
+
   it('disposed children leave no trace in the parent', async () => {
     const refs: WeakRef<object>[] = []
     const child: Proc<number, never, { blob: number[] }> = async function* (self, args) {
