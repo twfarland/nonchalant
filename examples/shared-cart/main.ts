@@ -4,7 +4,8 @@
 // messages, same fine-grained updates, same call().
 //
 // Server mode: run `pnpm cart-server` in another terminal, then swap the
-// commented line below.
+// commented line below. The token is one of server.ts's demo sessions; the
+// server decides whose cart it is, whatever userId the lookup below sends.
 
 import { define, registry } from '@nonchalant/core'
 import type { Process, VNode } from '@nonchalant/core'
@@ -15,7 +16,7 @@ import { cart, type CartMsg, type CartState, type Item, type Shop } from './shar
 
 // ——— the one line ———
 const shop = registry({ cart: define(cart) })                            // state lives in this tab
-// const shop = connect<Shop>(webSocketTransport('ws://127.0.0.1:4321/')) // state lives on the server
+// const shop = connect<Shop>(webSocketTransport('ws://127.0.0.1:4321/?token=alice-demo-token')) // state lives on the server
 // ————————————————————
 void connect
 void webSocketTransport

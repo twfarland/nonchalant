@@ -1,0 +1,16 @@
+{
+  "description": "a process that throws raises without an id and ends the watch; calls then raise with their id; a re-lookup spawns afresh",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 4 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 4 } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 5 } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "crash" } } },
+    { "expect": "raise", "ref": "r1" },
+    { "recv": { "op": "call", "ref": "r1", "id": 1, "msg": { "type": "get" } } },
+    { "expect": "raise", "ref": "r1", "id": 1 },
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 4 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 4 }, "full": true },
+    { "recv": { "op": "exit", "ref": "r1" } }
+  ]
+}

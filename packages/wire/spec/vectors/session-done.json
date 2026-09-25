@@ -1,0 +1,17 @@
+{
+  "description": "a process that returns ends with done, which is terminal for the ref: casts are dropped, calls raise with their id, and a new lookup spawns afresh",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 1 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 1 } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 2 } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "stop" } } },
+    { "expect": { "op": "done", "ref": "r1" } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
+    { "recv": { "op": "call", "ref": "r1", "id": 1, "msg": { "type": "get" } } },
+    { "expect": "raise", "ref": "r1", "id": 1 },
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 1 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 1 }, "full": true },
+    { "recv": { "op": "exit", "ref": "r1" } }
+  ]
+}

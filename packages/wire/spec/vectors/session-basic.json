@@ -1,7 +1,7 @@
 {
   "description": "lookup → full snapshot; cast → incremental yield; call → reply; exit releases",
   "steps": [
-    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 5 } } },
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 5 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 5 } },
     { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 3 } } },
     { "expect": "yield", "ref": "r1", "state": { "n": 8 } },

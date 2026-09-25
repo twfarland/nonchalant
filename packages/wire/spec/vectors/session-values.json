@@ -1,0 +1,14 @@
+{
+  "description": "null stays null and absence stays absent: a reply with no value omits the value field",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 0 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 0 } },
+    { "recv": { "op": "call", "ref": "r1", "id": 1, "msg": { "type": "echo", "value": null } } },
+    { "expect": { "op": "reply", "ref": "r1", "id": 1, "value": null } },
+    { "recv": { "op": "call", "ref": "r1", "id": 2, "msg": { "type": "echo" } } },
+    { "expect": { "op": "reply", "ref": "r1", "id": 2 } },
+    { "recv": { "op": "call", "ref": "r1", "id": 3, "msg": { "type": "echo", "value": { "a": [null, false, 0, ""] } } } },
+    { "expect": { "op": "reply", "ref": "r1", "id": 3, "value": { "a": [null, false, 0, ""] } } },
+    { "recv": { "op": "exit", "ref": "r1" } }
+  ]
+}

@@ -8,11 +8,13 @@
 // re-looks-up and receives the full state as an ordinary patch.
 //
 // lookup goes through the registry's typed schema — the schema is the
-// security whitelist; nothing outside it can be spawned remotely.
+// security whitelist; nothing outside it can be spawned remotely. Messages are
+// screened before delivery: one malformed message from one client must not be
+// able to crash a process every other client is watching.
 
 import { reconcile } from '@nonchalant/core'
 import type { Json, ProcessBase } from '@nonchalant/core'
-import { encode, decodeClient, type HostMsg } from './protocol.ts'
+import { encode, decodeClient, isRecord, PROTOCOL, type HostMsg } from './protocol.ts'
 import type { Transport } from './transport.ts'
 
 interface HostProcess extends ProcessBase<unknown> {
@@ -22,6 +24,21 @@ interface HostProcess extends ProcessBase<unknown> {
 
 export interface Exposable {
   lookup(name: string, ...args: unknown[]): unknown
+  /**
+   * Screen a client message for the process looked up under `name` before it
+   * is delivered: return it, or a replacement (say, with the sender stamped
+   * from the session), to deliver; return undefined or throw to refuse it. A
+   * refused call is rejected; a refused cast is dropped. Runs after the host's
+   * own check that a message is an object with a string `type`.
+   */
+  admit?(name: string, msg: { type: string } & { [key: string]: Json }): Json | undefined
+  /**
+   * Who this session acts for. A string `callId` in a call's message is
+   * rewritten into this principal's namespace before delivery, so a durable
+   * callee's recorded answers are keyed per principal and one client cannot
+   * read another's result by reusing its id. Omit to deliver ids untouched.
+   */
+  principal?: string
 }
 
 export interface ExposeOpts {
@@ -31,9 +48,16 @@ export interface ExposeOpts {
    * an existing ref replaces its watch and is always allowed. Omit for no cap.
    */
   maxWatches?: number
+  /**
+   * Cap on lookups per time window for this session (fixed window). Each
+   * distinct lookup may spawn a process, so this bounds how fast one session
+   * can grow the registry; a lookup past it raises. Omit for no cap.
+   */
+  lookupRate?: { max: number; perMs: number }
 }
 
 interface Watch {
+  name: string
   proc: HostProcess
   stop(): void
 }
@@ -42,6 +66,9 @@ interface Watch {
 export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts): () => void {
   const watches = new Map<string, Watch>()
   const out = (msg: HostMsg): void => transport.send(encode(msg))
+  const rate = opts?.lookupRate
+  let windowStart = 0
+  let lookups = 0
 
   const errorJson = (e: unknown, id?: number): Json => {
     const base: { message: string; id?: number } = { message: e instanceof Error ? e.message : String(e) }
@@ -56,14 +83,26 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
     w.stop()
   }
 
-  const startWatch = (ref: string, name: string, args: unknown): void => {
-    stopWatch(ref) // re-lookup on an existing ref restarts from a full snapshot
-    if (opts?.maxWatches !== undefined && watches.size >= opts.maxWatches) {
-      out({ op: 'raise', ref, error: errorJson(new Error('watch limit reached')) })
-      return
+  const refuseLookup = (v: unknown): string | undefined => {
+    if (v !== PROTOCOL) return `protocol mismatch: host speaks ${PROTOCOL}, lookup carried ${JSON.stringify(v ?? null)}`
+    if (opts?.maxWatches !== undefined && watches.size >= opts.maxWatches) return 'watch limit reached'
+    if (rate !== undefined) {
+      const now = Date.now()
+      if (now - windowStart >= rate.perMs) {
+        windowStart = now
+        lookups = 0
+      }
+      if (++lookups > rate.max) return 'lookup rate exceeded'
     }
+    return undefined
+  }
+
+  const startWatch = (ref: string, name: string, args: unknown, v: unknown): void => {
+    stopWatch(ref) // re-lookup on an existing ref restarts from a full snapshot
     let proc: HostProcess
     try {
+      const refused = refuseLookup(v)
+      if (refused !== undefined) throw new Error(refused)
       proc = (args === undefined ? reg.lookup(name) : reg.lookup(name, args)) as HostProcess
     } catch (e) {
       out({ op: 'raise', ref, error: errorJson(e) })
@@ -72,6 +111,7 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
     const it = proc[Symbol.asyncIterator]()
     let active = true
     const watch: Watch = {
+      name,
       proc,
       stop: () => {
         active = false
@@ -104,6 +144,22 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
     })()
   }
 
+  /** The message to deliver to the watch's process, or an Error saying why not. */
+  const screen = (w: Watch, msg: unknown): Json | Error => {
+    if (!isRecord(msg) || typeof msg['type'] !== 'string') return new Error('invalid message: expected an object with a string type')
+    let admitted: Json | undefined = msg as Json
+    try {
+      if (reg.admit !== undefined) admitted = reg.admit(w.name, msg as { type: string } & { [key: string]: Json })
+    } catch {
+      admitted = undefined
+    }
+    if (admitted === undefined) return new Error('message refused')
+    const principal = reg.principal
+    if (principal !== undefined && isRecord(admitted) && typeof admitted['callId'] === 'string')
+      admitted = { ...admitted, callId: JSON.stringify([principal, admitted['callId']]) }
+    return admitted
+  }
+
   const stopAll = (): void => {
     for (const ref of [...watches.keys()]) stopWatch(ref)
   }
@@ -114,19 +170,24 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
       if (msg === null) return // not ours (bus transport chatter) or garbage
       switch (msg.op) {
         case 'lookup':
-          startWatch(msg.ref, msg.name, msg.args)
+          startWatch(msg.ref, msg.name, msg.args, msg.v)
           return
-        case 'cast':
-          watches.get(msg.ref)?.proc.cast?.(msg.msg)
-          return
-        case 'call': {
+        case 'cast': {
           const w = watches.get(msg.ref)
+          if (w === undefined || w.proc.cast === undefined) return // fire-and-forget: nowhere to report
+          const m = screen(w, msg.msg)
+          if (!(m instanceof Error)) w.proc.cast(m)
+          return
+        }
+        case 'call': {
           const { ref, id } = msg
-          if (w === undefined || w.proc.call === undefined) {
-            out({ op: 'raise', ref, error: errorJson(new Error('no such process'), id) })
+          const w = watches.get(ref)
+          const m = w === undefined ? new Error('no such process') : screen(w, msg.msg)
+          if (m instanceof Error || w?.proc.call === undefined) {
+            out({ op: 'raise', ref, error: errorJson(m instanceof Error ? m : new Error('not callable'), id) })
             return
           }
-          w.proc.call(msg.msg).then(
+          w.proc.call(m).then(
             (value) => out({ op: 'reply', ref, id, value: value as Json }),
             (e) => out({ op: 'raise', ref, error: errorJson(e, id) }),
           )

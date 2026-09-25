@@ -2,7 +2,7 @@
 // state patches of plain data, never markup, never code. Isomorphic, DOM-free.
 // The conformance vectors under spec/vectors/ are the cross-language contract.
 
-export { encode, decodeClient, decodeHost } from './protocol.ts'
+export { encode, decodeClient, decodeHost, PROTOCOL } from './protocol.ts'
 export type { ClientMsg, HostMsg } from './protocol.ts'
 export { memoryPair } from './transport.ts'
 export type { Transport, TransportHandlers, MemoryLink } from './transport.ts'

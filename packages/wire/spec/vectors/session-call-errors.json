@@ -1,0 +1,22 @@
+{
+  "description": "a call the host cannot deliver raises with its id and touches nothing else (unknown ref, no msg, msg not an object with a string type); undeliverable casts are dropped silently; the process survives all of it",
+  "steps": [
+    { "recv": { "op": "call", "ref": "r9", "id": 1, "msg": { "type": "get" } } },
+    { "expect": "raise", "ref": "r9", "id": 1 },
+    { "recv": { "op": "cast", "ref": "r9", "msg": { "type": "add", "n": 1 } } },
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 0 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 0 } },
+    { "recv": { "op": "call", "ref": "r1", "id": 2, "msg": 5 } },
+    { "expect": "raise", "ref": "r1", "id": 2 },
+    { "recv": { "op": "call", "ref": "r1", "id": 3 } },
+    { "expect": "raise", "ref": "r1", "id": 3 },
+    { "recv": { "op": "call", "ref": "r1", "id": 4, "msg": { "kind": "get" } } },
+    { "expect": "raise", "ref": "r1", "id": 4 },
+    { "recv": { "op": "cast", "ref": "r1", "msg": null } },
+    { "recv": { "op": "cast", "ref": "r1" } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": [{ "type": "add", "n": 1 }] } },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 2 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 2 } },
+    { "recv": { "op": "exit", "ref": "r1" } }
+  ]
+}
