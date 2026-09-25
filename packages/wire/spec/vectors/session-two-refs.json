@@ -1,0 +1,18 @@
+{
+  "description": "two refs to one process are two watches: each starts from its own full snapshot, a change yields on both (in either order), and exiting one leaves the other",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 1 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 1 } },
+    { "recv": { "op": "lookup", "ref": "r2", "name": "counter", "v": 3, "args": { "start": 1 } } },
+    { "expect": "yield", "ref": "r2", "state": { "n": 1 }, "full": true },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 2 } } },
+    { "unordered": [
+      { "expect": "yield", "ref": "r1", "state": { "n": 3 } },
+      { "expect": "yield", "ref": "r2", "state": { "n": 3 } }
+    ] },
+    { "recv": { "op": "exit", "ref": "r1" } },
+    { "recv": { "op": "cast", "ref": "r2", "msg": { "type": "add", "n": 1 } } },
+    { "expect": "yield", "ref": "r2", "state": { "n": 4 } },
+    { "recv": { "op": "exit", "ref": "r2" } }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "description": "a reply is not ordered against the yield its call caused: either may arrive first",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 7 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 7 } },
+    { "recv": { "op": "call", "ref": "r1", "id": 1, "msg": { "type": "reset" } } },
+    { "unordered": [
+      { "expect": { "op": "reply", "ref": "r1", "id": 1, "value": { "n": 7 } } },
+      { "expect": "yield", "ref": "r1", "state": { "n": 0 } }
+    ] },
+    { "recv": { "op": "exit", "ref": "r1" } }
+  ]
+}

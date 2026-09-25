@@ -88,16 +88,19 @@ const ref = fc.string({ maxLength: 8 })
 
 // optional fields are absent, never explicitly undefined: JSON has no such value
 const clientMsg: fc.Arbitrary<ClientMsg> = fc.oneof(
-  fc.tuple(ref, fc.string({ maxLength: 8 }), fc.option(json, { nil: undefined })).map(([r, name, args]) =>
-    args === undefined ? { op: 'lookup' as const, ref: r, name } : { op: 'lookup' as const, ref: r, name, args }),
-  fc.tuple(ref, json).map(([r, msg]) => ({ op: 'cast' as const, ref: r, msg })),
-  fc.tuple(ref, fc.integer(), json).map(([r, id, msg]) => ({ op: 'call' as const, ref: r, id, msg })),
+  fc.tuple(ref, fc.string({ maxLength: 8 }), fc.nat(9), fc.option(json, { nil: undefined })).map(([r, name, v, args]) =>
+    args === undefined ? { op: 'lookup' as const, ref: r, name, v } : { op: 'lookup' as const, ref: r, name, v, args }),
+  fc.tuple(ref, fc.option(json, { nil: undefined })).map(([r, msg]) =>
+    msg === undefined ? { op: 'cast' as const, ref: r } : { op: 'cast' as const, ref: r, msg }),
+  fc.tuple(ref, fc.integer(), fc.option(json, { nil: undefined })).map(([r, id, msg]) =>
+    msg === undefined ? { op: 'call' as const, ref: r, id } : { op: 'call' as const, ref: r, id, msg }),
   ref.map((r) => ({ op: 'exit' as const, ref: r })),
 )
 
 const hostMsg: fc.Arbitrary<HostMsg> = fc.oneof(
   fc.tuple(ref, patch).map(([r, p]) => ({ op: 'yield' as const, ref: r, patch: p })),
-  fc.tuple(ref, fc.integer(), json).map(([r, id, value]) => ({ op: 'reply' as const, ref: r, id, value })),
+  fc.tuple(ref, fc.integer(), fc.option(json, { nil: undefined })).map(([r, id, value]) =>
+    value === undefined ? { op: 'reply' as const, ref: r, id } : { op: 'reply' as const, ref: r, id, value }),
   fc.tuple(ref, fc.option(json, { nil: undefined })).map(([r, value]) =>
     value === undefined ? { op: 'done' as const, ref: r } : { op: 'done' as const, ref: r, value }),
   fc.tuple(ref, json).map(([r, error]) => ({ op: 'raise' as const, ref: r, error })),
@@ -109,8 +112,8 @@ const wellFormed = (msg: ClientMsg | HostMsg | null): boolean => {
   if (typeof msg.ref !== 'string') return false
   switch (msg.op) {
     case 'lookup': return typeof msg.name === 'string'
-    case 'cast': return 'msg' in msg
-    case 'call': return typeof msg.id === 'number' && 'msg' in msg
+    case 'cast': return true
+    case 'call': return Number.isSafeInteger(msg.id)
     case 'exit': return true
     case 'yield':
       return msg.patch.every((op) =>
@@ -121,7 +124,7 @@ const wellFormed = (msg: ClientMsg | HostMsg | null): boolean => {
             ? op.length === 2
             : op.length === 5 && Number.isInteger(op[2]) && op[2] >= 0 && Number.isInteger(op[3]) && op[3] >= 0 &&
               Array.isArray(op[4])))
-    case 'reply': return typeof msg.id === 'number' && 'value' in msg
+    case 'reply': return Number.isSafeInteger(msg.id)
     case 'done': return true
     case 'raise': return 'error' in msg
     default: return false
@@ -351,21 +354,21 @@ describe('watch limits', () => {
       },
     })
 
-    link.client.send(encode({ op: 'lookup', ref: 'r1', name: 'cart' }))
+    link.client.send(encode({ op: 'lookup', ref: 'r1', name: 'cart', v: 3 }))
     await until(() => received.some((m) => m.op === 'yield' && m.ref === 'r1'))
 
-    link.client.send(encode({ op: 'lookup', ref: 'r2', name: 'cart' }))
+    link.client.send(encode({ op: 'lookup', ref: 'r2', name: 'cart', v: 3 }))
     await until(() => received.some((m) => m.op === 'raise' && m.ref === 'r2'))
 
     // re-lookup on an existing ref replaces its watch — allowed at the cap
-    link.client.send(encode({ op: 'lookup', ref: 'r1', name: 'cart' }))
+    link.client.send(encode({ op: 'lookup', ref: 'r1', name: 'cart', v: 3 }))
     await link.settle()
     expect(received.filter((m) => m.op === 'raise')).toHaveLength(1)
 
     // exit frees the slot for a new ref
     link.client.send(encode({ op: 'exit', ref: 'r1' }))
     await link.settle()
-    link.client.send(encode({ op: 'lookup', ref: 'r3', name: 'cart' }))
+    link.client.send(encode({ op: 'lookup', ref: 'r3', name: 'cart', v: 3 }))
     await until(() => received.some((m) => m.op === 'yield' && m.ref === 'r3'))
     expect(received.filter((m) => m.op === 'raise')).toHaveLength(1)
 

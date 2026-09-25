@@ -2,7 +2,7 @@
 // the reconnecting WebSocket transport. This is also where webSocketTransport
 // earns its test coverage (deferred from M6).
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { define, effect } from '@nonchalant/core'
 import type { Call, Cast, Definition, Proc } from '@nonchalant/core'
 import { connect, webSocketTransport } from '@nonchalant/wire'
@@ -117,7 +117,7 @@ describe('node host over real websockets', () => {
       protocol: number
       names: string[]
     }
-    expect(schema).toStrictEqual({ protocol: 2, names: ['cart'] })
+    expect(schema).toStrictEqual({ protocol: 3, names: ['cart'] })
 
     const t1 = webSocketTransport(host.url)
     const t2 = webSocketTransport(host.url)
@@ -239,26 +239,36 @@ describe('node host over real websockets', () => {
   }, 15000)
 
   it('heartbeat leaves responsive connections alone and reclaims half-open ones', async () => {
-    const host = await serve<Shop>({ cart: define(cart) }, { heartbeatMs: 40 })
-    const t = webSocketTransport(host.url)
-    const conn = connect<Shop>(t)
-    const rcart = conn.lookup('cart', { userId: 'hb' })
-    await until(() => rcart() !== undefined)
-    await new Promise((resolve) => setTimeout(resolve, 200)) // several ping rounds
-    expect(host.sessions()).toBe(1) // pongs keep a live connection open
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const host = await serve<Shop>({ cart: define(cart) }, { heartbeatMs: 1_000 })
+      const live = new WebSocket(host.url)
+      const halfOpen = new WebSocket(host.url)
+      await Promise.all([live, halfOpen].map((ws) => new Promise((resolve) => ws.on('open', resolve))))
+      await until(() => host.sessions() === 2)
+      let pongs = 0
+      live.on('ping', () => pongs++)
+      // a peer that stops reading never sees pings, so it never pongs
+      ;(halfOpen as unknown as { _socket: { pause(): void } })._socket.pause()
 
-    // a peer that stops reading never sees pings, so it never pongs
-    const halfOpen = new WebSocket(host.url)
-    await new Promise<void>((resolve) => halfOpen.on('open', () => resolve()))
-    await until(() => host.sessions() === 2)
-    ;(halfOpen as unknown as { _socket: { pause(): void } })._socket.pause()
-    await until(() => host.sessions() === 1)
-    halfOpen.terminate()
+      vi.advanceTimersByTime(1_000) // round 1: both pinged
+      await until(() => pongs === 1)
+      await new Promise((resolve) => setTimeout(resolve, 20)) // the pong crosses back to the host
+      vi.advanceTimersByTime(1_000) // round 2: the silent one missed its pong
+      await until(() => host.sessions() === 1)
+      await until(() => pongs === 2)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      vi.advanceTimersByTime(1_000) // round 3: the live one answered, so it stays
+      await until(() => pongs === 3)
+      expect(host.sessions()).toBe(1)
 
-    conn.close()
-    t.close()
-    await until(() => host.sessions() === 0)
-    await host.close()
+      halfOpen.terminate()
+      live.close()
+      await until(() => host.sessions() === 0)
+      await host.close()
+    } finally {
+      vi.useRealTimers()
+    }
   }, 15000)
 
   it('a message over maxPayloadBytes closes the connection with 1009', async () => {
@@ -270,5 +280,152 @@ describe('node host over real websockets', () => {
     ws.send('x'.repeat(4096))
     expect(await closed).toBe(1009)
     await host.close()
+  }, 15000)
+})
+
+// ---------- hardening: options, status codes, backpressure, principals ----------
+
+const handshake = (url: string, headers: Record<string, string> = {}): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const ws = new WebSocket(url, { headers })
+    ws.on('open', () => {
+      resolve(101)
+      ws.close()
+    })
+    ws.on('unexpected-response', (_request, response) => {
+      response.resume()
+      resolve(response.statusCode ?? 0)
+    })
+    ws.on('error', reject)
+  })
+
+interface RawSocket {
+  ws: WebSocket
+  received: Record<string, unknown>[]
+  send(frame: unknown): void
+}
+
+/** A raw socket client: frames out as JSON, host messages in as parsed objects. */
+const rawSocket = async (url: string): Promise<RawSocket> => {
+  const ws = new WebSocket(url)
+  const received: Record<string, unknown>[] = []
+  ws.on('message', (data) => received.push(JSON.parse(String(data)) as Record<string, unknown>))
+  await new Promise((resolve) => ws.on('open', resolve))
+  return { ws, received, send: (frame) => ws.send(JSON.stringify(frame)) }
+}
+
+type ReceiptMsg = Call<{ type: 'receipt'; callId: string }, string>
+const receipts: Proc<number, ReceiptMsg, void> = async function* (self) {
+  yield 0
+  for await (const msg of self) msg.reply(msg.callId)
+}
+
+type BlobMsg = Cast<{ type: 'grow'; bytes: number }>
+const blob: Proc<{ data: string }, BlobMsg, void> = async function* (self) {
+  let n = 0
+  yield { data: '' }
+  for await (const msg of self) yield { data: String(++n % 10).repeat(msg.bytes) }
+}
+
+describe('node host hardening', () => {
+  it('rejects nonsense limits at serve time', async () => {
+    const defs = { cart: define(cart) }
+    await expect(serve(defs, { heartbeatMs: -1 })).rejects.toThrow('heartbeatMs')
+    await expect(serve(defs, { heartbeatMs: Number.NaN })).rejects.toThrow('heartbeatMs')
+    await expect(serve(defs, { maxWatchesPerConnection: 1.5 })).rejects.toThrow('maxWatchesPerConnection')
+    await expect(serve(defs, { maxWatchesPerConnection: -1 })).rejects.toThrow('maxWatchesPerConnection')
+    await expect(serve(defs, { lookupRate: { max: 10, perMs: 0 } })).rejects.toThrow('lookupRate')
+    await expect(serve(defs, { lookupRate: { max: 0.5, perMs: 10 } })).rejects.toThrow('lookupRate')
+    await expect(serve(defs, { maxBufferedBytes: 0 })).rejects.toThrow('maxBufferedBytes')
+  })
+
+  it('answers 404 for anything but GET /schema and for upgrades off the socket path', async () => {
+    const host = await serve<Shop>({ cart: define(cart) }, { path: '/ws' })
+    const http = `http://127.0.0.1:${host.port}`
+    expect((await fetch(`${http}/nope`)).status).toBe(404)
+    expect((await fetch(`${http}/schema`, { method: 'POST' })).status).toBe(404)
+    expect(await handshake(`ws://127.0.0.1:${host.port}/elsewhere`)).toBe(404)
+    expect(await handshake(host.url)).toBe(101)
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
+  it('an authorize that throws is a 500 for the schema and the upgrade, and the host keeps serving', async () => {
+    let calls = 0
+    const host = await serve<Shop>({ cart: define(cart) }, {
+      authorize: () => {
+        if (++calls % 2 === 1) throw new Error('session store down')
+        return true
+      },
+    })
+    expect((await fetch(`http://127.0.0.1:${host.port}/schema`)).status).toBe(500)
+    expect((await fetch(`http://127.0.0.1:${host.port}/schema`)).status).toBe(200)
+    expect(await handshake(host.url)).toBe(500)
+    expect(await handshake(host.url)).toBe(101)
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
+  it('a scope that throws rejects the upgrade with 500', async () => {
+    const host = await serve<Shop>({ cart: define(cart) }, {
+      scope: () => {
+        throw new Error('no session')
+      },
+    })
+    expect(await handshake(host.url)).toBe(500)
+    expect(host.sessions()).toBe(0)
+    await host.close()
+  })
+
+  it('a client that stops reading is terminated once its outbound buffer passes maxBufferedBytes', async () => {
+    const host = await serve({ blob: define(blob) }, { maxBufferedBytes: 256 * 1024 })
+    const slow = await rawSocket(host.url)
+    slow.send({ op: 'lookup', ref: 'r1', name: 'blob', v: 3 })
+    await until(() => slow.received.length === 1)
+    ;(slow.ws as unknown as { _socket: { pause(): void } })._socket.pause()
+
+    const b = host.registry.lookup('blob')
+    for (let i = 0; i < 400 && host.sessions() > 0; i++) {
+      b.cast({ type: 'grow', bytes: 256 * 1024 })
+      await tick()
+    }
+    expect(host.sessions()).toBe(0)
+    slow.ws.terminate()
+    await host.close()
+  }, 30000)
+
+  it('client callIds are namespaced per connection unless scope names a principal', async () => {
+    const defs = { receipts: define(receipts) }
+    const receiptFrom = async (url: string): Promise<unknown> => {
+      const c = await rawSocket(url)
+      c.send({ op: 'lookup', ref: 'r1', name: 'receipts', v: 3 })
+      c.send({ op: 'call', ref: 'r1', id: 1, msg: { type: 'receipt', callId: 'order-7' } })
+      await until(() => c.received.some((m) => m['op'] === 'reply'))
+      c.ws.close()
+      return c.received.find((m) => m['op'] === 'reply')?.['value']
+    }
+
+    const open = await serve(defs)
+    const a = await receiptFrom(open.url)
+    const b = await receiptFrom(open.url)
+    expect(a).not.toBe(b) // two anonymous connections never share an answer record
+    expect((JSON.parse(String(a)) as string[])[1]).toBe('order-7')
+    await until(() => open.sessions() === 0)
+    await open.close()
+
+    const scoped = await serve(defs, {
+      scope: (request, reg) => ({
+        lookup: () => reg.lookup('receipts'),
+        principal: new URL(request.url ?? '/', 'http://localhost').searchParams.get('user') ?? 'anonymous',
+      }),
+    })
+    const alice1 = await receiptFrom(`${scoped.url}?user=alice`)
+    const alice2 = await receiptFrom(`${scoped.url}?user=alice`)
+    const mallory = await receiptFrom(`${scoped.url}?user=mallory`)
+    expect(alice1).toBe('["alice","order-7"]')
+    expect(alice2).toBe(alice1) // the same principal retries into the same record
+    expect(mallory).toBe('["mallory","order-7"]')
+    await until(() => scoped.sessions() === 0)
+    await scoped.close()
   }, 15000)
 })

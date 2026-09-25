@@ -4,16 +4,20 @@
 // Watches release, then registry reference counts and eviction timers reclaim
 // idle processes.
 //
-// GET /schema serves the name whitelist ({ protocol: 2, names }) — the typed
+// GET /schema serves the name whitelist ({ protocol: 3, names }) — the typed
 // contract itself lives in the shared TypeScript schema module; the registry
 // rejects lookups outside it either way.
+//
+// Every connection is a principal: the one its scope names, or else one of its
+// own. Client-chosen callIds are namespaced by it (see Exposable.principal).
 
+import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { registry, type Definition, type RegistryHandle } from '@nonchalant/core'
-import { expose, type Exposable, type Transport } from '@nonchalant/wire'
+import { expose, PROTOCOL, type Exposable, type Transport } from '@nonchalant/wire'
 
 export interface ServeOpts<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }> {
   /** TCP port; 0 (default) picks an ephemeral one. */
@@ -37,10 +41,23 @@ export interface ServeOpts<S extends { [K in keyof S]: Definition<unknown, unkno
   /** Cap on concurrently watched refs per connection; a lookup past it raises to that client. Omit for no cap. */
   maxWatchesPerConnection?: number
   /**
+   * Cap on lookups per connection per window; a lookup past it raises to that
+   * client. Each distinct lookup may spawn a process, so this bounds how fast
+   * one connection can grow the registry. Default 100 per 10 s.
+   */
+  lookupRate?: { max: number; perMs: number }
+  /**
    * Ping each socket at this interval (ms) and terminate it after a missed
-   * pong, so half-open connections release their watches. Omit to disable.
+   * pong, so half-open connections release their watches. Default 30 s; 0 disables.
    */
   heartbeatMs?: number
+  /**
+   * Outbound bytes a socket may have queued before the host terminates it. A
+   * client that stops reading would otherwise grow the host's memory without
+   * bound; terminating is safe because reconnect is a re-lookup and a full
+   * snapshot. Default 8 MiB.
+   */
+  maxBufferedBytes?: number
 }
 
 export type OriginPolicy = (
@@ -58,9 +75,11 @@ export interface HostHandle<S extends { [K in keyof S]: Definition<unknown, unkn
   close(): Promise<void>
 }
 
-const wsTransport = (ws: WebSocket): Transport => ({
+const wsTransport = (ws: WebSocket, maxBuffered: number): Transport => ({
   send: (data) => {
-    if (ws.readyState === ws.OPEN) ws.send(data)
+    if (ws.readyState !== ws.OPEN) return
+    if (ws.bufferedAmount > maxBuffered) ws.terminate() // fires 'close', which runs cleanup
+    else ws.send(data)
   },
   subscribe: (handlers) => {
     const onMessage = (data: unknown): void => handlers.message(String(data))
@@ -80,12 +99,18 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
   defs: S,
   opts?: ServeOpts<S>,
 ): Promise<HostHandle<S>> {
-  const heartbeatMs = opts?.heartbeatMs
-  if (heartbeatMs !== undefined && (!Number.isFinite(heartbeatMs) || heartbeatMs <= 0))
-    throw new Error('nonchalant/host: heartbeatMs must be a positive duration')
+  const heartbeatMs = opts?.heartbeatMs ?? 30_000
+  if (!Number.isFinite(heartbeatMs) || heartbeatMs < 0)
+    throw new Error('nonchalant/host: heartbeatMs must be a finite non-negative duration')
   const maxWatches = opts?.maxWatchesPerConnection
   if (maxWatches !== undefined && (!Number.isInteger(maxWatches) || maxWatches < 0))
     throw new Error('nonchalant/host: maxWatchesPerConnection must be a non-negative integer')
+  const lookupRate = opts?.lookupRate ?? { max: 100, perMs: 10_000 }
+  if (!Number.isInteger(lookupRate.max) || lookupRate.max < 0 || !(lookupRate.perMs > 0))
+    throw new Error('nonchalant/host: lookupRate needs a non-negative integer max and a positive perMs')
+  const maxBuffered = opts?.maxBufferedBytes ?? 8 << 20
+  if (!(maxBuffered > 0))
+    throw new Error('nonchalant/host: maxBufferedBytes must be positive')
 
   const reg = registry(defs)
   const names = Object.keys(defs)
@@ -105,7 +130,7 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
           return
         }
         res.setHeader('content-type', 'application/json')
-        res.end(JSON.stringify({ protocol: 2, names }))
+        res.end(JSON.stringify({ protocol: PROTOCOL, names }))
         return
       }
       res.statusCode = 404
@@ -164,13 +189,20 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
     // a client protocol violation (oversize payload, bad frame) must drop that
     // connection, not crash the host via an unhandled 'error' event
     ws.on('error', () => ws.terminate())
+    const gate: Exposable = scopes.get(request) ?? reg
+    const session: Exposable = {
+      lookup: (name, ...args) => gate.lookup(name, ...args),
+      principal: gate.principal ?? randomUUID(),
+    }
+    const admit = gate.admit?.bind(gate)
+    if (admit !== undefined) session.admit = admit
     const stop = expose(
-      scopes.get(request) ?? reg,
-      wsTransport(ws),
-      maxWatches === undefined ? undefined : { maxWatches },
+      session,
+      wsTransport(ws, maxBuffered),
+      maxWatches === undefined ? { lookupRate } : { lookupRate, maxWatches },
     )
     let heartbeat: ReturnType<typeof setInterval> | undefined
-    if (heartbeatMs !== undefined) {
+    if (heartbeatMs > 0) {
       let alive = true
       ws.on('pong', () => {
         alive = true

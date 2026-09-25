@@ -1,0 +1,17 @@
+{
+  "description": "with a cap of one watch: a lookup on a new ref past the cap raises and is never watched; a re-lookup on the watched ref is allowed; exit frees the slot",
+  "host": { "maxWatches": 1 },
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 0 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 0 } },
+    { "recv": { "op": "lookup", "ref": "r2", "name": "counter", "v": 3, "args": { "start": 9 } } },
+    { "expect": "raise", "ref": "r2" },
+    { "recv": { "op": "cast", "ref": "r2", "msg": { "type": "add", "n": 1 } } },
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "v": 3, "args": { "start": 0 } } },
+    { "expect": "yield", "ref": "r1", "state": { "n": 0 }, "full": true },
+    { "recv": { "op": "exit", "ref": "r1" } },
+    { "recv": { "op": "lookup", "ref": "r3", "name": "counter", "v": 3, "args": { "start": 9 } } },
+    { "expect": "yield", "ref": "r3", "state": { "n": 9 } },
+    { "recv": { "op": "exit", "ref": "r3" } }
+  ]
+}

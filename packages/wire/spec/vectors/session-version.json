@@ -1,0 +1,13 @@
+{
+  "description": "every lookup carries the protocol revision as v; a lookup without it or with another raises, and the ref never becomes watched",
+  "steps": [
+    { "recv": { "op": "lookup", "ref": "r1", "name": "counter", "args": { "start": 0 } } },
+    { "expect": "raise", "ref": "r1" },
+    { "recv": { "op": "cast", "ref": "r1", "msg": { "type": "add", "n": 1 } } },
+    { "recv": { "op": "lookup", "ref": "r2", "name": "counter", "v": 2, "args": { "start": 0 } } },
+    { "expect": "raise", "ref": "r2" },
+    { "recv": { "op": "lookup", "ref": "r3", "name": "counter", "v": 3, "args": { "start": 0 } } },
+    { "expect": "yield", "ref": "r3", "state": { "n": 0 } },
+    { "recv": { "op": "exit", "ref": "r3" } }
+  ]
+}
