@@ -6,8 +6,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && pnpm check:boundaries && pnpm check:docs",
+    "check:boundaries": "tsc -p packages/core/tsconfig.json && tsc -p packages/wire/tsconfig.json && tsc -p packages/durable/tsconfig.json && tsc -p packages/host/tsconfig.json",
+    "check:docs": "node --experimental-strip-types --no-warnings scripts/check-doc-samples.ts",
     "test": "vitest run",
+    "build": "pnpm -r run build",
+    "verify:pack": "node --experimental-strip-types --no-warnings scripts/verify-pack.ts",
     "test:watch": "vitest",
     "dev": "vite --open /",
     "build:site": "vite build",

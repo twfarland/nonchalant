@@ -1,0 +1,59 @@
+# Type-checks and tests every push and pull request. `pnpm test` includes the
+# budgets (bundle size, reconcile perf, Mario's DOM-write golden, leak
+# checks) — they are CI assertions, so a regression fails the build here.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    name: check + test (Node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # strict tsc over everything, the no-DOM package boundaries, and the
+      # TypeScript samples in README.md and docs/
+      - run: pnpm check
+
+      - run: pnpm test
+
+  pack:
+    runs-on: ubuntu-latest
+    name: build + pack + publint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm verify:pack
