@@ -260,6 +260,20 @@ change nothing and reject with `Fenced` if the key has been claimed since;
 | `commit` | `(key, epoch, commit: Commit) => Promise<void>` | Acknowledge one message: snapshot, version, cursor, answers, and any dead letter land together or not at all. |
 | `result` | `(key, callId) => Promise<Json \| undefined>` | The answer already given to that call, if any. |
 
+## @nonchalant/react
+
+React hooks over processes. Peer dependencies: `@nonchalant/core` and `react`
+18 or later. [Using nonchalant from React](react.md) is the guide.
+
+| export | signature | what it does |
+|---|---|---|
+| `useProcess` | `useProcess<T>(p: ProcessBase<T>)` → `T` | The current value; re-renders on every yield. Tearing-free (`useSyncExternalStore`). |
+| `useDerive` | `useDerive<T>(fn: () => T, deps: DependencyList)` → `T` | `fn` run inside a `derive`: recomputed when a path it read changes, re-rendering only when its result changes. `deps` are the render-scope values `fn` closes over. |
+| `useProcessMeta` | `useProcessMeta(p: ProcessBase<unknown>)` → `Meta` | `{ pending, stale, error }`; the object keeps its identity until a field changes. |
+| `useSpawn` | `useSpawn(proc, args, opts?)` → `Process<T \| undefined, In>`; with `opts.initial`, `Process<T, In>` | A process owned by the component: spawned on first render, claimed on commit, disposed on unmount. One no commit claims within a second is disposed. `args` and `opts` are read once. |
+| `useLookup` | `useLookup<P extends ProcessBase<unknown>>(lookup: () => P)` → `P` | Runs the lookup, keeps the entry watched (safe from idle eviction and the LRU cap) while mounted, and runs it again if the entry is evicted. |
+| `Meta` | type | `{ readonly pending: boolean; readonly stale: boolean; readonly error: unknown }` |
+
 ## @nonchalant/host
 
 The Node WebSocket host. [Hosting safely](hosting.md) is the guide.
