@@ -6,6 +6,6 @@
 // element; domSink() adapts a container to core's generic mount(sink, view).
 
 export { h, tagFn } from './h.ts'
-export type { Attrs, TagFn } from './h.ts'
+export type { Attrs, AttrsFor, HtmlAttrs, SvgAttrs, TagFn } from './h.ts'
 export { mount, domSink, onRenderError } from './render.ts'
 export type { View, RenderErrorHandler } from './render.ts'
