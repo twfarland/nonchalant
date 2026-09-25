@@ -32,8 +32,9 @@ flowchart TD
 ```
 
 **Every yield goes through a graph `source`.** The local update path therefore
-matches the wire path: `reconcile` runs on either type of yield. As a result, a remote process behaves like a
-local one and why remote reads are as fine-grained as local ones.
+matches the wire path: `reconcile` runs on either type of yield. That is why a
+remote process behaves like a local one, and why remote reads are as
+fine-grained as local ones.
 
 ## Two sources per process
 
@@ -53,7 +54,13 @@ returns the raw error. Errors are arbitrary values, not `Json`.
 
 ## The mailbox
 
-FIFO queue plus a list of parked takers. Delivery rules:
+A FIFO queue plus a FIFO of parked takers. Both are `Fifo`s: an array with a
+moving head index that compacts once the consumed prefix reaches half the
+array, so a dequeue is O(1) amortized at any depth (`Array#shift` is O(n) and
+made a 100k-deep drain quadratic; `process.lifecycle.test.ts` drains 200k
+queued casts under a time bound). A dequeued slot is cleared at once, so a
+consumed message is not retained by the backing array
+(`process.leaks.test.ts`). Delivery rules:
 
 - A push with a **non-`latest` taker parked** hands the message over directly.
 - A push with a **`latest` taker parked** queues it and schedules a microtask
@@ -73,7 +80,9 @@ in-flight call is registered in `pendingCalls` keyed by its message object, so
 dropping that object rejects its promise.
 
 `close()` resolves parked takers as done and drops the queue, ending the
-generator's `for await` and rejects everything still queued.
+generator's `for await` and rejecting every call still queued. It takes an
+optional wrapper around the taker resolution; disposal uses it to resume the
+body in scope (see [Ownership](#ownership)).
 
 ## The drive loop
 
@@ -96,15 +105,44 @@ and clears the metadata flags. `r.done` ends the loop. **A process that returns 
 over**, and its children go with it. That is why a view process that owns state
 must idle on its mailbox instead of returning.
 
-On a throw (and only if not already disposed): record the error, abort the
-signal, reject pending calls, and dispose the crashed instance's children. Then
-either restart (`restarts < maxRestarts`, default 3) or settle as `crashed`
-with `stale: true, errored: true`. Readers keep the last good value throughout
-because a crash makes the value stale rather than empty.
+The call `proc(self, args)` sits inside the loop's `try`: a throw while
+binding the generator's parameters (a destructuring default, say) is a crash
+like any other, not a process stuck at `pending` with an unhandled rejection.
+
+**Every exit from `running` goes through `transition(to, meta)`**: it sets the
+phase, publishes the final metadata, and ends every open async iterator. That
+is the only place the phase changes, and the loop publishes a value only while
+the phase is `running`. A body that was parked at a foreign `await` when it
+was disposed may still reach a `yield` on its way out; that value is dropped,
+so it cannot flip `stale` back to false. Iterators end through the closer
+list rather than by watching metadata, so a process that returns while
+already idle (no metadata change at all) still ends its iterators.
+
+On a throw (and only while `running`): record the error, abort the signal,
+remove queued calls from the mailbox, reject every pending call, and dispose
+the crashed instance's children. Then either restart (`restarts < maxRestarts`,
+default 3) or settle as `crashed` with `stale: true, errored: true`. Readers
+keep the last good value throughout because a crash makes the value stale
+rather than empty. The phase, not the error value, says whether the process
+crashed, so `throw undefined` is a crash like any other.
 
 Restart is the Erlang position: re-run from the **init args**, not from the
 crashed state. The mailbox survives, so queued casts replay into the fresh
-instance. Pending calls do not replay because they already rejected.
+instance. Calls do not: every call is registered in `pendingCalls` under its
+message object, and on a crash the mailbox is filtered against that map before
+the calls reject, so a call queued behind the crash is never executed by the
+restarted instance (`process.lifecycle.test.ts`).
+
+### Observing crashes
+
+`onProcessError(handler)` (exported from the package root) installs one global
+handler that sees every crash, including those a restart recovers from, as
+`(error, name)`, where `name` is the proc's function name. It returns a remover.
+There is no default handler; without one, a crash is visible only on the handle
+(`error`, `stale`) and in rejected calls, as before. The handler runs a
+microtask after the crash, so a handler that throws surfaces as an unhandled
+rejection instead of wedging the drive loop. One slot rather than a listener
+set keeps it cheap; fan out in userland if you need more.
 
 ## Ownership
 
@@ -129,9 +167,20 @@ so the scope covers exactly the **synchronous window** of that resumption. A
 
 This is the library's sharpest edge. It is documented in the module header, in
 [concepts.md](../concepts.md), and here, and the rule is one line: **spawn
-before awaiting.** `unscoped()` is the explicit escape hatch used by the registry
+before awaiting.** `unscoped()` is the explicit escape hatch: the registry
 wraps every spawn in it so shared state is never owned by whichever caller
 happened to look it up first.
+
+**Spawns during teardown.** The one resumption the runtime extends the scope
+to is the one disposal causes by closing the mailbox. A body parked on its
+mailbox (the usual place) resumes when `close()` resolves its taker, and that
+resumption is a promise reaction outside any `step()`. Disposal therefore
+brackets the resolution with two microtasks, scope on and scope off. Microtasks
+run FIFO, so the body's resumption runs between them, and a `finally` that
+spawns before its own first `await` attaches the child to the dying process.
+`drive()` disposes it with the other children, and `asyncDispose` waits for it.
+A `finally` reached after a foreign `await` (a fetch, a timer) is not covered;
+its spawns run unowned, as with any spawn after an await.
 
 ## Dispose ordering
 
@@ -145,8 +194,9 @@ sequenceDiagram
     participant C as owned children
 
     U->>P: dispose()
-    P->>P: phase = disposed, detach from parent
-    P->>P: 1. mailbox.close()
+    P->>P: transition(disposed): meta, iterators end
+    P->>P: detach from parent
+    P->>P: 1. mailbox.close(), resume in scope
     Note over P,G: the body's for-await ends,<br/>queued calls reject
     P->>P: 2. controller.abort()
     P->>G: 3. g.return() inside step()
@@ -167,8 +217,7 @@ An operation that ignores `self.signal` and never settles will therefore block
 async disposal because cancellation is cooperative.
 
 Disposing an already-finished process still runs the teardown that is left:
-mark stale, dispose children, and end every open async iterator through
-`closers`.
+mark stale (through `transition`) and dispose children.
 
 ## The outside face
 
@@ -192,16 +241,27 @@ immediately.
 
 `Symbol.asyncIterator` returns an independent, **lossy** subscription: one
 buffered slot, overwritten by newer values, deduplicated with `Object.is`. It
-subscribes to both sources as subtree dependencies (reading the whole object,
-letting it escape), so it wakes on every yield and every lifecycle transition.
-Latest-value delivery is the default for state synchronization and is also what the wire
-host needs, because patches computed between consecutively *observed*
-snapshots always compose.
+subscribes to the value source as a subtree dependency (reading the whole
+object, letting it escape), so it wakes on every yield. Latest-value delivery
+is the default for state synchronization and is also what the wire host needs,
+because patches computed between consecutively *observed* snapshots always
+compose.
+
+The iterator is `iterate()` in `iterate.ts`, shared with `derive`. The owner
+passes a `pull` function and a set of closers; `transition` calls every closer
+when the process leaves `running`. A closer pulls once more, untracked, before
+ending, so a value yielded just before the process returned is delivered
+before `done` even if the effect flush has not run yet. An iterator opened on a
+finished process yields the last value, then `done`. Concurrent `next()` calls
+queue and settle in call order.
 
 ## Tests
 
 `process.test.ts` (lifecycle, mailbox order, `latest()` conflation, crash and
-restart, ownership, call rejection paths), `process.leaks.test.ts` (nothing
+restart, ownership, call rejection paths), `process.lifecycle.test.ts` (how a
+process ends: iterators after return and crash, queued calls across a restart,
+yields after dispose, teardown spawns, parameter-binding throws,
+`onProcessError`, mailbox depth), `process.leaks.test.ts` (nothing
 retained after disposal. This test needs `gc({ execution: 'async' })`, since plain `gc()`
 false-fails under V8 conservative stack scanning), `types.check.ts` (the
 `@ts-expect-error` lines are regression checks for the type

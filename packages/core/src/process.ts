@@ -9,14 +9,18 @@
 //   - Ownership: spawns during the synchronous window of a process resumption
 //     attach to that process and die with it. Dispose order: mailbox closes,
 //     `finally` blocks run, owned children die — in that order.
-//   - Crash: readers keep the last value with `stale: true`; pending calls
-//     REJECT; queued casts survive into the restarted instance and replay.
+//   - Crash: readers keep the last value with `stale: true`; pending calls,
+//     queued ones included, REJECT and leave the mailbox; queued casts
+//     survive into the restarted instance and replay.
+//   - Every exit from 'running' goes through `transition`; after it, yields
+//     are not published and open iterators have ended.
 //     `restart: 'on-crash'` re-runs the generator from its init args (the
 //     recovery state, Erlang position) up to `maxRestarts` times.
 //   - Bounded mailbox (`mailbox: n`): overflow drops the oldest message
 //     (a dropped call rejects), with a one-shot dev warning.
 
-import { source, effect, untracked } from './graph.ts'
+import { source, untracked } from './graph.ts'
+import { iterate, NONE } from './iterate.ts'
 import type { Json } from './reconcile.ts'
 import type { Proc, Process, Self } from './types.ts'
 
@@ -33,6 +37,42 @@ export interface SpawnOpts<T> {
 
 // ---------- mailbox ----------
 
+// FIFO with a moving head: O(1) amortized shift where Array#shift is O(n) at
+// depth. Compacts once the consumed prefix is at least half the array.
+class Fifo<T> {
+  private items: (T | undefined)[] = []
+  private head = 0
+
+  size(): number {
+    return this.items.length - this.head
+  }
+
+  push(v: T): void {
+    this.items.push(v)
+  }
+
+  peek(): T | undefined {
+    return this.items[this.head]
+  }
+
+  shift(): T {
+    const v = this.items[this.head] as T
+    this.items[this.head++] = undefined // release for gc before compaction
+    if (this.head * 2 >= this.items.length) {
+      this.items = this.items.slice(this.head)
+      this.head = 0
+    }
+    return v
+  }
+
+  drain(): T[] {
+    const rest = this.items.slice(this.head) as T[]
+    this.items = []
+    this.head = 0
+    return rest
+  }
+}
+
 interface MailboxHooks<In> {
   bound?: number
   onDrop?: (msg: In) => void
@@ -46,8 +86,8 @@ interface Taker<In> {
 }
 
 class Mailbox<In> {
-  private queue: In[] = []
-  private takers: Taker<In>[] = []
+  readonly queue = new Fifo<In>()
+  private takers = new Fifo<Taker<In>>()
   private warned = false
   private drainScheduled = false
   private hooks: MailboxHooks<In>
@@ -63,7 +103,7 @@ class Mailbox<In> {
       this.hooks.onDrop?.(msg)
       return
     }
-    const head = this.takers[0]
+    const head = this.takers.peek()
     if (head !== undefined && !head.latest) {
       this.takers.shift()
       this.hooks.onDeliver?.()
@@ -75,8 +115,8 @@ class Mailbox<In> {
     // defer delivery one microtask so same-tick casts can supersede
     if (head !== undefined) this.scheduleDrain()
     const bound = this.hooks.bound
-    if (bound !== undefined && this.queue.length > bound) {
-      const dropped = this.queue.shift() as In
+    if (bound !== undefined && this.queue.size() > bound) {
+      const dropped = this.queue.shift()
       if (!this.warned) {
         this.warned = true
         console.warn(`nonchalant: mailbox overflow (bound ${bound}) — dropping oldest message`)
@@ -90,8 +130,8 @@ class Mailbox<In> {
     this.drainScheduled = true
     Promise.resolve().then(() => {
       this.drainScheduled = false
-      const head = this.takers[0]
-      if (this.closed || this.queue.length === 0 || head === undefined || !head.latest) return
+      const head = this.takers.peek()
+      if (this.closed || this.queue.size() === 0 || head === undefined || !head.latest) return
       this.takers.shift()
       this.hooks.onDeliver?.()
       head.resolve({ value: this.drainToNewest(), done: false })
@@ -99,15 +139,15 @@ class Mailbox<In> {
   }
 
   private drainToNewest(): In {
-    const msg = this.queue[this.queue.length - 1] as In
-    for (let i = 0; i < this.queue.length - 1; i++) this.hooks.onDrop?.(this.queue[i] as In)
-    this.queue.length = 0
+    const all = this.queue.drain()
+    const msg = all.pop() as In
+    for (const dropped of all) this.hooks.onDrop?.(dropped)
     return msg
   }
 
   take(latest: boolean): Promise<IteratorResult<In>> {
-    if (this.queue.length > 0) {
-      const msg = latest ? this.drainToNewest() : (this.queue.shift() as In)
+    if (this.queue.size() > 0) {
+      const msg = latest ? this.drainToNewest() : this.queue.shift()
       this.hooks.onDeliver?.()
       return Promise.resolve({ value: msg, done: false })
     }
@@ -116,13 +156,15 @@ class Mailbox<In> {
     return new Promise((resolve) => this.takers.push({ resolve, latest }))
   }
 
-  close(): void {
+  /** `wrap` runs around the resolution of parked takers (process: resume in scope). */
+  close(wrap = (resolveTakers: () => void): void => resolveTakers()): void {
     if (this.closed) return
     this.closed = true
-    for (const taker of this.takers) taker.resolve({ value: undefined as never, done: true })
-    this.takers = []
-    for (const msg of this.queue) this.hooks.onDrop?.(msg)
-    this.queue = []
+    const takers = this.takers.drain()
+    wrap(() => {
+      for (const taker of takers) taker.resolve({ value: undefined as never, done: true })
+    })
+    for (const msg of this.queue.drain()) this.hooks.onDrop?.(msg)
   }
 }
 
@@ -166,7 +208,9 @@ interface ProcessCore {
 
 // Ambient scope, valid during the synchronous window of a process resumption
 // (body code between a resume and its next await/yield). Spawns after an
-// intervening await inside one step run unowned — spawn before awaiting.
+// intervening await inside one step run unowned — spawn before awaiting. One
+// extension: the resumption that disposal causes by closing the mailbox (see
+// disposeProcess), so a `finally` it triggers owns what it spawns.
 let currentScope: ProcessCore | null = null
 
 /** Internal (registry): run fn with ambient ownership suspended — shared
@@ -181,9 +225,27 @@ export function unscoped<T>(fn: () => T): T {
   }
 }
 
+// ---------- crash observer ----------
+
+let crashHandler: ((error: unknown, name: string) => void) | undefined
+
+/**
+ * Observe every process crash, including ones a restart recovers from: the
+ * thrown value and the proc's function name. One handler at a time; returns
+ * its remover. Without one, a crash shows only on the handle (`error`,
+ * `stale`) and in rejected calls.
+ */
+export function onProcessError(handler: (error: unknown, name: string) => void): () => void {
+  crashHandler = handler
+  return () => {
+    if (crashHandler === handler) crashHandler = undefined
+  }
+}
+
 // ---------- spawn ----------
 
 type Meta = { pending: boolean; stale: boolean; errored: boolean }
+type Phase = 'running' | 'done' | 'crashed' | 'disposed'
 
 export function spawnProcess<T, In, A>(
   proc: Proc<T, In, A>,
@@ -225,15 +287,26 @@ export function spawnProcess<T, In, A>(
     meta.publish(next)
   }
 
-  let phase: 'running' | 'done' | 'crashed' | 'disposed' = 'running'
+  let phase: Phase = 'running'
   let errorValue: unknown
   let hasValue = hasInitial
   let gen: AsyncGenerator<T> | null = null
   let controller = new AbortController()
   let restarts = 0
+  const closers = new Set<() => void>()
+
+  // Every exit from 'running' (and a finished process's move to 'disposed')
+  // goes through here: final meta, then every open iterator ends. Values
+  // publish only while 'running', so a body still unwinding after its end
+  // cannot un-stale the handle.
+  const transition = (to: Phase, patch: Partial<Meta>): void => {
+    phase = to
+    setMeta(patch)
+    for (const end of [...closers]) end()
+  }
 
   const pendingCalls = new Map<object, (err: unknown) => void>()
-  const rejectAsks = (err: unknown): void => {
+  const rejectCalls = (err: unknown): void => {
     for (const reject of pendingCalls.values()) reject(err)
     pendingCalls.clear()
   }
@@ -286,36 +359,38 @@ export function spawnProcess<T, In, A>(
   const drive = async (): Promise<void> => {
     while (true) {
       controller = new AbortController()
-      const g = proc(selfFor(mailbox, controller.signal, (msg) => mailbox.push(msg)), args)
-      gen = g
       try {
-        while (true) {
-          const r = await step(() => g.next())
-          if (r.done) {
-            if (phase === 'running') {
-              phase = 'done'
-              setMeta({ pending: false })
-            }
-            break
-          }
+        // inside the try: a throw while binding the parameters is a crash
+        const g = (gen = proc(selfFor(mailbox, controller.signal, (msg) => mailbox.push(msg)), args))
+        for (let r = await step(() => g.next()); !r.done; r = await step(() => g.next())) {
+          if (phase !== 'running') continue
           src.publish(r.value as unknown as Json)
           hasValue = true
           errorValue = undefined
           setMeta({ pending: false, stale: false, errored: false })
         }
+        if (phase === 'running') transition('done', { pending: false })
       } catch (err) {
-        if (phase !== 'disposed') {
+        if (phase === 'running') {
           errorValue = err
           controller.abort()
-          rejectAsks(err)
+          // queued calls reject with the crash and never reach a restarted
+          // instance; queued casts stay and replay
+          for (const msg of mailbox.queue.drain()) {
+            if (!pendingCalls.has(msg as object)) mailbox.queue.push(msg)
+          }
+          rejectCalls(err)
           disposeChildren() // the crashed instance's spawns die with it
+          // a microtask later: a throwing handler surfaces as an unhandled
+          // rejection instead of wedging this loop
+          const report = crashHandler
+          if (report) void Promise.resolve().then(() => report(err, proc.name))
           if (opts?.restart === 'on-crash' && restarts < (opts.maxRestarts ?? 3)) {
             restarts++
             setMeta({ pending: true, stale: true, errored: true })
-            continue // same mailbox: queued casts replay into the fresh instance
+            continue
           }
-          phase = 'crashed'
-          setMeta({ pending: false, stale: true, errored: true })
+          transition('crashed', { pending: false, stale: true, errored: true })
         }
       }
       break
@@ -323,11 +398,8 @@ export function spawnProcess<T, In, A>(
     // end of life, any path: generator settled (finally blocks have run)
     gen = null
     mailbox.close()
-    rejectAsks(
-      errorValue !== undefined && phase === 'crashed'
-        ? errorValue
-        : new Error(`nonchalant: process ${phase === 'disposed' ? 'disposed' : 'ended'}`),
-    )
+    // left: calls a body received and never answered (none after a crash)
+    rejectCalls(new Error(`nonchalant: process ${phase === 'disposed' ? 'disposed' : 'ended'}`))
     disposeChildren() // owned children die last: mailbox, then finally blocks, then children
     await Promise.all([...childSettlements])
     if (parent !== null) parent.children.delete(core)
@@ -335,85 +407,32 @@ export function spawnProcess<T, In, A>(
   }
 
   const disposeProcess = (): void => {
-    if (phase === 'disposed' || phase === 'done' || phase === 'crashed') {
-      if (phase !== 'disposed') {
-        phase = 'disposed'
-        setMeta({ stale: true })
-      }
+    if (phase !== 'running') {
+      if (phase !== 'disposed') transition('disposed', { stale: true })
       disposeChildren()
-      for (const finish of [...closers]) finish()
       return
     }
-    phase = 'disposed'
+    transition('disposed', { pending: false, stale: true })
     if (parent !== null) parent.children.delete(core)
-    mailbox.close() // 1. mailbox closes: body's `for await` ends, queued calls reject
+    // 1. mailbox closes: body's `for await` ends, queued calls reject. A body
+    // parked there resumes in this process's scope, so a `finally` that
+    // disposal triggers owns its spawns (drive() disposes them last).
+    // Microtasks run FIFO: scope on, the body's resumption, scope off.
+    mailbox.close((resolveTakers) => {
+      void Promise.resolve().then(() => { currentScope = core })
+      resolveTakers()
+      void Promise.resolve().then(() => { currentScope = null })
+    })
     controller.abort()
-    const g = gen
-    if (g !== null) void step(() => g.return(undefined as never)).catch(() => {}) // 2. finally blocks run; 3. drive() then disposes children
-    setMeta({ pending: false, stale: true })
-    for (const finish of [...closers]) finish()
+    const g = gen!
+    void step(() => g.return(undefined as never)).catch(() => {}) // 2. finally blocks run; 3. drive() then disposes children
   }
+
+  completion = drive()
 
   // ---------- outside face ----------
 
   const read = (): T | undefined => src() as unknown as T | undefined
-
-  const closers = new Set<() => void>()
-
-  completion = drive()
-
-  const asyncIterator = (): AsyncIterator<T> => {
-    let buffered = false
-    let latest: T | undefined
-    let emitted = false
-    let ended = false
-    let wake: (() => void) | undefined
-    const signalWake = (): void => {
-      const w = wake
-      wake = undefined
-      if (w) w()
-    }
-    const stop = effect(() => {
-      void meta() // subtree dep: wakes on lifecycle transitions
-      void src() // subtree dep: wakes on every yield
-      if (hasValue) {
-        const v = untracked(() => src()) as unknown as T
-        if (!emitted || !Object.is(v, latest)) {
-          latest = v
-          emitted = true
-          buffered = true
-        }
-      }
-      if (phase !== 'running') ended = true
-      signalWake()
-    })
-    const finish = (): void => {
-      if (!ended) ended = true
-      stop()
-      closers.delete(finish)
-      signalWake()
-    }
-    closers.add(finish)
-    return {
-      async next(): Promise<IteratorResult<T>> {
-        while (!buffered && !ended) {
-          await new Promise<void>((resolve) => {
-            wake = resolve
-          })
-        }
-        if (buffered) {
-          buffered = false
-          return { value: latest as T, done: false }
-        }
-        finish()
-        return { value: undefined as never, done: true }
-      },
-      async return(): Promise<IteratorResult<T>> {
-        finish()
-        return { value: undefined as never, done: true }
-      },
-    }
-  }
 
   const call = (msg: Record<string, unknown>): Promise<unknown> =>
     new Promise((resolve, reject) => {
@@ -445,7 +464,17 @@ export function spawnProcess<T, In, A>(
   const p = read as unknown as Record<PropertyKey, unknown>
   p['cast'] = (msg: In): void => mailbox.push(msg)
   p['call'] = call
-  p[Symbol.asyncIterator] = asyncIterator
+  // the value source is a subtree dep (every yield wakes); the raw snapshot
+  // is read untracked so iteration hands out values, not tracking proxies
+  p[Symbol.asyncIterator] = (): AsyncIterator<T> =>
+    iterate(
+      () => {
+        void src()
+        return hasValue ? (untracked(src) as unknown as T) : NONE
+      },
+      closers,
+      phase === 'running',
+    )
   p[Symbol.dispose] = disposeProcess
   p[Symbol.asyncDispose] = async (): Promise<void> => {
     disposeProcess()
