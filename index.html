@@ -24,6 +24,7 @@
   <a href="#updates">Updates</a>
   <a href="#wire">The wire</a>
   <a href="#backend">On the server</a>
+  <a href="#tools">React &amp; inspector</a>
   <a href="#more">Read more</a>
   <span class="spacer"></span>
   <a href="https://github.com/twfarland/nonchalant">GitHub</a>
@@ -35,7 +36,7 @@
 </div>
 
 <header class="mast" id="top">
-  <div class="eyebrow">TypeScript &nbsp;·&nbsp; MIT &nbsp;·&nbsp; core + DOM under 13&nbsp;KB gzipped</div>
+  <div class="eyebrow">TypeScript &nbsp;·&nbsp; MIT &nbsp;·&nbsp; core + DOM under 14&nbsp;KB gzipped</div>
   <h1>Nonchalant</h1>
   <p class="deck">Build application state with processes that receive messages in order and publish snapshots. Run the same process in a browser, a worker, or on a server.</p>
   <hr class="mast-rule">
@@ -108,11 +109,19 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
     </div>
     <div class="card">
       <h4>@nonchalant/durable</h4>
-      <p>Durable process support built from message and effect journals plus a seven-method storage interface.</p>
+      <p>Durable process support built from message and effect journals, durable timers and a scheduler, and an eight-method storage interface with a conformance suite for adapters.</p>
     </div>
     <div class="card">
       <h4>@nonchalant/host</h4>
-      <p>A Node WebSocket host with origin checks, handshake authorization, per-connection scope, and connection limits.</p>
+      <p>A Node WebSocket host with origin checks, handshake authorization, per-connection scope, message screening, and rate, watch, and buffer limits.</p>
+    </div>
+    <div class="card">
+      <h4>@nonchalant/react</h4>
+      <p>Five hooks for rendering processes with React. A component re-renders only when the part it read changes.</p>
+    </div>
+    <div class="card">
+      <h4>@nonchalant/inspect</h4>
+      <p>A recorder and panel for the process tree, a timeline of messages and yields, and past states.</p>
     </div>
   </div>
 </section>
@@ -248,10 +257,10 @@ expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
 
-  <p>Mario ports the physics from the classic <a href="https://elm-lang.org/examples/mario">Elm example</a>. The process stores the current arrow-key state, while only animation ticks advance the world. Holding a key therefore cannot update the physics twice in one frame. The view yields once; later frames update two attribute bindings. CI verifies one view yield, no more than three DOM writes per frame, and no node replacement.</p>
+  <p>Mario ports the physics from the classic <a href="https://elm-lang.org/examples/mario">Elm example</a>. The process stores the current arrow-key state, while only animation ticks advance the world. Holding a key therefore cannot update the physics twice in one frame. The view yields once; later frames update two attribute bindings. CI verifies one view yield, at most two DOM writes in the busiest frame, and no node replacement.</p>
 
   <div class="note">
-    <b>More examples.</b> The <a href="./examples/">example gallery</a> includes TodoMVC, code-split routing, undo and redo through function composition, a query cache with write-through mutations, canvas and DOM renderers driven by the same process, the seven GUIs, and a larger Mario demo. All but the chat example run entirely in the browser; chat uses a local WebSocket host.
+    <b>More examples.</b> The <a href="./examples/">example gallery</a> includes TodoMVC, code-split routing, undo and redo through function composition, a query cache with write-through mutations, canvas and DOM renderers driven by the same process, the seven GUIs, a larger Mario demo, and the js-framework-benchmark app. All but the chat example run entirely in the browser; chat uses a local WebSocket host.
   </div>
 </section>
 
@@ -276,8 +285,9 @@ yield s                                     // diffed → only /total readers wa
     <tbody>
       <tr><td>1 changed row in 10,000 diffs in ≤ 100 µs</td><td><code>reconcile.perf.test.ts</code></td></tr>
       <tr><td>One changed label in a 50-row list is one DOM write</td><td><code>dom.test.ts</code></td></tr>
-      <tr><td>A 60 fps game: 1 view yield, ≤ 2 DOM writes per frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
-      <tr><td>core ≤ 8 KB gzip, core + DOM ≤ 13 KB, wire ≤ 9.5 KB</td><td><code>size.test.ts</code></td></tr>
+      <tr><td>A 60 fps game: 1 view yield, at most 2 DOM writes in any frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
+      <tr><td>1,000 keyed rows: swap is exactly 2 moves; select writes exactly 2 class attributes; appending a row inserts 1, rebinds the 1,000 existing bindings in place with 0 re-created, and writes to no existing row; update every 10th is exactly 100 text writes</td><td><code>bench.test.ts</code></td></tr>
+      <tr><td>core ≤ 8.3 KB gzip, core + DOM ≤ 13.7 KB, wire ≤ 9.6 KB, durable ≤ 2.4 KB</td><td><code>size.test.ts</code></td></tr>
       <tr><td>Nothing retained after dispose</td><td><code>process.leaks.test.ts</code></td></tr>
     </tbody>
   </table>
@@ -313,7 +323,24 @@ const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // 
 
   <p>The wire carries patches made from plain data, not markup or executable code. Rendering and local interaction remain on the client, and payload size follows the size of the state change rather than the page. Other languages can implement a compatible host using the conformance vectors in <code>packages/wire/spec/</code>. After reconnecting, the client repeats its lookups and receives a full snapshot. That snapshot is compared with the retained value, so unchanged paths do not notify their readers.</p>
 
-  <p>Remote state comes with constraints. Values must be JSON-shaped; a <code>Date</code> or class instance is treated as an atomic value and cannot survive a remote lookup. Calls may fail or arrive late. The published schema limits which names are available, but it does not authenticate users. Authorization must be enforced by the host and the processes. In return, the application can share one implementation of its state across local and remote use.</p>
+  <p>Remote state comes with constraints. Values must be JSON-shaped; a <code>Date</code> or class instance is treated as an atomic value and cannot survive a remote lookup. Calls may fail or arrive late. The published schema limits which names are available, but it does not authenticate users. Authorization is enforced by the host and the processes; the table below lists what the host provides. In return, the application can share one implementation of its state across local and remote use.</p>
+
+  <p>The Node host is open by default so local examples need no setup, and every guard is an option a deployment sets:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Host option</th><th>What it stops</th></tr></thead>
+    <tbody>
+      <tr><td><code>allowedOrigins</code>, <code>authorize</code></td><td>Other websites opening a socket with a visitor's cookies, and connections without a valid credential.</td></tr>
+      <tr><td><code>scope</code></td><td>A client naming another user's data. The gateway it returns decides which processes a connection reaches, and can supply their arguments itself.</td></tr>
+      <tr><td><code>admit</code></td><td>Malformed or forged messages. It screens every cast and call before delivery and can rebuild the message; a throw counts as a refusal.</td></tr>
+      <tr><td><code>principal</code></td><td>One connection's call ids colliding with another's. Durable call ids are namespaced by the principal, so a retry from the same user lands on the same answer.</td></tr>
+      <tr><td><code>lookupRate</code>, <code>maxWatchesPerConnection</code></td><td>A client filling the registry by looking up one name with thousands of different arguments.</td></tr>
+      <tr><td><code>totalLookupRate</code>, <code>maxEntries</code></td><td>Many connections together doing the same: a lookup budget shared by all of them, and a registry cap that disposes the least recently used entries nobody is watching.</td></tr>
+      <tr><td><code>maxBufferedBytes</code>, <code>heartbeatMs</code>, <code>maxPayloadBytes</code></td><td>Memory growth from a client that stops reading, half-open sockets, and oversized frames.</td></tr>
+    </tbody>
+  </table>
+  </div>
 
   <div class="note"><b>Running the hosted demos.</b> Start the chat room or shared cart with <code>pnpm chat-server</code> or <code>pnpm cart-server</code>, then open its page through <code>pnpm dev</code>. The shared cart can also keep its state in the tab; a commented line switches between local and hosted modes. Read <a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a> before exposing a host to the internet. It covers origin checks, authorization, per-connection scope, and limits you must configure.</div>
 
@@ -426,7 +453,17 @@ const receipt = await d.call('reserve', (callId) =>
 
   <p>This prevents a retry from repeating completed work. Calls with the same ID share one result, callers can recover a response after restarting, and a callee does not repeat a message after recording its answer.</p>
 
-  <p>Storage is defined by a seven-method <strong>port</strong>. It requires no base class or registration, and the durable wrapper does not depend on a particular database. This repository includes an in-memory adapter as the reference implementation and as the target of the crash-consistency tests. Production database adapters can live with the corresponding database drivers.</p>
+  <p>Storage is defined by an eight-method <strong>port</strong>. It requires no base class or registration, and the durable wrapper does not depend on a particular database. Every write carries an epoch, so a stale activation of the same key is fenced out instead of overwriting a newer one. The package includes an in-memory adapter as the reference implementation and as the target of the crash-consistency tests. An adapter for a real database certifies itself by running <code>@nonchalant/durable/conformance</code>, the storage contract as a test suite. <code>examples/durable-sqlite</code> does exactly that for a store on Node's built-in <code>node:sqlite</code>, then crashes a process mid-message, reopens the file, and checks that the completed charge is not repeated.</p>
+
+  <p><strong>Timers survive restarts too.</strong> <code>d.sleep(name, ms)</code> journals its deadline, and the same write tells the store when the key next needs waking. If the process has been evicted or its host restarted by then, a scheduler asks the store which keys are due and looks each one up:</p>
+
+<pre><code data-ts>
+await d.sleep('cool-off', 3_600_000)   // the deadline is journaled, not the timer
+
+const timers = scheduler({ store, wake: (id) =&gt; orders.lookup('order', { id }) })
+</code></pre>
+
+  <p>The lookup activates the key, which replays its log, finds the deadline passed, and carries on. <code>due</code> leases each key it returns, so two schedulers on one store do not both wake it, and a wake whose activation dies before committing comes due again. <code>packages/durable/test/scheduler.test.ts</code> covers each case with fake timers.</p>
 
   <div class="scroll">
   <table>
@@ -439,7 +476,7 @@ const receipt = await d.call('reserve', (callId) =>
   </table>
   </div>
 
-  <p>The package does not include worker fleet management, scheduling, cron, configurable retry policies, or an execution console. A mailbox has one writer only while a single node owns its name. If several hosts may activate the same ID, the storage layer needs a lease to coordinate them.</p>
+  <p>The package does not include worker fleet management, cron, configurable retry policies beyond <code>restart</code> and <code>maxAttempts</code>, or an execution console; its scheduler wakes journaled deadlines and nothing else. Fencing keeps the log correct when two hosts activate the same ID, but deciding which host should own it (a registry per node, a lease, a consistent hash) stays outside the library.</p>
 
   <h4>Messaging and queues</h4>
 
@@ -516,8 +553,37 @@ for await (const msg of self) {
   <p>The test suite exercises these workflows without a DOM or network. In <code>examples/agent/agent.test.ts</code> and <code>examples/multi-agent/multi-agent.test.ts</code>, the model is passed as an argument, tools run as processes, and yielded states form the execution record. Tests in <code>packages/durable</code> generate crash schedules and verify that recovered workflows reach the same state as uninterrupted runs.</p>
 </section>
 
+<section id="tools">
+  <div class="sec-head"><span class="sec-num">08</span><h2>From React, and from the inside</h2></div>
+
+  <h3>Keeping React as the renderer</h3>
+
+  <p><code>@nonchalant/react</code> lets a React application use processes for the state underneath its components: a store addressed by name, a process in a worker or on a server, a durable agent. The processes do not change. Five hooks cover it: <code>useProcess</code> reads a whole value, <code>useDerive</code> reads part of one, <code>useProcessMeta</code> reads <code>pending</code>, <code>stale</code>, and <code>error</code>, <code>useSpawn</code> ties a process to a component's lifetime, and <code>useLookup</code> keeps a registry entry alive while mounted.</p>
+
+<pre><code data-ts>
+const Row = memo(function Row({ at }: { at: number }): ReactNode {
+  const label = useDerive(() =&gt; list().rows[at]?.label, [at])   // records the one path it read
+  return &lt;li&gt;{label}&lt;/li&gt;
+})
+</code></pre>
+
+  <p><code>useDerive</code> uses the same path tracking as the DOM bindings, so changing one label in a thousand rows re-renders one <code>Row</code> and not the list. <code>packages/react/test/hooks.test.tsx</code> asserts that with render counts, and counts exact starts and <code>finally</code> runs for <code>useSpawn</code> under StrictMode. The package, with the core it reaches and React excluded, stays under 7.1 KB gzipped (<code>size.test.ts</code>). The <a href="./examples/react-agent/">React agent console</a> renders the agent demo's processes, imported unchanged.</p>
+
+  <h3>Seeing inside a process</h3>
+
+  <p>A process keeps its state in <code>let</code> variables inside a suspended generator, where browser devtools cannot see it. <code>@nonchalant/inspect</code> records every process event as it happens: spawns, casts, calls and replies, yields, crashes, restarts, and exits. Its panel shows the tree of live processes nested by ownership, a timeline of events, and the state of any process at any recorded moment.</p>
+
+<pre><code data-ts>
+import { mountInspector } from '@nonchalant/inspect'
+
+const panel = mountInspector(document.getElementById('inspector')!)   // before the processes it should see
+</code></pre>
+
+  <p>Yields are recorded as patches, the same ones the wire sends, so going back in time applies stored patches to a process's starting state instead of keeping copies. A property test checks that the state reconstructed at every retained yield equals the state the process yielded there (<code>record.test.ts</code>). Core reports events through one hook, <code>instrument(sink)</code>; with no sink installed, a yield is diffed once and no event object is built (<code>instrument.test.ts</code>), and the hook costs core about 220 bytes (<code>size.test.ts</code>). Add <code>?inspect</code> to the <a href="./examples/todomvc/?inspect">TodoMVC</a> or <a href="./examples/agent/?inspect">agent</a> example to dock the panel under the page.</p>
+</section>
+
 <section id="more">
-  <div class="sec-head"><span class="sec-num">08</span><h2>Read more</h2></div>
+  <div class="sec-head"><span class="sec-num">09</span><h2>Read more</h2></div>
 
   <p>This page gives an overview. The documentation covers each topic in more detail and links performance and update-granularity claims to the tests that enforce them.</p>
 
@@ -527,12 +593,16 @@ for await (const msg of self) {
     <tbody>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/tutorial.md">Thinking in processes</a></td><td>A tutorial that builds a cart locally, then moves it to a server.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/concepts.md">Concepts</a></td><td>Reference material for each concept, its contract, and its tests.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/api.md">API reference</a></td><td>Every export of every package, with its signature.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/errors.md">Error handling</a></td><td>Crashes, stale values, call rejections, and render and wire failures.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/recipes.md">Recipes</a></td><td>Typeahead, forms, query cache, routing, undo/redo, drag, durable processes.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/testing.md">Testing</a></td><td>How to drive generators directly and test sequences of messages and yields.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/migration.md">Migration</a></td><td>Guidance for React, Solid, and LiveView users, including the tradeoffs.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/server.md">Processes on the server</a></td><td>Virtual actors, durable execution, agent loops, and their current limits.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a></td><td>Origins, authorization, connection scoping, deployment boundaries.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/PROTOCOL.md">Protocol</a></td><td>The eight-op data wire and its conformance rules.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/react.md">Using it from React</a></td><td>The five hooks, StrictMode and ownership, and render-count guarantees.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/inspect.md">The inspector</a></td><td>The instrumentation hook, the recorder, time travel, and the panel.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/server.md">Processes on the server</a></td><td>Virtual actors, durable execution, timers and the scheduler, the storage port, agent loops, and their current limits.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a></td><td>Origins, authorization, connection scoping, message screening, principals, and connection limits.</td></tr>
+      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/PROTOCOL.md">Protocol</a></td><td>The eight-operation data wire (revision 3) and its conformance rules.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/internals/README.md">Internals</a></td><td>Contributor notes on the core implementation and its invariants.</td></tr>
     </tbody>
   </table>
