@@ -61,14 +61,15 @@ Notes:
   because the delegated call is answered from its record. Drop the budget to
   watch the pipeline stop at *out of budget* instead of half-finishing.
 - **messaging:** Publish to a topic and watch the subscription processes
-  processes) update; push jobs and watch two workers share them. Press *kill*
-  while a worker holds a job: its lease expires and the other one finishes it,
-  to see at-least-once delivery in practice.
+  update; push jobs and watch two workers share them. Press *kill* while a
+  worker holds a job: its lease expires and the other one finishes it, to see
+  at-least-once delivery in practice.
 - **chat:** Run `pnpm chat-server`, then open the page in several tabs or
-  browsers) and hop between rooms. Each room is one server-side process,
-  started by the first lookup and evicted when idle. One Node process can hold
-  thousands of them. Kill the server mid-conversation to watch stale reads
-  and the reconnect.
+  browsers and hop between rooms. Each room is one server-side process,
+  started by the first lookup and evicted when idle. An idle room is about
+  7 KB of heap (`test/room-memory.test.ts` holds it under 8 KB), so one Node
+  process holds thousands of them. Kill the server mid-conversation to watch
+  stale reads and the reconnect.
 - **shared-cart:** The default version runs by itself. To use the server, run
   `pnpm cart-server` in another terminal, then swap the one commented line at
   the top of `shared-cart/main.ts`.

@@ -9,7 +9,7 @@ to the full runtime, with examples from the repository.
 Keep independent calculations in pure functions. Physics steps, filters, and
 formatters can then use direct input/output tests.
 
-```ts
+```ts nocheck
 expect(step(1, { x: 1, y: 0 }, initialMario)).toEqual({ ... })
 expect(visible({ todos, filter: 'active' })).toHaveLength(1)
 ```
@@ -23,6 +23,14 @@ Seen in: `examples/mario/mario.golden.test.ts` (a whole jump arc),
 async generator directly. This level does not require `spawn`, the runtime,
 timers, or a DOM:
 
+<!-- ts-prelude
+import { channel } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
+import { expect } from 'vitest'
+type Msg = Cast<{ type: 'add'; title: string }> | Cast<{ type: 'toggle'; id: number }>
+type Todo = { id: number; title: string; done: boolean }
+declare const todosProc: Proc<{ todos: Todo[] }, Msg, void>
+-->
 ```ts
 const self = channel<Msg>()
 self.cast({ type: 'add', title: 'milk' })   // script the mailbox up front
@@ -83,20 +91,37 @@ sharing, granularity.
 
 ## Views are data
 
-A view function returns a `VNode` tree made from plain objects. Tests can call
-the view, inspect the tree, and invoke handlers without creating a DOM:
+A view function returns a `VNode` tree made from plain objects:
+`{ tag, attrs, children }`. Tests can call the view, inspect the tree, and
+invoke handlers without creating a DOM. A child is typed as `Slot`, since a
+slot may also hold a string, a thunk, or a process, so a test narrows the one
+it expects:
 
 ```ts
-const tree = TodoItem(store, { id: 1, title: 'milk', done: false })
-const checkbox = tree.children[0].children[0]           // typed plain data
-checkbox.attrs.onchange()                               // handlers are closures
-await tick()                                            // the cast reaches the mailbox
-expect(store().todos[0]!.done).toBe(true)               // the store moved
+import { cell } from '@nonchalant/core'
+import type { Process, VNode } from '@nonchalant/core'
+import { input, label } from '@nonchalant/dom/tags'
+import { expect } from 'vitest'
+
+function Toggle(done: Process<boolean, boolean>): VNode {
+  return label({},
+    input({ type: 'checkbox', checked: done, onchange: () => done.cast(!done()) }),
+    'done')
+}
+
+const done = cell(false)
+const box = Toggle(done).children[0] as VNode       // plain data; this slot is a VNode
+expect(box.tag).toBe('input')
+
+const onchange = box.attrs['onchange'] as () => void
+onchange()                                          // handlers are closures
+await new Promise((r) => setTimeout(r, 0))          // the cast reaches the mailbox
+expect(done()).toBe(true)                           // the process moved
 ```
 
 The handler is a closure over `cast`, so the assertion is about the state
-process, not the tree: one `await tick()` (`new Promise((r) => setTimeout(r, 0))`)
-lets the mailbox turn before the store publishes its next value.
+process, not the tree: one macrotask turn lets the mailbox deliver before the
+process publishes its next value.
 
 When you do want real nodes, happy-dom runs the sink fast, and the DOM-write
 spies in `packages/dom/test/dom.test.ts` show how to assert granularity

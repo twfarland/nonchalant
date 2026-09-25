@@ -111,7 +111,7 @@ instance. Pending calls do not replay because they already rejected.
 `currentScope` is an ambient module-level pointer, set by `step()` only around
 a resumption:
 
-```ts
+```ts nocheck
 const step = <R>(fn: () => Promise<R>): Promise<R> => {
   const prev = currentScope
   currentScope = core
@@ -174,7 +174,7 @@ mark stale, dispose children, and end every open async iterator through
 
 The handle *is* the read function, with everything else installed onto it:
 
-```ts
+```ts nocheck
 const read = (): T | undefined => src() as unknown as T | undefined
 Object.defineProperties(read, { pending: …, stale: …, error: … })
 p['cast'] = …; p['call'] = …

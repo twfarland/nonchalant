@@ -57,8 +57,9 @@ state changes notify bindings according to the paths they read.
 
 - **Views execute once.** A view returns a tree containing live bindings.
   Updates do not call the view again, so there is no need to stabilize callbacks
-  or maintain dependency arrays. Keyed lists and replaceable regions handle
-  changes to structure.
+  or maintain dependency arrays. Structure changes through keyed lists and
+  replaceable regions: a binding that returns a subtree, which the renderer
+  patches or swaps in place without touching the rest of the tree.
 
 - **Updates are limited to affected readers.** Write standard immutable updates
   and yield the next snapshot. Nonchalant compares it with the previous value
@@ -66,7 +67,7 @@ state changes notify bindings according to the paths they read.
   changing one label in a 50-row list performs one DOM write. It also limits the
   60 fps game demo to one view yield and three DOM writes per frame.
 
-```ts
+```ts nocheck
 s = { ...s, total: s.total + item.price }   // update immutably
 yield s                                     // diffed → only /total readers wake;
                                             // a binding on items[3].done sleeps through it
@@ -76,7 +77,7 @@ yield s                                     // diffed → only /total readers wa
   instead of racing. `latest()` discards older queued input when only the newest
   value matters, and the abort signal cancels work when the process ends.
 
-```ts
+```ts nocheck
 for await (const { q } of self.latest()) {          // queued keystrokes conflate to the newest
   results = await api.search(q, { signal: self.signal })
   yield { q, results }
@@ -88,6 +89,12 @@ for await (const { q } of self.latest()) {          // queued keystrokes conflat
   and rejects if the process crashes. TypeScript prevents a `Call` from being
   passed to `cast` and a `Cast` from being passed to `call`.
 
+<!-- ts-prelude
+import type { Call, Cast, Process } from '@nonchalant/core'
+type Item = { name: string; price: number }
+type Cart = { items: Item[]; total: number }
+declare const cart: Process<Cart, CartMsg>
+-->
 ```ts
 type CartMsg =
   | Cast<{ type: 'add'; item: Item }>                             // a cast
@@ -102,6 +109,11 @@ const res = await cart.call({ type: 'checkout' })   // res is typed; crash = rej
   without changing its interface. Remote use still requires JSON-compatible
   values, network failure handling, and authentication on deployed hosts.
 
+<!-- ts-prelude
+import { define, registry } from '@nonchalant/core'
+import type { Proc } from '@nonchalant/core'
+declare const cart: Proc<{ total: number }, never, void>
+-->
 ```ts
 const shop = registry({ cart: define(cart) })                       // this tab
 // const shop = connect<Shop>(portTransport(new Worker(url)))       // another thread
@@ -113,6 +125,13 @@ const shop = registry({ cart: define(cart) })                       // this tab
   `channel()`, so tests can drive the generator without starting the runtime,
   installing fake timers, or creating a DOM ([docs/testing.md](docs/testing.md)).
 
+<!-- ts-prelude
+import { channel } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
+import { expect } from 'vitest'
+type Msg = Cast<{ type: 'add'; title: string }>
+declare const todosProc: Proc<{ todos: { title: string }[] }, Msg, void>
+-->
 ```ts
 const self = channel<Msg>()                  // a scripted mailbox
 self.cast({ type: 'add', title: 'milk' })
@@ -125,6 +144,17 @@ expect((await it.next()).value.todos).toHaveLength(1)
   host against the conformance vectors in `packages/wire/spec/`.
 - **Small, with enforced limits.** CI keeps core at or below 8 KB gzipped and
   core + DOM + tags at or below 13 KB gzipped.
+- **Text is never parsed as HTML.** The DOM renderer creates elements and text
+  nodes directly and sets attributes with `setAttribute`, so markup in
+  application data stays inert text. That closes markup injection; it does not
+  vet URLs, so a user-supplied `href` still deserves validation.
+
+## Not yet
+
+- **No server-side rendering or hydration.** The DOM renderer builds every
+  node in the browser. A server runs processes and sends state, not HTML.
+- **Not published to npm.** The packages build and pack (`pnpm verify:pack`),
+  but the scope is unclaimed; use the repository directly for now.
 
 ## Compared to what you know
 
@@ -147,7 +177,7 @@ explicit thunks for reactive expressions, and no BEAM-style preemption.
 pnpm install
 pnpm dev         # the doc site at /, the example gallery at /examples/
 pnpm test        # the whole suite, including the perf/size/granularity budgets
-pnpm check       # strict TypeScript across packages, examples, and the site
+pnpm check       # strict TypeScript across packages, examples, the site, and doc samples
 pnpm build:site  # the static site, as GitHub Pages publishes it
 ```
 
@@ -157,6 +187,8 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 |---|---|
 | [Thinking in processes](docs/tutorial.md) | build a cart locally, then move it to a server |
 | [Concepts](docs/concepts.md) | the reference: each concept, its contract, its tests |
+| [API reference](docs/api.md) | every export of every package, with its signature |
+| [Error handling](docs/errors.md) | crashes, stale values, call rejections, render and wire failures |
 | [Recipes](docs/recipes.md) | typeahead, forms, query cache, routing, undo/redo, drag, durability |
 | [Testing](docs/testing.md) | driving generators directly, transcripts, views as data |
 | [Migration](docs/migration.md) | coming from React, Solid, or LiveView |
@@ -165,6 +197,7 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 | [Protocol](docs/PROTOCOL.md) | the data wire and conformance rules |
 | [Examples](examples/README.md) | the demo ladder |
 | [Internals](docs/internals/README.md) | contributor notes: how core is built, and its invariants |
+| [Contributing](CONTRIBUTING.md) | commands, budgets, house style; [security reports](SECURITY.md) |
 
 ## Packages
 

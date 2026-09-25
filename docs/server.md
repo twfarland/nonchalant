@@ -31,7 +31,7 @@ timer expires.
 It does not add a runtime or scheduler. `durable(proc, opts)` returns a regular
 `Proc` that can be registered, accessed through the wire, and bound to a view.
 
-```ts
+```ts nocheck
 import { durable, memoryStore } from '@nonchalant/durable'
 
 const orders = registry({
@@ -42,7 +42,7 @@ const orders = registry({
 The process inside is written the way every process in this repo is written,
 except that its effects go through `step`:
 
-```ts
+```ts nocheck
 const order: DurableProc<Order, OrderMsg, { id: string }> = async function* (self, args, d) {
   let s: Order = d.restored ?? { status: 'new', charged: 0 }   // the last committed state
   yield s
@@ -93,7 +93,7 @@ mailbox with acknowledgement behavior without changing the process code.
 Calls into durable processes use a `callId`. The response is recorded under
 that ID, and retries with the same ID receive the recorded response:
 
-```ts
+```ts nocheck
 // the caller's side: journaled, and the id is derived from (key, message, name)
 // so a replay calls with the same one
 const receipt = await d.call('reserve', (callId) =>
@@ -146,7 +146,7 @@ tools, and a page bound to their state.
 observed, and the registry makes them available by name. A tool can also hold a
 request until a person responds:
 
-```ts
+```ts nocheck
 // the approval tool holds the reply until somebody decides
 for await (const msg of self) {
   switch (msg.type) {
@@ -189,7 +189,7 @@ Backends commonly use pub/sub systems and work queues. Both can sit behind
 ports. `examples/messaging` defines these interfaces and provides in-memory
 adapters:
 
-```ts
+```ts nocheck
 export interface Bus {
   publish(topic: string, event: Json): Promise<void>
   subscribe(topic: string, onEvent: (event: Json) => void): () => void

@@ -7,7 +7,7 @@ tracked" half of the granularity mechanism; [reconcile.md](reconcile.md) is the
 The question this module answers: *given that these paths changed, does this
 particular reader need to run again?*
 
-```ts
+```ts nocheck
 createRecorder(): Recorder            // wraps snapshots for one reader run
 recorder.wrap(snapshot): Json         // a recording proxy
 recorder.finalize(): PathTree         // what the run touched
