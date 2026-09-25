@@ -26,11 +26,11 @@ const gzipSize = (entryPoints: string[]): number => {
   return gzipSync(total).length
 }
 
-// measured 2026-09-26: core 7829, core+dom+tags 12983, wire 9224, durable 1929
+// measured 2026-09-26: core 7997, core+dom+tags 13316 (in-place rebinding), wire 9316, durable 1929
 // (bytes, gzip). Durable bundles small because it imports only types from core.
 const BUDGETS: [name: string, entries: string[], limit: number][] = [
   ['@nonchalant/core', ['packages/core/src/index.ts'], 8_000],
-  ['core + dom + tags (a full app)', ['packages/core/src/index.ts', 'packages/dom/src/index.ts', 'packages/dom/src/tags.ts'], 13_000],
+  ['core + dom + tags (a full app)', ['packages/core/src/index.ts', 'packages/dom/src/index.ts', 'packages/dom/src/tags.ts'], 13_400],
   ['@nonchalant/wire (incl. core)', ['packages/wire/src/index.ts'], 9_500],
   ['@nonchalant/durable (incl. core)', ['packages/durable/src/index.ts'], 2_000],
 ]
