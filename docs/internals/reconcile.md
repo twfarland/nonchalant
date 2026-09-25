@@ -132,7 +132,10 @@ most one op.
 ## Budget
 
 1 change in a 10,000-item list must diff in ≤ 100 µs, asserted in
-`packages/core/test/reconcile.perf.test.ts`. It is a CI assertion, not a
+`packages/core/test/reconcile.perf.test.ts`. The figure is the best of five
+round medians of 200 runs each, which keeps it stable on shared CI runners
+without timing anything other than real runs. `RECONCILE_BUDGET_US` can
+tighten the budget but not loosen it. It is a CI assertion, not a
 guideline. Tighten it if you make the diff faster; do not loosen it to make a
 change fit.
 
