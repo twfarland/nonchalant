@@ -351,7 +351,7 @@ describe('client lifecycle edges', () => {
     link.reconnect()
     await until(() => r()?.lines.length === 2)
     expect(r()?.lines.map((l) => l.text)).toStrictEqual(['one', 'two'])
-    expect(reg.lookup('room')().lines).toHaveLength(2) // delivered exactly once
+    expect(reg.lookup('room')()?.lines).toHaveLength(2) // delivered exactly once
     teardown()
   })
 
