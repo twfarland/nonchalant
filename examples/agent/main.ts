@@ -8,6 +8,7 @@
 // new one, and it rehydrates from the journal — mid-question if that is where
 // it was.
 
+import '../inspector/enable.ts'
 import { cell, define, derive, registry } from '@nonchalant/core'
 import type { Process, VNode } from '@nonchalant/core'
 import { durable, memoryStore } from '@nonchalant/durable'

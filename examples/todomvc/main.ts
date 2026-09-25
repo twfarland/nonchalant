@@ -2,6 +2,7 @@
 // directly); this file is the view, built from small components. The list is
 // a keyed thunk hole: toggling patches one row, the rest of the DOM sleeps.
 
+import '../inspector/enable.ts'
 import { spawn } from '@nonchalant/core'
 import type { Process, VNode } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
