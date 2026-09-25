@@ -4,12 +4,29 @@
 // operation is held to the DOM work its change actually requires: a swap is
 // two moves, a select touches two rows, an append touches only the new row.
 
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { cell, spawn } from '@nonchalant/core'
 import type { Process } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { tbody, td, tr } from '@nonchalant/dom/tags'
 import { App, rows, selection, type Msg, type Row, type SelectMsg, type Selection } from './bench.ts'
+
+// The sink's effect lifecycle, counted at the core boundary it calls through.
+const fx = vi.hoisted(() => ({ created: 0, rebound: 0, disposed: 0 }))
+vi.mock('@nonchalant/core', async (importOriginal) => {
+  const core = await importOriginal<typeof import('@nonchalant/core')>()
+  return {
+    ...core,
+    binding: (fn: () => void) => (fx.created++, core.binding(fn)),
+    rebind: (b: Parameters<typeof core.rebind>[0], fn: () => void) => (fx.rebound++, core.rebind(b, fn)),
+    unbind: (b: Parameters<typeof core.unbind>[0]) => (fx.disposed++, core.unbind(b)),
+  }
+})
+
+const fxSince = (): (() => typeof fx) => {
+  const base = { ...fx }
+  return () => ({ created: fx.created - base.created, rebound: fx.rebound - base.rebound, disposed: fx.disposed - base.disposed })
+}
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -165,9 +182,11 @@ describe('js-framework-benchmark count budgets (1,000 rows)', () => {
     const b = await bench(1000)
     const before = b.trs()
     const c = spyDom()
+    const bindings = fxSince()
     b.store.cast({ type: 'swap' })
     await tick()
     const after = b.trs()
+    expect(bindings()).toEqual({ created: 0, rebound: 1000, disposed: 0 })
     expect(c.moves).toBe(2)
     expect(c.inserts).toBe(0)
     expect(c.removes).toBe(0)
@@ -186,9 +205,11 @@ describe('js-framework-benchmark count budgets (1,000 rows)', () => {
     await tick()
     const reads = b.reads()
     const c = spyDom()
+    const bindings = fxSince()
     labels[9]!.click()
     await tick()
     expect(b.reads() - reads).toBe(2)
+    expect(bindings()).toEqual({ created: 0, rebound: 0, disposed: 0 })
     expect(c.attrs).toBe(2)
     expect(b.trs()[5]!.className).toBe('')
     expect(b.trs()[9]!.className).toBe('danger')
@@ -198,9 +219,15 @@ describe('js-framework-benchmark count budgets (1,000 rows)', () => {
   it('append one row touches no existing row: one insert, two listeners, no writes', async () => {
     const b = await bench(1000)
     const c = spyDom()
+    const reads = b.reads()
+    const bindings = fxSince()
     b.store.cast({ type: 'append', n: 1 })
     await tick()
     expect(b.trs().length).toBe(1001)
+    // existing rows' fresh class closures swap into their bindings: no
+    // re-creation, one re-run each (1000), plus the new row's first run
+    expect(bindings()).toEqual({ created: 1, rebound: 1000, disposed: 0 })
+    expect(b.reads() - reads).toBe(1001)
     expect(c.inserts).toBe(1)
     expect(c.moves).toBe(0)
     expect(c.attrs).toBe(0)
@@ -213,8 +240,12 @@ describe('js-framework-benchmark count budgets (1,000 rows)', () => {
   it('update every 10th row is exactly 100 text writes and nothing else', async () => {
     const b = await bench(1000)
     const c = spyDom()
+    const reads = b.reads()
+    const bindings = fxSince()
     b.store.cast({ type: 'update-every-10th' })
     await tick()
+    expect(bindings()).toEqual({ created: 0, rebound: 1000, disposed: 0 })
+    expect(b.reads() - reads).toBe(1000)
     expect(c.texts).toBe(100)
     expect(c.attrs).toBe(0)
     expect(c.moves + c.inserts + c.removes).toBe(0)

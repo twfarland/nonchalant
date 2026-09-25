@@ -109,6 +109,29 @@ describe('fresh closures rebind in place', () => {
     expect(root.textContent).toBe('ab')
   })
 
+  it('a rebound attribute follows what the new closure reads, not the old one', async () => {
+    const root = container()
+    const which = cell<'a' | 'b'>('a')
+    const a = cell('A1')
+    const b = cell('B1')
+    mount(root, ul({}, () => {
+      const src = which() === 'a' ? a : b
+      return [li({ key: 1, title: () => src() })]
+    }))
+    const el = root.querySelector('li')!
+    which.cast('b')
+    await tick()
+    expect(root.querySelector('li')).toBe(el)
+    expect(el.title).toBe('B1')
+    const sets = spyMethod(Element.prototype, 'setAttribute')
+    a.cast('A2')
+    await tick()
+    expect(sets).toEqual([])
+    b.cast('B2')
+    await tick()
+    expect(el.title).toBe('B2')
+  })
+
   it('a binding re-run that yields the value already present writes nothing', async () => {
     const root = container()
     const n = cell(1)

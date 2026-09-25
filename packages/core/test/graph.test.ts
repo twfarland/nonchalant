@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
-import { source, effect, flush, untracked, type Source } from '../src/graph.ts'
+import { source, effect, flush, untracked, binding, rebind, unbind, type Binding, type Source } from '../src/graph.ts'
 import { derive } from '../src/index.ts'
 import { affects, createRecorder, type PathTree } from '../src/track.ts'
 import type { Json, Patch } from '../src/reconcile.ts'
@@ -1033,5 +1033,82 @@ describe('effect trees', () => {
     stop()
     d[Symbol.dispose]()
     expect(live).toBe(0)
+  })
+})
+
+// ---------- bindings: effects with a swappable body ----------
+
+describe('rebinding swaps an effect body without recreating it', () => {
+  const watched = (): { src: Source<{ n: number }>; log: number[] } => {
+    const log: number[] = []
+    return { src: source<{ n: number }>({ n: 1 }, { onWatchers: (c) => void log.push(c) }), log }
+  }
+
+  it('the new body runs exactly once, and a source both bodies read never loses its watcher', () => {
+    const { src, log } = watched()
+    const seen: string[] = []
+    const b = binding(() => void seen.push(`old ${src().n}`))
+    rebind(b, () => void seen.push(`new ${src().n}`))
+    expect(seen).toEqual(['old 1', 'new 1'])
+    expect(log).toEqual([1])
+    src.publish({ n: 2 })
+    flush()
+    expect(seen).toEqual(['old 1', 'new 1', 'new 2'])
+    unbind(b)
+    expect(log).toEqual([1, 0])
+  })
+
+  it('a source only the old body read is released; one only the new body reads is watched', () => {
+    const a = watched()
+    const z = watched()
+    const b = binding(() => void a.src().n)
+    rebind(b, () => void z.src().n)
+    expect(a.log).toEqual([1, 0])
+    expect(z.log).toEqual([1])
+    let runs = 0
+    rebind(b, () => {
+      runs++
+      void z.src().n
+    })
+    a.src.publish({ n: 5 })
+    flush()
+    expect(runs).toBe(1)
+    unbind(b)
+    expect(z.log).toEqual([1, 0])
+  })
+
+  it("the old body's cleanup runs before the new body", () => {
+    const log: string[] = []
+    const b = binding(() => () => void log.push('old cleanup'))
+    rebind(b, () => {
+      log.push('new run')
+      return () => void log.push('new cleanup')
+    })
+    unbind(b)
+    expect(log).toEqual(['old cleanup', 'new run', 'new cleanup'])
+  })
+
+  it('a rebind from inside its own run takes effect right after that run', () => {
+    const src = source<{ n: number }>({ n: 1 })
+    const log: string[] = []
+    const holder: { b?: Binding } = {}
+    holder.b = binding(() => {
+      const n = src().n
+      log.push(`old ${n}`)
+      if (n === 2) rebind(holder.b!, () => void log.push(`new ${src().n}`))
+    })
+    src.publish({ n: 2 })
+    flush()
+    expect(log).toEqual(['old 1', 'old 2', 'new 2'])
+    unbind(holder.b)
+  })
+
+  it('a disposed binding ignores rebind', () => {
+    let runs = 0
+    const b = binding(() => void runs++)
+    unbind(b)
+    rebind(b, () => void runs++)
+    flush()
+    expect(runs).toBe(1)
   })
 })
