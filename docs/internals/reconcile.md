@@ -62,6 +62,15 @@ prototype-shadowing key names. `applyPatch` guards the mirror image by writing
 through `Object.defineProperty` rather than assignment, so a `__proto__` key
 in the data cannot reach the prototype chain.
 
+A key holding `undefined` counts as absent, because JSON has no `undefined`
+and the wire would drop it anyway. The diff never emits a `set` whose value is
+`undefined`, and a key that goes from a value to `undefined` emits `del`. On
+the apply side, a `set` of `undefined` on a record key removes the key. With
+the same rule on both sides, `applyPatch(prev, reconcile(prev, next))` equals
+`next` once `undefined` keys are dropped, and so does anything decoded
+from the wire. `reconcile.test.ts` checks this with a property over records
+that carry `undefined` values.
+
 ## Arrays: trim, then walk
 
 The array case exists to keep list edits proportional to the edit. It trims
@@ -101,20 +110,32 @@ by live bindings while the next one is being built. This is the same
 structural-sharing discipline the docs ask of application code, applied
 internally.
 
-It is strict about malformed input: a path that descends into a non-container,
-an out-of-range array index, a `del` of a missing key, a splice range past the
-end, or an invalid `~` escape all throw. The wire's decoder does a structural
+It is strict about malformed input: a path that descends into a non-container
+or a missing key, a `del` of a missing key or of the root, a splice on a
+non-array, a splice range past the end, or an invalid `~` escape all throw. An
+array index must match RFC 6901's `0|[1-9][0-9]*` and be in range: `'01'`,
+`'1e0'`, `' 1'`, `''` and `'-'` are all rejected, although `Number()` would
+accept most of them. The wire vectors in `packages/wire/spec/vectors/patches.json`
+pin each of these cases. The wire's decoder does a structural
 pre-check of the same constraints (`protocol.ts`), so a hostile peer's patch is
 rejected at the codec rather than half-applied.
 
 Round-tripping is the property test: for random `prev`/`next` pairs,
 `applyPatch(prev, reconcile(prev, next))` must deep-equal `next`
-(`reconcile.test.ts`).
+(`reconcile.test.ts`). Independent random pairs share no identity, so a second
+family of properties builds `next` from `prev` the way application code does:
+a few spine-copying edits that share every sibling. Those must round-trip
+too. When the edits keep array shapes, the patch has at most one op per edit,
+and a single edit of any kind, including an array insert or removal, is at
+most one op.
 
 ## Budget
 
 1 change in a 10,000-item list must diff in ≤ 100 µs, asserted in
-`packages/core/test/reconcile.perf.test.ts`. It is a CI assertion, not a
+`packages/core/test/reconcile.perf.test.ts`. The figure is the best of five
+round medians of 200 runs each, which keeps it stable on shared CI runners
+without timing anything other than real runs. `RECONCILE_BUDGET_US` can
+tighten the budget but not loosen it. It is a CI assertion, not a
 guideline. Tighten it if you make the diff faster; do not loosen it to make a
 change fit.
 

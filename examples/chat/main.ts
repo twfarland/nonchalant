@@ -24,7 +24,7 @@ const conn = connect<ChatSchema>(webSocketTransport(`ws://127.0.0.1:4322/?name=$
 const roomName = cell('lobby')
 
 // get-or-spawn on both sides: the same name is the same room everywhere
-const room = (): Room => conn.lookup('room', { name: roomName() }) as Room
+const room = (): Room => conn.lookup('room', { name: roomName() })
 
 // ---------- components ----------
 

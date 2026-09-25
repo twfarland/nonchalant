@@ -60,7 +60,7 @@ function Checkout(c: Cart): VNode {
 // ---------- the app ----------
 
 function App(): VNode {
-  const c = shop.lookup('cart', { userId: 'u1' }) as Cart
+  const c = shop.lookup('cart', { userId: 'u1' })
 
   return div({ class: 'cart' },
     AddButton(c),

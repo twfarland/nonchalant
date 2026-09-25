@@ -10,14 +10,20 @@
 //     the reads beneath it are;
 //   - a container obtained but never read into has escaped the reader
 //     (returned, stored, compared) — recorded as a subtree dependency;
-//   - keys / length / `in` observations are structural — shape ops at that
-//     node wake the reader;
+//   - keys / length observations are structural — shape ops at that node
+//     wake the reader. A direct-child `set` on an array is a replacement (a
+//     length change is always a splice), so it does not count as shape;
+//   - `in` / hasOwn / descriptor observations are presence-only — a set or
+//     del at exactly that key wakes the reader, a change beneath it does not
+//     (Object.keys reads every descriptor, so this is what keeps it shallow);
 //   - documented approximation: a container that is both traversed and
 //     escaped records as traversal only (a proxy cannot see identity use).
 //
 // Proxies are ephemeral: after finalize() they stop recording and hand out
 // raw values, and the tree drops its proxy references so old snapshots are
-// not retained across runs.
+// not retained across runs. unwrap() swaps them for their raw targets in a
+// computed's return value, so identity, structuredClone and equality cuts
+// behave as if tracking weren't there.
 
 import { parsePath, type Json, type Op, type Patch } from './reconcile.ts'
 
@@ -25,8 +31,10 @@ export interface PathTree {
   children: Map<string, PathTree> | null
   /** A primitive (or absence) was read at this exact path. */
   leaf: boolean
-  /** Keys / length / `in` were observed here — shape ops at this node wake. */
+  /** Keys / length were observed here — shape ops at this node wake. */
   structural: boolean
+  /** The container read here was an array: a direct-child `set` is never a shape op. */
+  array: boolean
   /** A container was obtained here during the run. */
   traversed: boolean
   /** The container escaped the reader — any op at or below wakes. */
@@ -42,6 +50,7 @@ const mkNode = (): RecNode => ({
   children: null,
   leaf: false,
   structural: false,
+  array: false,
   traversed: false,
   subtree: false,
   proxy: undefined,
@@ -50,6 +59,42 @@ const mkNode = (): RecNode => ({
 export interface Recorder {
   wrap(value: Json): Json
   finalize(): PathTree
+}
+
+const readonlyTrap = (): never => {
+  throw new Error('nonchalant: snapshots are read-only — yield a new value instead of mutating')
+}
+
+const isTrackable = (value: object): boolean => {
+  if (Array.isArray(value)) return true
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+// proxy → raw snapshot node; weak, so a proxy that escaped nowhere costs nothing
+const targets = new WeakMap<object, object>()
+
+/**
+ * Replace read proxies with their raw targets throughout a value. A proxy is
+ * swapped whole (its target is raw snapshot data); the plain containers
+ * around it were built by the getter during the run, so they are patched in
+ * place (a frozen one keeps its proxies). Non-plain objects (Date, Map, class
+ * instances) are not walked.
+ */
+export function unwrap<T>(value: T, seen = new Set<object>()): T {
+  if (typeof value !== 'object' || value === null) return value
+  const raw = targets.get(value)
+  if (raw) return raw as T
+  if (isTrackable(value) && !seen.has(value)) {
+    seen.add(value)
+    const box = value as { [key: string]: unknown }
+    for (const k of Object.keys(box)) {
+      const v = box[k]
+      const u = unwrap(v, seen)
+      if (u !== v) Reflect.set(box, k, u)
+    }
+  }
+  return value
 }
 
 export function createRecorder(): Recorder {
@@ -70,15 +115,6 @@ export function createRecorder(): Recorder {
     return c
   }
 
-  const readonlyTrap = (): never => {
-    throw new Error('nonchalant: snapshots are read-only — yield a new value instead of mutating')
-  }
-
-  const isTrackable = (value: object): boolean => {
-    if (Array.isArray(value)) return true
-    const proto = Object.getPrototypeOf(value)
-    return proto === Object.prototype || proto === null
-  }
 
   const wrap = (value: Json, node: RecNode): Json => {
     if (typeof value !== 'object' || value === null) {
@@ -91,6 +127,7 @@ export function createRecorder(): Recorder {
       return value
     }
     node.traversed = true
+    node.array = Array.isArray(value)
     if (node.proxy !== undefined) return node.proxy as Json
     const proxy = new Proxy(value as object, {
       get(target, key) {
@@ -100,7 +137,7 @@ export function createRecorder(): Recorder {
           node.structural = true
           return target.length
         }
-        if (!Object.prototype.hasOwnProperty.call(target, key)) {
+        if (!Object.hasOwn(target, key)) {
           const v: unknown = Reflect.get(target, key)
           // prototype methods (map, slice, hasOwnProperty…): call sites keep
           // `this` = proxy, so the method's own reads still hit the traps
@@ -129,7 +166,7 @@ export function createRecorder(): Recorder {
         return wrap(value, next)
       },
       has(target, key) {
-        if (!done && typeof key !== 'symbol') child(node, key).leaf = true
+        if (!done && typeof key !== 'symbol') child(node, key)
         return Reflect.has(target, key)
       },
       ownKeys(target) {
@@ -137,7 +174,7 @@ export function createRecorder(): Recorder {
         return Reflect.ownKeys(target)
       },
       getOwnPropertyDescriptor(target, key) {
-        if (!done && typeof key !== 'symbol') child(node, key).leaf = true
+        if (!done && typeof key !== 'symbol') child(node, key)
         return Reflect.getOwnPropertyDescriptor(target, key)
       },
       set: readonlyTrap,
@@ -146,6 +183,7 @@ export function createRecorder(): Recorder {
       setPrototypeOf: readonlyTrap,
     })
     node.proxy = proxy
+    targets.set(proxy, value)
     return proxy as Json
   }
 
@@ -186,8 +224,9 @@ function opAffects(tree: PathTree, op: Op, segs: string[]): boolean {
     const c = node.children !== null ? node.children.get(key) : undefined
     if (i === segs.length - 1 && op[0] !== 'splice') {
       // set/del of the binding `key` under `node`: wakes if anything was read
-      // at/below that binding, or if this node's key set was observed
-      return c !== undefined || node.structural
+      // at/below that binding, or if this node's key set was observed (an
+      // array `set` replaces an element; its length changes only by splice)
+      return c !== undefined || (node.structural && !(node.array && op[0] === 'set'))
     }
     if (c === undefined) return false
     node = c

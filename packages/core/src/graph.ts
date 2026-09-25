@@ -16,6 +16,13 @@
 // exported for a manual synchronous drain. Derives are pull-based and always
 // read consistently regardless of flush timing.
 //
+// Watchers are gates whose reader is *watched*: an effect, or a computed with
+// an effect somewhere downstream. A derive read once outside any effect keeps
+// its links (alien-signals only drops a computed's deps when its last
+// subscriber leaves), but it does not keep a source watched: gates count in
+// only when their reader gains a watched path, and count out when it loses
+// the last one, even while some other unwatched computed still links it.
+//
 // A publish that lands while a reader is mid-run cannot be judged then: the
 // run's final read-set is unknowable (reads later in the run still see the
 // pre-publish snapshot through the open recorder). Those publishes are parked
@@ -35,7 +42,7 @@ import {
   type ReactiveNode,
 } from './system.ts'
 import { parsePath, reconcile, type Json, type Op } from './reconcile.ts'
-import { affects, createRecorder, type PathTree, type Recorder } from './track.ts'
+import { affects, createRecorder, unwrap, type PathTree, type Recorder } from './track.ts'
 
 interface EffectNode extends ReactiveNode {
   fn: () => void | (() => void)
@@ -56,6 +63,7 @@ interface SignalNode<T = unknown> extends ReactiveNode {
 interface SourceState {
   snapshot: Json
   gates: Map<ReactiveNode, Gate>
+  watched: number
   onWatchers: ((count: number) => void) | undefined
 }
 
@@ -65,6 +73,7 @@ interface Gate {
   reader: ReactiveNode
   paths: PathTree | null
   recorder: Recorder | null
+  counted: boolean
   // ops published while `recorder` was open, judged at finalizeGates
   deferredOps: Op[]
   deferredSegs: string[][]
@@ -122,7 +131,7 @@ const { link, unlink, propagate, checkDirty, shallowPropagate } = createReactive
       const gate = (node as SignalNode).gate
       if (gate !== undefined) {
         gate.source.gates.delete(gate.reader)
-        gate.source.onWatchers?.(gate.source.gates.size)
+        count(gate, false)
       }
     } else if ('fn' in node) {
       disposeEffect(node as EffectNode)
@@ -143,7 +152,7 @@ export function source<T extends Json>(
   initial: T,
   hooks?: { onWatchers?: (count: number) => void },
 ): Source<T> {
-  const state: SourceState = { snapshot: initial, gates: new Map(), onWatchers: hooks?.onWatchers }
+  const state: SourceState = { snapshot: initial, gates: new Map(), watched: 0, onWatchers: hooks?.onWatchers }
 
   const read = (): T => {
     const sub = activeSub
@@ -159,10 +168,10 @@ export function source<T extends Json>(
         subsTail: undefined,
         flags: MUTABLE,
       }
-      gate = { node, source: state, reader: sub, paths: null, recorder: null, deferredOps: [], deferredSegs: [] }
+      gate = { node, source: state, reader: sub, paths: null, recorder: null, counted: false, deferredOps: [], deferredSegs: [] }
       node.gate = gate
       state.gates.set(sub, gate)
-      state.onWatchers?.(state.gates.size)
+      count(gate, isWatched(sub))
     }
     const node = gate.node
     if (node.flags & DIRTY) {
@@ -202,6 +211,40 @@ export function source<T extends Json>(
   }
 
   return Object.assign(read, { publish })
+}
+
+// ---------- watchers ----------
+
+/** Does an effect sit at or downstream of this node? Disposed effects have flags 0. */
+function isWatched(node: ReactiveNode): boolean {
+  if ('fn' in node) return node.flags !== 0
+  for (let l = node.subs; l; l = l.nextSub) if (isWatched(l.sub)) return true
+  return false
+}
+
+function count(gate: Gate, on: boolean): void {
+  if (gate.counted === on) return
+  gate.counted = on
+  const s = gate.source
+  s.onWatchers?.((s.watched += on ? 1 : -1))
+}
+
+/** A computed just gained (`on`) or lost its watched path: re-judge the gates beneath it. */
+function rewatch(node: ReactiveNode, on: boolean): void {
+  for (let l = node.deps; l; l = l.nextDep) {
+    const dep = l.dep
+    const gate = (dep as SignalNode).gate
+    if (gate) count(gate, on)
+    else if ('getter' in dep && (on || !isWatched(dep))) rewatch(dep, on)
+  }
+}
+
+/** unlink, then settle a computed dep that may have lost its last watched subscriber (one that lost every subscriber already dropped its deps in `unwatched`). */
+function unlinkDep(l: Link, sub: ReactiveNode): Link | undefined {
+  const dep = l.dep
+  const next = unlink(l, sub)
+  if ('getter' in dep && !isWatched(dep)) rewatch(dep, false)
+  return next
 }
 
 function wakeGate(gate: Gate): void {
@@ -276,7 +319,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   try {
     ++cycle
     const oldValue = c.value
-    return !Object.is(oldValue, (c.value = c.getter(oldValue)))
+    return !Object.is(oldValue, (c.value = settle(c.getter(oldValue), mark)))
   } finally {
     activeSub = prevSub
     c.flags &= ~RECURSED_CHECK
@@ -284,6 +327,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     purgeDeps(c)
   }
 }
+
+/** A getter's result, free of read proxies if the run opened any recorder. */
+const settle = <T>(v: T, mark: number): T => (openGates.length > mark ? unwrap(v) : v)
 
 function computedOper<T>(c: ComputedNode<T>): T {
   const flags = c.flags
@@ -302,7 +348,7 @@ function computedOper<T>(c: ComputedNode<T>): T {
     activeSub = c
     const mark = openGates.length
     try {
-      c.value = c.getter()
+      c.value = settle(c.getter(), mark)
     } finally {
       activeSub = prevSub
       c.flags &= ~RECURSED_CHECK
@@ -310,7 +356,11 @@ function computedOper<T>(c: ComputedNode<T>): T {
     }
   }
   const sub = activeSub
-  if (sub !== undefined) link(c, sub, cycle)
+  if (sub !== undefined) {
+    const cold = !isWatched(c)
+    link(c, sub, cycle)
+    if (cold && isWatched(sub)) rewatch(c, true)
+  }
   return c.value as T
 }
 
@@ -434,7 +484,7 @@ function disposeAllDepsInReverse(sub: ReactiveNode): void {
   let l = sub.depsTail
   while (l !== undefined) {
     const prev = l.prevDep
-    unlink(l, sub)
+    unlinkDep(l, sub)
     l = prev
   }
 }
@@ -444,7 +494,7 @@ function purgeDeps(sub: ReactiveNode): void {
   const depsTail = sub.depsTail
   let dep = depsTail !== undefined ? depsTail.nextDep : sub.deps
   while (dep !== undefined) {
-    dep = unlink(dep, sub)
+    dep = unlinkDep(dep, sub)
   }
 }
 

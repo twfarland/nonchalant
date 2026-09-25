@@ -30,7 +30,7 @@ export function run(host: Element): Disposable {
   const generation = cell(0)
   const machine = derive<Agent>(() => {
     void generation() // a kill bumps this; the next lookup activates a fresh process
-    return brain.lookup('agent', { id: 'demo' }) as Agent
+    return brain.lookup('agent', { id: 'demo' })
   })
   const state = derive<AgentState | undefined>(() => machine()())
   const queue = tools.approvals

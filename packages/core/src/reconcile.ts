@@ -23,19 +23,14 @@ const escapeSegment = (k: string): string =>
   k.includes('~') || k.includes('/') ? k.replaceAll('~', '~0').replaceAll('/', '~1') : k
 
 function unescapeSegment(s: string): string {
-  if (!s.includes('~')) return s
-  let out = ''
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]
-    if (c === '~') {
-      const n = s[++i]
-      if (n === '0') out += '~'
-      else if (n === '1') out += '/'
-      else throw new Error(`applyPatch: invalid escape in path segment ${JSON.stringify(s)}`)
-    } else out += c
-  }
-  return out
+  if (/~(?![01])/.test(s)) throw new Error(`applyPatch: invalid escape in path segment ${JSON.stringify(s)}`)
+  // ~1 before ~0, so '~01' decodes to the literal '~1' (RFC 6901 §4)
+  return s.replaceAll('~1', '/').replaceAll('~0', '~')
 }
+
+// Object.hasOwn, not `in` or a bare index: a key like "toString" would find
+// Object.prototype's and corrupt the diff
+const own = (o: { [key: string]: Json }, k: string): Json | undefined => (Object.hasOwn(o, k) ? o[k] : undefined)
 
 export function reconcile(prev: Json, next: Json): Patch {
   const ops: Patch = []
@@ -69,14 +64,16 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
     return
   }
   if (isRecord(prev) && isRecord(next)) {
-    // Object.hasOwn, not `in`: `in` walks the prototype chain, so a key like
-    // "toString" would find Object.prototype's and corrupt the diff
-    for (const k of Object.keys(prev)) if (!Object.hasOwn(next, k)) ops.push(['del', `${path}/${escapeSegment(k)}`])
+    // a key holding undefined is absent (JSON has no undefined): never set,
+    // and a key going to undefined is a del
+    for (const k of Object.keys(prev)) {
+      if (prev[k] !== undefined && own(next, k) === undefined) ops.push(['del', `${path}/${escapeSegment(k)}`])
+    }
     for (const k of Object.keys(next)) {
-      if (!Object.is(prev[k], next[k])) {
-        if (Object.hasOwn(prev, k)) walk(prev[k] as Json, next[k] as Json, `${path}/${escapeSegment(k)}`, ops)
-        else ops.push(['set', `${path}/${escapeSegment(k)}`, next[k] as Json])
-      }
+      const n = next[k], p = own(prev, k)
+      if (n === undefined || Object.is(p, n)) continue
+      if (p === undefined) ops.push(['set', `${path}/${escapeSegment(k)}`, n])
+      else walk(p, n, `${path}/${escapeSegment(k)}`, ops)
     }
     return
   }
@@ -124,9 +121,9 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
   const last = i === keys.length - 1
 
   if (Array.isArray(node)) {
-    const idx = Number(k)
-    if (!Number.isInteger(idx) || idx < 0 || idx >= node.length)
-      throw new Error(`applyPatch: bad array index ${JSON.stringify(k)}`)
+    // RFC 6901 array-index grammar: no sign, exponent, whitespace, or leading zero
+    const idx = +k
+    if (!/^(0|[1-9]\d*)$/.test(k) || idx >= node.length) throw new Error(`applyPatch: bad array index ${JSON.stringify(k)}`)
     const copy = node.slice()
     copy[idx] = last ? applyLeaf(node[idx] as Json, op) : applyAt(node[idx] as Json, keys, i + 1, op)
     if (last && op[0] === 'del') copy.splice(idx, 1)
@@ -134,12 +131,14 @@ function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
   }
   if (isRecord(node)) {
     const copy: { [key: string]: Json } = { ...node }
-    if (last && op[0] === 'del') {
-      if (!Object.hasOwn(node, k)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
+    // a del, or a set of undefined (the same rule reconcile follows), removes the key
+    const remove = last && op[0] !== 'splice' && (op as unknown[])[2] === undefined
+    if ((remove ? op[0] === 'del' : !last) && !Object.hasOwn(node, k))
+      throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
+    if (remove) {
       delete copy[k]
       return copy
     }
-    if (!last && !Object.hasOwn(node, k)) throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
     setOwn(copy, k, last ? applyLeaf(node[k] as Json, op) : applyAt(node[k] as Json, keys, i + 1, op))
     return copy
   }

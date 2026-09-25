@@ -28,6 +28,20 @@
     { "name": "splice on a non-array is rejected", "prev": { "a": 1 }, "patch": [["splice", "/a", 0, 0, [1]]], "error": true },
     { "name": "negative splice start is rejected", "prev": [1], "patch": [["splice", "", -1, 0, []]], "error": true },
     { "name": "splice removal beyond the array is rejected", "prev": [1], "patch": [["splice", "", 0, 2, []]], "error": true },
-    { "name": "array deletion at length is rejected", "prev": [1], "patch": [["del", "/1"]], "error": true }
+    { "name": "array deletion at length is rejected", "prev": [1], "patch": [["del", "/1"]], "error": true },
+    { "name": "array index with a leading zero is rejected", "prev": [1, 2], "patch": [["set", "/01", 9]], "error": true },
+    { "name": "array index in exponent form is rejected", "prev": [1, 2], "patch": [["set", "/1e0", 9]], "error": true },
+    { "name": "array index with a sign is rejected", "prev": [1, 2], "patch": [["set", "/+1", 9]], "error": true },
+    { "name": "array index with whitespace is rejected", "prev": [1, 2], "patch": [["set", "/ 1", 9]], "error": true },
+    { "name": "empty array index is rejected", "prev": [1, 2], "patch": [["del", "/"]], "error": true },
+    { "name": "- is not an array index (appends are splices)", "prev": [1, 2], "patch": [["set", "/-", 3]], "error": true },
+    { "name": "fractional array index is rejected", "prev": [1, 2], "patch": [["set", "/1.0", 9]], "error": true },
+    { "name": "index 0 is a valid array index", "prev": [1, 2], "patch": [["set", "/0", 9]], "next": [9, 2] },
+    { "name": "del of the root is rejected", "prev": { "a": 1 }, "patch": [["del", ""]], "error": true },
+    { "name": "splice on a non-array root is rejected", "prev": { "a": 1 }, "patch": [["splice", "", 0, 0, []]], "error": true },
+    { "name": "descending through a primitive is rejected", "prev": { "a": 1 }, "patch": [["set", "/a/b", 2]], "error": true },
+    { "name": "descending through a missing key is rejected", "prev": { "a": 1 }, "patch": [["set", "/x/y", 2]], "error": true },
+    { "name": "del of a missing key is rejected", "prev": { "a": 1 }, "patch": [["del", "/x"]], "error": true },
+    { "name": "a rejected op refuses the whole patch, including earlier ops", "prev": { "a": [1], "b": 1 }, "patch": [["set", "/b", 2], ["del", "/a/7"]], "error": true }
   ]
 }

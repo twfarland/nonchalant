@@ -159,4 +159,137 @@ describe('reconcile / applyPatch', () => {
     expect(() => applyPatch({}, [['set', '/a~2b', 1]])).toThrow(/invalid escape/)
     expect(() => applyPatch({}, [['set', '/a~', 1]])).toThrow(/invalid escape/)
   })
+
+  it('a key holding undefined is absent: never added, and going to undefined is a del', () => {
+    const undef = undefined as unknown as Json
+    expect(reconcile({}, { a: undef })).toStrictEqual([])
+    expect(reconcile({ a: 1 }, { a: undef })).toStrictEqual([['del', '/a']])
+    expect(reconcile({ a: undef }, { a: 1 })).toStrictEqual([['set', '/a', 1]])
+    expect(reconcile({ a: undef }, {})).toStrictEqual([])
+    expect(applyPatch({ a: 1, b: 2 }, [['set', '/a', undef]])).toStrictEqual({ b: 2 })
+    expect(applyPatch({ b: 2 }, [['set', '/a', undef]])).toStrictEqual({ b: 2 })
+  })
+
+  it('round-trips records carrying undefined values, up to undefined-means-absent', () => {
+    const rec = fc.dictionary(key, fc.oneof(fc.constant(undefined), fc.integer()), { maxKeys: 6 }).map((d) => ({ ...d }))
+    const defined = (r: Record<string, unknown>): Record<string, unknown> =>
+      Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined))
+    fc.assert(
+      fc.property(rec, rec, (prev, next) => {
+        const applied = applyPatch(prev as Json, reconcile(prev as Json, next as Json)) as Record<string, unknown>
+        expect(defined(applied)).toStrictEqual(defined(next))
+        expect(Object.keys(applied).filter((k) => applied[k] === undefined)).toStrictEqual(
+          Object.keys(prev).filter((k) => prev[k] === undefined && !Object.hasOwn(defined(next), k)),
+        )
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('array indices follow the RFC 6901 grammar exactly', () => {
+    for (const bad of ['', ' ', '01', '1e0', '+1', '-', '-0', '0x1', '1.0', ' 1', '1 ']) {
+      expect(() => applyPatch([1, 2], [['set', `/${bad}`, 9]])).toThrow(/bad array index/)
+      expect(() => applyPatch([1, 2], [['del', `/${bad}`]])).toThrow(/bad array index/)
+    }
+    expect(applyPatch([1, 2], [['set', '/0', 9]])).toStrictEqual([9, 2])
+    expect(applyPatch([1, 2], [['set', '/1', 9]])).toStrictEqual([1, 9])
+  })
+
+  it('rejects ops whose target cannot hold them', () => {
+    expect(() => applyPatch({ a: 1 }, [['splice', '', 0, 0, []]])).toThrow(/splice target is not an array/)
+    expect(() => applyPatch({ a: 1 }, [['splice', '/a', 0, 0, []]])).toThrow(/splice target is not an array/)
+    expect(() => applyPatch({ a: 1 }, [['del', '']])).toThrow(/cannot del the root/)
+    expect(() => applyPatch({ a: 1 }, [['set', '/a/b', 2]])).toThrow(/non-container/)
+    expect(() => applyPatch({ a: 1 }, [['set', '/x/y', 2]])).toThrow(/missing path segment/)
+    expect(() => applyPatch({ a: 1 }, [['del', '/x']])).toThrow(/missing path segment/)
+    expect(() => applyPatch([[1]], [['set', '/0/5', 2]])).toThrow(/bad array index/)
+  })
+
+  it('a rejected patch leaves the input untouched', () => {
+    const prev = deepFreeze({ a: [1, 2], b: 1 }) as Json
+    expect(() => applyPatch(prev, [['set', '/b', 2], ['del', '/a/7']])).toThrow()
+    expect(prev).toStrictEqual({ a: [1, 2], b: 1 })
+  })
+})
+
+// ---------- structurally shared edits ----------
+
+// Edits in the style the docs prescribe: copy the spine, share every sibling.
+// `steps` picks a random descent; `kind` picks what happens where it stops.
+type Edit = { steps: number[]; kind: number; key: string; value: Json }
+
+const isRec = (v: Json): v is { [key: string]: Json } => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+function applyEdit(doc: Json, e: Edit, shapes: boolean, depth = 0): Json {
+  const s = e.steps[depth]
+  if (s !== undefined && s % 3 !== 0) {
+    if (Array.isArray(doc) && doc.length > 0) {
+      const i = s % doc.length
+      const copy = doc.slice()
+      copy[i] = applyEdit(doc[i] as Json, e, shapes, depth + 1)
+      return copy
+    }
+    if (isRec(doc) && Object.keys(doc).length > 0) {
+      const keys = Object.keys(doc)
+      const k = keys[s % keys.length] as string
+      return { ...doc, [k]: applyEdit(doc[k] as Json, e, shapes, depth + 1) }
+    }
+  }
+  if (Array.isArray(doc) && shapes) {
+    const at = e.kind % (doc.length + 1)
+    if (e.kind % 2 === 0 || doc.length === 0) return [...doc.slice(0, at), e.value, ...doc.slice(at)]
+    return [...doc.slice(0, at), ...doc.slice(at + 1)]
+  }
+  if (isRec(doc)) {
+    const keys = Object.keys(doc)
+    if (e.kind % 2 === 1 && keys.length > 0) {
+      const gone = keys[e.kind % keys.length] as string
+      return Object.fromEntries(keys.filter((k) => k !== gone).map((k) => [k, doc[k] as Json]))
+    }
+    return { ...doc, [e.key]: e.value }
+  }
+  return e.value
+}
+
+const primitive: fc.Arbitrary<Json> = fc.oneof(fc.constant(null), fc.boolean(), fc.integer(), fc.string({ maxLength: 4 }))
+const edits = (value: fc.Arbitrary<Json>): fc.Arbitrary<Edit[]> =>
+  fc.array(
+    fc.record({ steps: fc.array(fc.nat(30), { maxLength: 5 }), kind: fc.nat(30), key, value }),
+    { minLength: 1, maxLength: 6 },
+  )
+
+describe('reconcile over structurally shared edits', () => {
+  it('round-trips any sequence of spine-copying edits, shape changes included', () => {
+    fc.assert(
+      fc.property(json, edits(json), (prev, es) => {
+        const next = es.reduce((d, e) => applyEdit(d, e, true), prev)
+        expect(applyPatch(prev, reconcile(prev, next))).toStrictEqual(next)
+      }),
+      { numRuns: 500 },
+    )
+  })
+
+  it('emits at most one op per edit when the edits keep array shapes', () => {
+    fc.assert(
+      fc.property(json, edits(primitive), (prev, es) => {
+        const next = es.reduce((d, e) => applyEdit(d, e, false), prev)
+        const patch = reconcile(prev, next)
+        expect(applyPatch(prev, patch)).toStrictEqual(next)
+        expect(patch.length).toBeLessThanOrEqual(es.length)
+      }),
+      { numRuns: 500 },
+    )
+  })
+
+  it('a single edit anywhere, array inserts and removals included, is at most one op', () => {
+    fc.assert(
+      fc.property(json, edits(primitive).map((es) => es.slice(0, 1)), (prev, [e]) => {
+        const next = applyEdit(prev, e!, true)
+        const patch = reconcile(prev, next)
+        expect(applyPatch(prev, patch)).toStrictEqual(next)
+        expect(patch.length).toBeLessThanOrEqual(1)
+      }),
+      { numRuns: 500 },
+    )
+  })
 })

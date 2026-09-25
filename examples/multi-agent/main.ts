@@ -44,7 +44,7 @@ const desk = registry({
 const generation = cell(0)
 const boss = derive<Boss>(() => {
   void generation()
-  return desk.lookup('boss', { id: 'boss' }) as Boss
+  return desk.lookup('boss', { id: 'boss' })
 })
 const pipeline = derive<Pipeline | undefined>(() => boss()())
 

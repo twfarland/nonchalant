@@ -43,7 +43,7 @@ const brain = registry({
 const generation = cell(0)
 const machine = derive<Agent>(() => {
   void generation() // a kill bumps this, and the lookup activates a fresh one
-  return brain.lookup('agent', { id: 'demo' }) as Agent
+  return brain.lookup('agent', { id: 'demo' })
 })
 const state = derive<AgentState | undefined>(() => machine()())
 

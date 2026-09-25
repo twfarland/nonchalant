@@ -4,10 +4,15 @@
 // refcount + evict idle timeout = the SWR lifecycle), and — at M6 — remote
 // addressing (connect(url) returns the same interface).
 //
-// Watchers are subscriptions: effects/derives/iterators reading either process
-// values or lifecycle metadata create gates, and their total is the refcount.
-// Plain snapshot pulls are not watching (SWR semantics: an evicted entry
-// simply respawns on the next lookup). Registry processes spawn `unscoped` —
+// Watchers are subscriptions: effects (and derives or iterators an effect
+// reads through) reading either process values or lifecycle metadata; the
+// graph reports how many watched readers there are, and that is the refcount.
+// Plain snapshot pulls, and derives read only as snapshots, are not watching
+// (SWR semantics: an evicted entry simply respawns on the next lookup).
+// `maxEntries` bounds the cache: past it, the least recently looked-up
+// unwatched entries are disposed, so distinct args cannot grow memory without
+// bound. Watched entries are never evicted, so a registry whose every entry is
+// watched may sit above the cap until watchers leave. Registry processes spawn `unscoped` —
 // shared state must not be owned by whichever process looked it up first.
 
 import { spawnProcess, unscoped, type SpawnOpts } from './process.ts'
@@ -29,7 +34,9 @@ interface RuntimeDef {
   opts: DefineOpts<unknown> | undefined
 }
 
-/** Declare a schema entry: the generator a name resolves to, plus its spawn/evict options. */
+/** Declare a schema entry: the generator a name resolves to, plus its spawn/evict options. `initial` decides T | undefined vs T for lookups. */
+export function define<T, In, A>(proc: Proc<T, In, A>, opts: DefineOpts<T> & { initial: T }): Definition<T, In, A, never>
+export function define<T, In, A>(proc: Proc<T, In, A>, opts?: DefineOpts<T>): Definition<T, In, A>
 export function define<T, In, A>(proc: Proc<T, In, A>, opts?: DefineOpts<T>): Definition<T, In, A> {
   if (opts?.evict !== undefined && (!Number.isFinite(opts.evict) || opts.evict < 0))
     throw new Error('nonchalant: evict must be a finite non-negative duration')
@@ -40,6 +47,12 @@ export function define<T, In, A>(proc: Proc<T, In, A>, opts?: DefineOpts<T>): De
 interface Entry {
   process: Process<unknown, unknown>
   timer: ReturnType<typeof setTimeout> | undefined
+  watchers: number
+}
+
+export interface RegistryOpts {
+  /** Most entries kept; past it the least recently looked-up unwatched entries are evicted. Omit for no cap. Positive. */
+  maxEntries?: number
 }
 
 export interface RegistryHandle<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }>
@@ -51,7 +64,11 @@ export interface RegistryHandle<S extends { [K in keyof S]: Definition<unknown, 
 /** A local registry over a typed schema. `connect(url)` (M6) returns the same interface remotely. */
 export function registry<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }>(
   defs: S,
+  opts?: RegistryOpts,
 ): RegistryHandle<S> {
+  const max = opts?.maxEntries ?? Number.POSITIVE_INFINITY
+  if (!(max > 0)) throw new Error('nonchalant: maxEntries must be positive')
+  // Map order is recency order: a hit re-inserts its key at the end
   const entries = new Map<string, Entry>()
   const objectIds = new WeakMap<object, number>()
   const symbolIds = new Map<symbol, number>()
@@ -69,15 +86,11 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
   const encodeArg = (value: unknown, ancestors: Set<object>): string => {
     if (value === null) return 'null'
     switch (typeof value) {
-      case 'undefined': return 'undefined'
-      case 'boolean': return value ? 'true' : 'false'
+      case 'undefined':
+      case 'boolean': return String(value)
       case 'string': return `string:${JSON.stringify(value)}`
-      case 'number':
-        if (Number.isNaN(value)) return 'number:NaN'
-        if (value === Number.POSITIVE_INFINITY) return 'number:Infinity'
-        if (value === Number.NEGATIVE_INFINITY) return 'number:-Infinity'
-        if (Object.is(value, -0)) return 'number:-0'
-        return `number:${value}`
+      // String() spells NaN and ±Infinity; only -0 needs its own token
+      case 'number': return Object.is(value, -0) ? 'number:-0' : `number:${value}`
       case 'bigint': return `bigint:${value}`
       case 'symbol': {
         let id = symbolIds.get(value)
@@ -128,27 +141,29 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
     const args = rest[0]
     const key = name + SEP + argsKey(args)
     let entry = entries.get(key)
-    if (entry === undefined) {
+    if (entry !== undefined) {
+      entries.delete(key)
+      entries.set(key, entry)
+    } else {
       const def = defs[name as keyof S] as unknown as RuntimeDef | undefined
       if (def === undefined) throw new Error(`nonchalant: no definition named ${JSON.stringify(name)} in this registry`)
       const evictMs = def.opts?.evict
-      const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined }
-      const onWatchers =
-        evictMs === undefined
-          ? undefined
-          : (count: number): void => {
-              if (count > 0) {
-                if (created.timer !== undefined) {
-                  clearTimeout(created.timer)
-                  created.timer = undefined
-                }
-              } else if (entries.get(key) === created && created.timer === undefined) {
-                created.timer = setTimeout(() => drop(key), evictMs)
-              }
-            }
+      const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined, watchers: 0 }
+      const onWatchers = (count: number): void => {
+        created.watchers = count
+        if (evictMs === undefined) return
+        if (count > 0) {
+          if (created.timer !== undefined) {
+            clearTimeout(created.timer)
+            created.timer = undefined
+          }
+        } else if (entries.get(key) === created && created.timer === undefined) {
+          created.timer = setTimeout(() => drop(key), evictMs)
+        }
+      }
       created.process = unscoped(() =>
         spawnProcess(def.proc, args, def.opts, {
-          ...(onWatchers !== undefined ? { onWatchers } : {}),
+          onWatchers,
           onSettled: () => {
             if (entries.get(key) !== created) return
             if (created.timer !== undefined) clearTimeout(created.timer)
@@ -158,7 +173,13 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
       ) as Process<unknown, unknown>
       entry = created
       entries.set(key, entry)
-      onWatchers?.(0)
+      onWatchers(0)
+      if (entries.size > max) {
+        for (const [k, e] of entries) {
+          if (entries.size <= max) break
+          if (!e.watchers && e !== created) drop(k)
+        }
+      }
     }
     return entry.process
   }

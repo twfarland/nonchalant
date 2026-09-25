@@ -15,7 +15,7 @@ export { flush, effect, untracked } from './graph.ts'
 export { channel, onProcessError } from './process.ts'
 export type { SpawnOpts } from './process.ts'
 export { define, registry } from './registry.ts'
-export type { DefineOpts, RegistryHandle } from './registry.ts'
+export type { DefineOpts, RegistryHandle, RegistryOpts } from './registry.ts'
 
 import { computed, source } from './graph.ts'
 import { iterate, NONE } from './iterate.ts'

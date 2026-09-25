@@ -102,6 +102,25 @@ local.evict('clock')
 // @ts-expect-error — unknown name
 local.evict('warehouse')
 
+// --- lookups read `T | undefined` until the first yield, unless the definition supplies `initial` ---
+// @ts-expect-error — a hand-written Definition has no initial: a read may be undefined
+const rcartState: CartState = shop.lookup('cart', { userId: 'u1' })()
+// @ts-expect-error — define() without initial: a read may be undefined
+const clockNow: number = local.lookup('clock')()
+const seeded = registry({ clock: define(clockProc, { initial: 0 }) })
+const seededNow: number = seeded.lookup('clock')() // initial supplied: total
+const maybeNow: number | undefined = local.lookup('clock')()
+
+// --- a Proc's generator is not `any`-typed on its return or next channels ---
+async function drive(): Promise<void> {
+  const it = clockProc(undefined as unknown as Self<never>, undefined)
+  const r = await it.next()
+  // @ts-expect-error — the result is `number | unknown`, not `any`
+  const s: string = r.value
+  void s
+}
+void drive
+
 // --- middleware: processes compose as functions, types pass through ---
 declare function withHistory<T, In, A>(
   proc: Proc<T, In, A>,
@@ -112,4 +131,5 @@ hist.cast({ type: 'add', item: { id: 2, title: 'y', done: false } })
 
 // silence unused locals
 void total0; void total1; void rcart; void hist; void cart; void cartDisposed; void lc; void found; void counted; void fakeDefinition
+void rcartState; void clockNow; void seededNow; void maybeNow
 export {}

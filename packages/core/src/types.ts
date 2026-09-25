@@ -62,17 +62,21 @@ export interface Self<In> extends AsyncIterable<In> {
 /** The generator shape `spawn` runs. Yield JSON-shaped plain data: non-plain
  * values (Date, Map, class instances) are tracked as atomic leaves and never
  * cross a transport — see docs/concepts.md, "State is plain data". */
-export type Proc<T, In, Args> = (self: Self<In>, args: Args) => AsyncGenerator<T>
+export type Proc<T, In, Args> = (self: Self<In>, args: Args) => AsyncGenerator<T, unknown, undefined>
 
 // ---------- registry ----------
 
 declare const DEF: unique symbol
-/** Phantom-typed schema entry: what a name resolves to. */
-export interface Definition<T, In, Args> { readonly [DEF]: [T, In, Args] }
+/**
+ * Phantom-typed schema entry: what a name resolves to. `Before` is what a read
+ * returns ahead of the first yield — `undefined` unless the definition supplies
+ * `initial` (then `never`), so a lookup without one reads `T | undefined`.
+ */
+export interface Definition<T, In, Args, Before = undefined> { readonly [DEF]: [T, In, Args, Before] }
 
 export type Schema = { [name: string]: Definition<unknown, unknown, unknown> }
 
-export type ProcessOf<D> = D extends Definition<infer T, infer In, infer _A> ? Process<T, In> : never
+export type ProcessOf<D> = D extends Definition<infer T, infer In, infer _A, infer B> ? Process<T | B, In> : never
 export type ArgsOf<D> = D extends Definition<infer _T, infer _In, infer A> ? A : never
 
 /** lookup is get-or-spawn: DI, query caching, and remote addressing are one operation. */
