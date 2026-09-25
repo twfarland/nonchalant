@@ -19,6 +19,7 @@ local server.
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
 | `worker/` | ⏱ the wire over a Web Worker port, keeping expensive work off the UI thread |
 | `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable |
+| `react-agent/` | ⏱ the agent's process tree rendered by React via `@nonchalant/react` |
 | `multi-agent/` | ⏱ delegation, hand-off, a state-machine supervisor, shared usage limits |
 | `messaging/` | ⏱ pub/sub and a work queue as ports, with in-memory adapters |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
@@ -56,6 +57,10 @@ Notes:
   processes in the tab. The page binds to their state like any other demo.
   Press *kill the machine* during a question to see `durable()` recover the
   process from its journal.
+- **react-agent:** The agent demo's processes, imported unchanged, rendered by
+  React under `StrictMode`. Each component reads its slice with `useDerive`, so
+  a streamed word re-renders one line. Its test (`react-agent.test.tsx`) drives
+  the page with a scripted model.
 - **multi-agent:** Brief the team, then press *kill the supervisor* while it
   is writing: the brief replays and the researcher's run count does not move,
   because the delegated call is answered from its record. Drop the budget to
