@@ -23,7 +23,9 @@
 // raw values, and the tree drops its proxy references so old snapshots are
 // not retained across runs. unwrap() swaps them for their raw targets in a
 // computed's return value, so identity, structuredClone and equality cuts
-// behave as if tracking weren't there.
+// behave as if tracking weren't there. It runs only when the run was handed a
+// proxy, and skips containers an earlier unwrap already found proxy-free —
+// which assumes they were not mutated since (the immutable-update rule).
 
 import { parsePath, type Json, type Op, type Patch } from './reconcile.ts'
 
@@ -74,24 +76,32 @@ const isTrackable = (value: object): boolean => {
 // proxy → raw snapshot node; weak, so a proxy that escaped nowhere costs nothing
 const targets = new WeakMap<object, object>()
 
+/** Proxies handed out so far, all recorders. A run that did not move it has no proxy to unwrap. */
+export let handed = 0
+
+// plain containers an unwrap walked and left proxy-free: a static table or a
+// structurally shared previous result is walked once, not on every recompute
+const clean = new WeakSet<object>()
+
 /**
  * Replace read proxies with their raw targets throughout a value. A proxy is
  * swapped whole (its target is raw snapshot data); the plain containers
  * around it were built by the getter during the run, so they are patched in
  * place (a frozen one keeps its proxies). Non-plain objects (Date, Map, class
- * instances) are not walked.
+ * instances) and containers already known clean are not walked.
  */
-export function unwrap<T>(value: T, seen = new Set<object>()): T {
+export function unwrap<T>(value: T): T {
   if (typeof value !== 'object' || value === null) return value
   const raw = targets.get(value)
   if (raw) return raw as T
-  if (isTrackable(value) && !seen.has(value)) {
-    seen.add(value)
+  if (isTrackable(value) && !clean.has(value)) {
+    // marked before descending: a cycle back to it stops here
+    clean.add(value)
     const box = value as { [key: string]: unknown }
     for (const k of Object.keys(box)) {
       const v = box[k]
-      const u = unwrap(v, seen)
-      if (u !== v) Reflect.set(box, k, u)
+      const u = unwrap(v)
+      if (u !== v && !Reflect.set(box, k, u)) clean.delete(value)
     }
   }
   return value
@@ -128,6 +138,7 @@ export function createRecorder(): Recorder {
     }
     node.traversed = true
     node.array = Array.isArray(value)
+    handed++
     if (node.proxy !== undefined) return node.proxy as Json
     const proxy = new Proxy(value as object, {
       get(target, key) {

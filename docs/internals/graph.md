@@ -56,7 +56,12 @@ Gate bookkeeping:
   snapshot read pin a registry entry forever.
 
 The watched bit is not stored. `isWatched(node)` walks subscribers up to an
-effect, which is usually one hop. It is re-judged only at the transitions,
+effect, which is usually one hop. Each walk stamps the computeds it reaches
+(`seen`, one epoch per query), so a node is visited at most once per query:
+on a DAG of computeds the walk is O(nodes + links), not O(paths), which a
+diamond chain makes exponential. `rewatch` stamps the same way (`swept`).
+`graph.scale.test.ts` holds a 30-level diamond (2^30 paths) to exact
+recompute counts and a time bound. It is re-judged only at the transitions,
 all of them in `graph.ts`:
 
 - a gate is created: counted if its reader is watched;
@@ -205,6 +210,30 @@ parent and its child wake in the same burst, `enqueue` reverses the run it
 inserts so the parent runs first, and the parent's re-run disposes the stale
 child before it can run. "effect trees" in `graph.test.ts` pins the ordering
 and the pruning, including a derive that owns effects.
+
+## Bindings: effects with a swappable body
+
+`binding(fn)` is `effect(fn)` returning the node (opaque, typed `Binding`)
+instead of a disposer. `rebind(b, fn)` stores the new body and runs the effect
+once, now, through the ordinary `run` path: the old body's cleanup runs, the
+node's deps are re-tracked in place, and `purgeDeps` drops only what the new
+body did not read. A gate both bodies read survives, so its watcher count
+never flaps, and nothing is allocated but the new closure. `unbind(b)`
+disposes. Edge cases:
+
+- rebind from inside the binding's own run (`RECURSED_CHECK` up) only marks
+  it `DIRTY`; `requeueIfDirtied` re-runs it with the new body when the current
+  run ends;
+- a binding already queued by a wake may be run by `rebind` first; the queued
+  entry then finds it clean and does nothing;
+- a disposed binding (flags 0) ignores `rebind`.
+
+This exists for the DOM sink: a keyed row re-rendered by its parent arrives
+with fresh closures for every bound attribute and child thunk, and swapping
+them in costs one re-run instead of a dispose and a re-creation (see
+[dom.md](dom.md)). `graph.test.ts` "rebinding swaps an effect body without
+recreating it" pins the semantics; the 1k-row `bench.test.ts` asserts 0
+re-creations on append.
 
 ## Where to be careful
 

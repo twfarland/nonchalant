@@ -55,6 +55,7 @@ The runtime. No dependencies, no DOM.
 | `effect` | `effect(fn: () => void \| (() => void))` → `() => void` | Runs `fn` now and whenever what it read changes. A returned function is its cleanup, run before each re-run and on stop. Returns the stop function. | [effect](concepts.md#effect-and-untracked) |
 | `untracked` | `untracked<T>(fn: () => T)` → `T` | Runs `fn` without recording reads. | [effect](concepts.md#effect-and-untracked) |
 | `flush` | `flush()` → `void` | Runs queued effects now instead of on the next microtask. Rethrows the first effect error after running the rest. | [The graph](concepts.md#the-graph-why-updates-are-exact) |
+| `binding`, `rebind`, `unbind` | `binding(fn)` → `Binding`; `rebind(b, fn)`; `unbind(b)` | For sinks: an `effect` whose body `rebind` swaps and re-runs once on the same node, keeping the subscriptions both bodies share. The DOM sink rebinds a re-rendered row's fresh closures this way. | [graph internals](internals/graph.md#bindings-effects-with-a-swappable-body) |
 
 ### Registry
 

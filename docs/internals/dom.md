@@ -1,7 +1,7 @@
 # render.ts: the DOM sink
 
-`packages/dom/src/render.ts`. Imports `effect` and `untracked` from core and
-nothing else. It turns `VNode` trees (plain data) into DOM nodes with
+`packages/dom/src/render.ts`. Imports `binding`, `rebind`, `unbind`, and
+`untracked` from core and nothing else. It turns `VNode` trees (plain data) into DOM nodes with
 `createElement`, `createTextNode`, and `setAttribute`, and keeps them current.
 No string is ever parsed as markup.
 
@@ -17,20 +17,21 @@ with plain values) is built once and never revisited. Everything dynamic is a
 
 A region is anchored by an empty comment node (its marker) and owns the items
 rendered before that marker. A thunk or process region is driven by one
-`effect`: the effect's tracked read decides when it wakes, and `region.apply`
+binding (a core effect whose body can be swapped, see
+[graph.md](graph.md#bindings-effects-with-a-swappable-body)): its tracked read decides when it wakes, and `region.apply`
 runs `untracked`, so bindings inside the items it builds are independent
 effects owned by those items, not by the region. A region re-run therefore
 never tears down the bindings of the items it keeps.
 
 A function in an attribute position (other than `on*`) is a binding: one
-`effect` per attribute, stored in the element's `fx` map by name.
+per attribute, stored in the element's `fx` map by name.
 
 ```mermaid
 flowchart TD
     V["view(): VNode tree"] --> S["static nodes<br/>built once"]
     V --> R["region per dynamic slot<br/>(marker + items)"]
-    V --> B["effect per bound attribute"]
-    R --> E["effect: tracked read"] --> A["apply(value), untracked"]
+    V --> B["binding per bound attribute"]
+    R --> E["binding: tracked read"] --> A["apply(value), untracked"]
     A --> K["keyed diff against current items"]
 ```
 
@@ -73,17 +74,20 @@ the clear case in `bench.test.ts` cover both paths.
    alone.
 2. Children, position by position (`patchChildren`). A text child whose string
    is unchanged writes nothing. A hole whose old and new slots are both
-   functions is **rebound**: the old effect stops and a new one drives the same
-   region, which diffs against its current items and keeps its DOM.
+   functions is **rebound**: the new function is swapped into the hole's
+   binding (`rebind`), which re-runs once and diffs the region against its
+   current items, keeping its DOM.
 3. `value`, `checked`, and `selected`, set as properties. They come last
    because a `<select>`'s value can only match options that already exist.
 
-**Rebinding without churn.** A bound attribute replaced by another binding
-stops the old effect and starts the new one directly; the attribute never
-passes through `null`, so the new effect's first value lands over the old one.
-Combined with no-op skipping, a keyed row re-rendered with fresh closures
-writes nothing and re-adds no listener (`render.test.ts`, "fresh closures
-rebind in place").
+**Rebinding without churn.** A bound attribute replaced by another function
+keeps its binding: `rebind` swaps the body and re-runs it once on the same
+effect node, so reads both closures make keep their subscriptions and the
+attribute never passes through `null`. A binding replaced by a plain value is
+unbound. Combined with no-op skipping, a keyed row re-rendered with fresh
+closures writes nothing, re-adds no listener, and creates no effect
+(`render.test.ts`, "fresh closures rebind in place"; `bench.test.ts` asserts
+0 created and 1000 rebound on a 1k-row append, and exactly one re-run each).
 
 **No-op writes are skipped.** `setAttrValue` compares with `getAttribute` (or
 the property, for `value`/`checked`/`selected`) before writing, and removes

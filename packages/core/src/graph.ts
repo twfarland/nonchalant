@@ -42,7 +42,7 @@ import {
   type ReactiveNode,
 } from './system.ts'
 import { parsePath, reconcile, type Json, type Op } from './reconcile.ts'
-import { affects, createRecorder, unwrap, type PathTree, type Recorder } from './track.ts'
+import { affects, createRecorder, handed, unwrap, type PathTree, type Recorder } from './track.ts'
 
 interface EffectNode extends ReactiveNode {
   fn: () => void | (() => void)
@@ -52,6 +52,9 @@ interface EffectNode extends ReactiveNode {
 interface ComputedNode<T = unknown> extends ReactiveNode {
   value: T | undefined
   getter: (previousValue?: T) => T
+  // visit stamps: the last isWatched query / rewatch walk that reached this node
+  seen: number
+  swept: number
 }
 
 interface SignalNode<T = unknown> extends ReactiveNode {
@@ -215,10 +218,20 @@ export function source<T extends Json>(
 
 // ---------- watchers ----------
 
+// Walk epochs. A computed DAG has exponentially many paths but linearly many
+// nodes; stamping each node per walk keeps both walks O(nodes + links).
+let seenEpoch = 0
+let sweptEpoch = 0
+
 /** Does an effect sit at or downstream of this node? Disposed effects have flags 0. */
-function isWatched(node: ReactiveNode): boolean {
+const isWatched = (node: ReactiveNode): boolean => watchedFrom(node, ++seenEpoch)
+
+function watchedFrom(node: ReactiveNode, epoch: number): boolean {
   if ('fn' in node) return node.flags !== 0
-  for (let l = node.subs; l; l = l.nextSub) if (isWatched(l.sub)) return true
+  // a node already reached this walk answered false (a true ends the walk)
+  if ((node as ComputedNode).seen === epoch) return false
+  ;(node as ComputedNode).seen = epoch
+  for (let l = node.subs; l; l = l.nextSub) if (watchedFrom(l.sub, epoch)) return true
   return false
 }
 
@@ -230,12 +243,17 @@ function count(gate: Gate, on: boolean): void {
 }
 
 /** A computed just gained (`on`) or lost its watched path: re-judge the gates beneath it. */
-function rewatch(node: ReactiveNode, on: boolean): void {
+const rewatch = (node: ReactiveNode, on: boolean): void => sweep(node, on, ++sweptEpoch)
+
+function sweep(node: ReactiveNode, on: boolean, epoch: number): void {
   for (let l = node.deps; l; l = l.nextDep) {
     const dep = l.dep
     const gate = (dep as SignalNode).gate
     if (gate) count(gate, on)
-    else if ('getter' in dep && (on || !isWatched(dep))) rewatch(dep, on)
+    else if ('getter' in dep && (dep as ComputedNode).swept !== epoch) {
+      ;(dep as ComputedNode).swept = epoch
+      if (on || !isWatched(dep)) sweep(dep, on, epoch)
+    }
   }
 }
 
@@ -286,6 +304,8 @@ export function computed<T>(getter: (previousValue?: T) => T): ComputedHandle<T>
   const node: ComputedNode<T> = {
     value: undefined,
     getter,
+    seen: 0,
+    swept: 0,
     deps: undefined,
     depsTail: undefined,
     subs: undefined,
@@ -316,10 +336,11 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   const prevSub = activeSub
   activeSub = c
   const mark = openGates.length
+  const h = handed
   try {
     ++cycle
     const oldValue = c.value
-    return !Object.is(oldValue, (c.value = settle(c.getter(oldValue), mark)))
+    return !Object.is(oldValue, (c.value = settle(c.getter(oldValue), h)))
   } finally {
     activeSub = prevSub
     c.flags &= ~RECURSED_CHECK
@@ -328,8 +349,8 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   }
 }
 
-/** A getter's result, free of read proxies if the run opened any recorder. */
-const settle = <T>(v: T, mark: number): T => (openGates.length > mark ? unwrap(v) : v)
+/** A getter's result, free of read proxies if the run was handed any. */
+const settle = <T>(v: T, h: number): T => (handed !== h ? unwrap(v) : v)
 
 function computedOper<T>(c: ComputedNode<T>): T {
   const flags = c.flags
@@ -347,8 +368,9 @@ function computedOper<T>(c: ComputedNode<T>): T {
     const prevSub = activeSub
     activeSub = c
     const mark = openGates.length
+    const h = handed
     try {
-      c.value = settle(c.getter(), mark)
+      c.value = settle(c.getter(), h)
     } finally {
       activeSub = prevSub
       c.flags &= ~RECURSED_CHECK
@@ -375,6 +397,11 @@ function updateSignal(s: SignalNode): boolean {
 
 /** Run fn now and on every wake; returns a disposer. fn may return a cleanup run before each re-run and on dispose. */
 export function effect(fn: () => void | (() => void)): () => void {
+  const e = start(fn)
+  return () => disposeEffect(e)
+}
+
+function start(fn: () => void | (() => void)): EffectNode {
   const e: EffectNode = {
     fn,
     cleanup: undefined,
@@ -405,8 +432,34 @@ export function effect(fn: () => void | (() => void)): () => void {
     finalizeGates(mark)
   }
   requeueIfDirtied(e)
-  return () => disposeEffect(e)
+  return e
 }
+
+// ---------- bindings (effects with a replaceable body) ----------
+
+declare const bindingBrand: unique symbol
+/** An effect whose body can be swapped in place. Opaque: only rebind / unbind take it. */
+export type Binding = { readonly [bindingBrand]: true }
+
+/** effect(fn), keeping the node so a sink can later swap its body instead of recreating it. */
+export const binding = (fn: () => void | (() => void)): Binding => start(fn) as unknown as Binding
+
+/**
+ * Replace a binding's body and run it once now, on the same node: its links
+ * are re-tracked in place (reads the new body repeats keep their gates) rather
+ * than torn down and rebuilt. Called mid-run by its own body, the new body
+ * runs right after the current run instead. A disposed binding ignores it.
+ */
+export function rebind(b: Binding, fn: () => void | (() => void)): void {
+  const e = b as unknown as EffectNode
+  if (e.flags === 0) return
+  e.fn = fn
+  e.flags |= DIRTY
+  // mid-run: requeueIfDirtied picks up the DIRTY bit when the run ends
+  if (!(e.flags & RECURSED_CHECK)) run(e)
+}
+
+export const unbind = (b: Binding): void => disposeEffect(b as unknown as EffectNode)
 
 /** An inner publish reaching a running effect through a computed sets PENDING without queueing (RECURSED_CHECK was up) — catch it once the run is over. */
 function requeueIfDirtied(e: EffectNode): void {

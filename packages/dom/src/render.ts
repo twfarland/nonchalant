@@ -15,8 +15,9 @@
 // their old positions move — n − LIS moves, the minimum.
 //
 // Writes are skipped when the DOM already holds the value, so a binding that
-// re-runs (or is rebound to a fresh closure by a parent re-render) costs a
-// read, not a write.
+// re-runs costs a read, not a write. A fresh closure from a parent re-render
+// is swapped into the existing binding (core's `rebind`): one re-run on the
+// same effect node, never a dispose-and-recreate.
 //
 // Per-slot pending/error: a promise slot holds only its own region (empty until
 // it settles; rejection logs and stays empty); a throwing binding logs and
@@ -26,8 +27,8 @@
 // independent effects (owned by the item's disposer, not the region's effect —
 // a region re-run must not tear down the bindings of items it reuses).
 
-import { effect, untracked } from '@nonchalant/core'
-import type { ProcessBase, Sink, Slot, VNode } from '@nonchalant/core'
+import { binding, rebind, unbind, untracked } from '@nonchalant/core'
+import type { Binding, ProcessBase, Sink, Slot, VNode } from '@nonchalant/core'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
@@ -85,7 +86,7 @@ interface ElItem {
   /** namespace the element's children render in */
   childNs: string
   /** live attribute bindings, by attribute name */
-  fx: Map<string, Disposer>
+  fx: Map<string, Binding>
   children: ChildRec[]
 }
 
@@ -102,7 +103,8 @@ type ChildRec =
   | { kind: 'empty' }
   | { kind: 'text'; node: Text; value: string; slot: Slot }
   | { kind: 'el'; item: ElItem; slot: Slot }
-  | { kind: 'hole'; slot: Slot; marker: Comment; region: Region; stop: Disposer }
+  // a function slot's stop is its binding (rebindable); promise/iterable holes get a disposer
+  | { kind: 'hole'; slot: Slot; marker: Comment; region: Region; stop: Disposer | Binding }
 
 const recFirstNode = (rec: ChildRec): ChildNode | null =>
   rec.kind === 'text' ? rec.node : rec.kind === 'el' ? rec.item.el : rec.kind === 'hole' ? rec.region.first() : null
@@ -149,17 +151,40 @@ function setAttrValue(el: Element, name: string, v: unknown): void {
   } else if (el.getAttribute(name) !== s) el.setAttribute(name, s)
 }
 
+const attrBody = (el: Element, name: string, read: () => unknown) => (): void => {
+  let value: unknown
+  try {
+    value = read()
+  } catch (e) {
+    warn(`attribute "${name}" threw; keeping previous content`, e)
+    return
+  }
+  setAttrValue(el, name, value)
+}
+
 /**
  * Apply one attribute value, replacing whatever was bound under that name. A
- * binding replaced by another binding never passes through null: the new
- * effect's first value lands over the old one, and only if it differs.
+ * binding replaced by another binding keeps its effect and never passes
+ * through null: the new body's first value lands over the old one, and only
+ * if it differs.
  */
 function applyAttr(item: ElItem, name: string, v: unknown): void {
   if (SPECIAL_ATTRS.has(name)) return
   const el = item.el
-  item.fx.get(name)?.()
-  item.fx.delete(name)
-  if (name.startsWith('on')) {
+  const on = name.startsWith('on')
+  const bound = item.fx.get(name)
+  if (!on && typeof v === 'function') {
+    // reactive binding: thunk or process — same shape, same handling
+    const body = attrBody(el, name, v as () => unknown)
+    if (bound !== undefined) rebind(bound, body)
+    else item.fx.set(name, binding(body))
+    return
+  }
+  if (bound !== undefined) {
+    unbind(bound)
+    item.fx.delete(name)
+  }
+  if (on) {
     const type = name.slice(2)
     let on = handlers.get(el)
     if (on === undefined) handlers.set(el, (on = {}))
@@ -174,27 +199,11 @@ function applyAttr(item: ElItem, name: string, v: unknown): void {
     }
     return
   }
-  if (typeof v === 'function') {
-    // reactive binding: thunk or process — same shape, same handling
-    const read = v as () => unknown
-    const bound = effect(() => {
-      let value: unknown
-      try {
-        value = read()
-      } catch (e) {
-        warn(`attribute "${name}" threw; keeping previous content`, e)
-        return
-      }
-      setAttrValue(el, name, value)
-    })
-    item.fx.set(name, bound)
-    return
-  }
   setAttrValue(el, name, v)
 }
 
 function disposeElItem(item: ElItem): void {
-  for (const stop of item.fx.values()) stop()
+  for (const b of item.fx.values()) unbind(b)
   item.fx.clear()
   handlers.delete(item.el)
   for (const rec of item.children) disposeChildRec(rec)
@@ -205,18 +214,17 @@ function disposeElItem(item: ElItem): void {
 
 const flattenStatic = (children: readonly Slot[]): Slot[] => children.flat(Infinity as 1) as Slot[]
 
-/** Drive a region from a thunk or process; a callable result is read through (a thunk may return a process). */
-const drive = (region: Region, read: () => unknown, what: string): Disposer =>
-  effect(() => {
-    let v: unknown = read
-    try {
-      while (typeof v === 'function') v = (v as () => unknown)()
-    } catch (e) {
-      warn(`${what} threw; keeping previous content`, e)
-      return
-    }
-    untracked(() => region.apply(v))
-  })
+/** A region's binding body for a thunk or process; a callable result is read through (a thunk may return a process). */
+const drive = (region: Region, read: () => unknown, what: string) => (): void => {
+  let v: unknown = read
+  try {
+    while (typeof v === 'function') v = (v as () => unknown)()
+  } catch (e) {
+    warn(`${what} threw; keeping previous content`, e)
+    return
+  }
+  untracked(() => region.apply(v))
+}
 
 function createChildRec(
   doc: Document,
@@ -240,8 +248,8 @@ function createChildRec(
   const marker = doc.createComment('')
   parent.insertBefore(marker, anchor)
   const region = createRegion(doc, parent, marker, ns)
-  const hole = (stop: Disposer): ChildRec => ({ kind: 'hole', slot, marker, region, stop })
-  if (typeof slot === 'function') return hole(drive(region, slot, 'slot binding'))
+  const hole = (stop: Disposer | Binding): ChildRec => ({ kind: 'hole', slot, marker, region, stop })
+  if (typeof slot === 'function') return hole(binding(drive(region, slot, 'slot binding')))
   let dead = false
   if (isPromise(slot)) {
     slot.then(
@@ -283,7 +291,9 @@ function createChildRec(
 function disposeChildRec(rec: ChildRec): void {
   if (rec.kind === 'el') disposeElItem(rec.item)
   else if (rec.kind === 'hole') {
-    rec.stop()
+    const stop = rec.stop
+    if (typeof stop === 'function') stop()
+    else unbind(stop)
     rec.region.destroy()
   }
 }
@@ -351,9 +361,8 @@ function patchChildRec(doc: Document, parent: ElItem, old: ChildRec, slot: Slot)
     }
   }
   if (old.kind === 'hole' && typeof old.slot === 'function' && typeof slot === 'function') {
-    // a fresh closure for the same hole: rebind; the region diffs, keeping its DOM
-    old.stop()
-    old.stop = drive(old.region, slot, 'slot binding')
+    // a fresh closure for the same hole: swap it into the hole's binding; the region diffs, keeping its DOM
+    rebind(old.stop as Binding, drive(old.region, slot, 'slot binding'))
     old.slot = slot
     return old
   }
@@ -577,12 +586,12 @@ export function mount(container: Element, view: View): Disposable {
   container.appendChild(marker)
   const ns = container.namespaceURI ?? XHTML_NS
   const region = createRegion(doc, container, marker, ns)
-  let stop: Disposer = () => {}
-  if (typeof view === 'function') stop = drive(region, view, 'view read')
+  let fx: Binding | undefined
+  if (typeof view === 'function') fx = binding(drive(region, view, 'view read'))
   else region.apply(view)
   return {
     [Symbol.dispose]: () => {
-      stop()
+      if (fx !== undefined) unbind(fx)
       region.destroy()
       marker.remove()
     },
