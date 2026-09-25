@@ -26,13 +26,15 @@ const gzipSize = (entryPoints: string[]): number => {
   return gzipSync(total).length
 }
 
-// measured 2026-09-26: core 7829, core+dom+tags 12983, wire 9224, durable 1929
-// (bytes, gzip). Durable bundles small because it imports only types from core.
+// measured 2026-09-26: core 8047, core+dom+tags 13192, wire 9403, durable 1929,
+// inspect 14377 (bytes, gzip). Durable bundles small because it imports only
+// types from core. Core's instrument() hook costs ~220 of those bytes.
 const BUDGETS: [name: string, entries: string[], limit: number][] = [
-  ['@nonchalant/core', ['packages/core/src/index.ts'], 8_000],
-  ['core + dom + tags (a full app)', ['packages/core/src/index.ts', 'packages/dom/src/index.ts', 'packages/dom/src/tags.ts'], 13_000],
+  ['@nonchalant/core', ['packages/core/src/index.ts'], 8_100],
+  ['core + dom + tags (a full app)', ['packages/core/src/index.ts', 'packages/dom/src/index.ts', 'packages/dom/src/tags.ts'], 13_200],
   ['@nonchalant/wire (incl. core)', ['packages/wire/src/index.ts'], 9_500],
   ['@nonchalant/durable (incl. core)', ['packages/durable/src/index.ts'], 2_000],
+  ['@nonchalant/inspect (incl. core + dom)', ['packages/inspect/src/index.ts'], 15_000],
 ]
 
 describe('bundle size budgets (min+gzip)', () => {

@@ -20,6 +20,9 @@ importers:
       '@nonchalant/host':
         specifier: workspace:*
         version: link:packages/host
+      '@nonchalant/inspect':
+        specifier: workspace:*
+        version: link:packages/inspect
       '@nonchalant/wire':
         specifier: workspace:*
         version: link:packages/wire
@@ -84,6 +87,15 @@ importers:
       '@nonchalant/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/inspect:
+    devDependencies:
+      '@nonchalant/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nonchalant/dom':
+        specifier: workspace:*
+        version: link:../dom
 
   packages/wire:
     devDependencies:
