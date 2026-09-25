@@ -58,31 +58,32 @@ importers:
   packages/core: {}
 
   packages/dom:
-    dependencies:
+    devDependencies:
       '@nonchalant/core':
         specifier: workspace:*
         version: link:../core
 
   packages/durable:
-    dependencies:
+    devDependencies:
       '@nonchalant/core':
         specifier: workspace:*
         version: link:../core
 
   packages/host:
     dependencies:
-      '@nonchalant/core':
-        specifier: workspace:*
-        version: link:../core
       '@nonchalant/wire':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../wire
       ws:
         specifier: ^8.21.3
         version: 8.21.3
+    devDependencies:
+      '@nonchalant/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/wire:
-    dependencies:
+    devDependencies:
       '@nonchalant/core':
         specifier: workspace:*
         version: link:../core

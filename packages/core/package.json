@@ -2,8 +2,41 @@
   "name": "@nonchalant/core",
   "version": "0.0.0",
   "private": true,
+  "description": "Processes as async generators: the runtime, the reactive graph, reconcile, and the registry.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/twfarland/nonchalant.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/twfarland/nonchalant#readme",
+  "bugs": "https://github.com/twfarland/nonchalant/issues",
   "type": "module",
   "sideEffects": false,
-  "exports": { ".": "./src/index.ts" },
-  "license": "MIT"
+  "engines": {
+    "node": ">=22"
+  },
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node --experimental-strip-types --no-warnings ../../scripts/build.ts"
+  }
 }

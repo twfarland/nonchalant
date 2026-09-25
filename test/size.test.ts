@@ -17,6 +17,7 @@ const gzipSize = (entryPoints: string[]): number => {
     bundle: true,
     minify: true,
     format: 'esm',
+    conditions: ['source'],
     write: false,
     absWorkingDir: root,
     outdir: 'out',
