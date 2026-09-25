@@ -16,9 +16,11 @@ import type { ChatSchema, RoomMsg, RoomState } from './shared.ts'
 
 type Room = Process<RoomState | undefined, RoomMsg>
 
-const conn = connect<ChatSchema>(webSocketTransport('ws://127.0.0.1:4322/'))
+// who you are is settled at the handshake: the server stamps every post with
+// this name, whatever a message claims (see server.ts)
+const me = `guest-${Math.floor(Math.random() * 1000)}`
+const conn = connect<ChatSchema>(webSocketTransport(`ws://127.0.0.1:4322/?name=${me}`))
 
-const me = cell(`guest-${Math.floor(Math.random() * 1000)}`)
 const roomName = cell('lobby')
 
 // get-or-spawn on both sides: the same name is the same room everywhere
@@ -57,15 +59,12 @@ function Composer(): VNode {
   const post = (e: Event): void => {
     e.preventDefault()
     const el = (e.target as HTMLFormElement).elements.namedItem('text') as HTMLInputElement
-    room().cast({ type: 'post', from: me(), text: el.value })
+    room().cast({ type: 'post', from: me, text: el.value })
     el.value = ''
   }
 
   return form({ class: 'chat-form', onsubmit: post },
-    input({
-      name: 'name', size: 10, value: me,
-      oninput: (e: Event) => me.cast((e.target as HTMLInputElement).value),
-    }),
+    span({ class: 'from' }, me),
     input({ name: 'text', placeholder: () => `say something in #${roomName()}…`, autocomplete: 'off' }),
     button({ type: 'submit', disabled: () => room().stale || room()() === undefined }, 'Send'))
 }
