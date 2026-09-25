@@ -191,6 +191,18 @@ can go wrong:
   that meets it returns quietly (it ends rather than crashing) and leaves the
   key to the newer activation. Callers still attached to the old one see a
   finished process.
+- **Disposed partway through a message.** A `sleep` in progress ends by
+  rejecting with the signal's reason, and a `step` that has not started yet
+  refuses to run, so a disposed process never goes on to perform the effects
+  after its sleep. Nothing is committed for the message, and it is redelivered
+  on the next activation. Disposal does not count as an attempt.
+- **A scheduler's `wake` or `due` throws.** The error goes to `onError`
+  (default `console.error`) and the pass goes on. A key whose wake failed
+  comes due again once its lease runs out, and a failed `due` is retried on the
+  next pass. `scheduler({ limit })` below 1 throws
+  `nonchalant/durable: scheduler limit must be at least 1` at once. A pass that
+  fetches exactly `limit` keys fetches again, so a limit below 1 would never
+  finish.
 - **A snapshot from another version.** A key committed under a different
   `version` is passed through `migrate(old, from)` on load. With no `migrate`,
   the process crashes on activation with

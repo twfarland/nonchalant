@@ -28,8 +28,8 @@ timer expires.
 ## Durability
 
 [`@nonchalant/durable`](../packages/durable) records process state for recovery.
-It does not add a runtime or scheduler. `durable(proc, opts)` returns a regular
-`Proc` that can be registered, accessed through the wire, and bound to a view.
+It does not add a runtime. `durable(proc, opts)` returns a regular `Proc` that
+can be registered, accessed through the wire, and bound to a view.
 
 The process inside is written the way every process in this repo is written,
 except that its effects go through `step`:
@@ -217,6 +217,67 @@ Fencing keeps the log correct; it does not decide who *should* own a key. That
 is placement — a registry per node, a lease, a consistent hash — and it stays
 outside the library.
 
+### Timers and the scheduler
+
+`d.sleep(name, ms)` journals its deadline as a step, and the same write tells
+the store when the key next needs waking. While the process is live, its own
+timer fires. If the process is gone by then (evicted, disposed, or its host
+stopped), a scheduler wakes it:
+
+<!-- ts-prelude
+import type { Cast } from '@nonchalant/core'
+import type { DurableProc } from '@nonchalant/durable'
+type Order = { status: 'open' | 'charged' | 'shipped'; total: number; charged: number }
+type OrderMsg = Cast<{ type: 'add'; price: number }> | Cast<{ type: 'checkout' }>
+declare const order: DurableProc<Order, OrderMsg, { id: string }>
+-->
+```ts
+import { define, registry } from '@nonchalant/core'
+import { durable, memoryStore, scheduler } from '@nonchalant/durable'
+
+const store = memoryStore()
+const orders = registry({
+  order: define(durable(order, { store, key: (a: { id: string }) => a.id }), { evict: 60_000 }),
+})
+
+// every second: ask the store which keys are due, and look each one up
+const timers = scheduler({ store, wake: (id) => orders.lookup('order', { id }) })
+// timers[Symbol.dispose]() stops it
+```
+
+The lookup is get-or-spawn. A key that is already live on this node is left
+alone. A key that is not live activates, replays its log, finds the sleep's
+deadline already passed, and carries on. The evicted order above therefore
+ships an hour later with nothing holding it in memory in between. A failed
+attempt under `maxAttempts` is also due immediately, so a message that crashed
+is redelivered even where no supervisor restarts it.
+
+The store keeps one wake time per key. `putStep` sets it, `commit` clears it,
+and `due(now, until, limit)` returns the due keys, earliest first. In the same
+operation, `due` moves each returned key's wake time to `until`. That is a
+lease. The scheduler's default lease is 30 seconds.
+
+- **A wake is at-least-once.** If the woken activation dies before it commits,
+  the lease runs out and the key comes due again. A scheduler that was down
+  catches up on its first pass: everything past due is still in the store.
+- **Two schedulers on one store do not both wake a key.** The first `due`
+  leases it, and the second does not see it.
+- **When they do meet, fencing decides.** If a lease runs out while an
+  activation is still working, another scheduler can wake the key elsewhere.
+  That later `load` claims the key, and the earlier activation stops at its
+  next write. Journaled steps are not run again. The step that was in flight
+  runs again under the same idempotency key, which is the usual at-least-once
+  rule. Set the lease above your slowest message.
+
+`packages/durable/test/scheduler.test.ts` covers each case with fake timers:
+a sleeping process resuming with no other lookup, a restarted scheduler
+catching up, two schedulers waking a key once, and a lease that runs out
+mid-message being fenced.
+
+Only a deadline or a failed attempt sets a wake. If a host stops partway
+through a message that has neither, the message is redelivered on the key's
+next activation, from a lookup or a retried call.
+
 ### Durable calls
 
 Calls into durable processes use a `callId`. The response is recorded under
@@ -266,23 +327,50 @@ done (an order number, a request id), not from a random.
 
 ### The store is a port
 
-Seven methods, in [`store.ts`](../packages/durable/src/store.ts): `load`,
-`append`, `pending`, `putStep`, `steps`, `commit`, `result`. The wrapper knows
-nothing about storage beyond them. An adapter is a plain object with no
-required base class or registration step.
+Eight methods, in [`store.ts`](../packages/durable/src/store.ts): `load`,
+`append`, `pending`, `putStep`, `steps`, `commit`, `result`, `due`. The wrapper
+and the scheduler know nothing about storage beyond them. An adapter is a plain
+object with no required base class or registration step.
 
-Two rules an adapter must honour. `commit` is one transaction: snapshot,
-version, cursor, answers, and dead letter land together or not at all. And
-every write carries the epoch `load` handed out and is refused with `Fenced`
-when it is stale. The one retention rule is that answers outlive the message
+Three rules an adapter must honour. `commit` is one transaction: snapshot,
+version, cursor, answers, and dead letter land together or not at all, and the
+key's wake time is cleared. Every write carries the epoch `load` handed out
+and is refused with `Fenced` when it is stale. `due` reads due keys and leases
+them in one operation. The one retention rule is that answers outlive the message
 that produced them, so a real adapter keeps them for a window and then forgets
 them — `memoryStore().prune(before)` is that window by hand; a real adapter runs
 it as a TTL (`DELETE … WHERE committed_at < $1` on a schedule, or `EXPIRE`).
 
-This repository ships only `memoryStore()`, which serves as the reference
+The package ships only `memoryStore()`, which serves as the reference
 implementation and the target of crash-consistency tests. An adapter for a real
 store belongs in the repo that owns that driver: `commit` as one transaction,
-`append` as one insert, `result` as a lookup in a keyed table with a TTL.
+`append` as one insert, `result` as a lookup in a keyed table with a TTL,
+`due` as an indexed select-and-update on the wake time.
+
+An adapter certifies against the contract the way a wire host certifies
+against the protocol vectors. `@nonchalant/durable/conformance` exports the
+contract as tests, and it takes the test runner's functions as arguments, so it
+imports no test framework:
+
+<!-- ts-prelude
+import type { MemoryStore } from '@nonchalant/durable'
+declare function myStore(now: () => number): MemoryStore
+-->
+```ts
+import { describe, it, expect } from 'vitest'
+import { storeConformance } from '@nonchalant/durable/conformance'
+
+storeConformance((now) => myStore(now), { describe, it, expect })
+```
+
+It covers every method: epochs and fencing (a stale write changes nothing),
+commit atomicity, answers, dead letters, versions, `prune`, wake times and
+`due`, and ordering. `memoryStore` runs it in
+`packages/durable/test/conformance.test.ts`.
+[`examples/durable-sqlite`](../examples/durable-sqlite) runs it against a
+SQLite adapter built on Node's own `node:sqlite`, using the `BEGIN IMMEDIATE`
+mapping described above. The same example also crashes a process partway
+through a message on a file and resumes it from the reopened file.
 
 Crash consistency is a property test, not a claim:
 `packages/durable/test/durable.test.ts` runs generated crash schedules against
@@ -348,8 +436,9 @@ unfinished message is then redelivered on the next activation.
 `connect()` sends remote changes as patches. This uses the standard process API
 rather than a separate streaming representation.
 
-The library does not provide a built-in worker fleet, queue, scheduler, retry
-policies beyond `restart`, or an execution console. Model SDK objects must be mapped to plain
+The library does not provide a built-in worker fleet, queue, retry policies
+beyond `restart` and `maxAttempts`, or an execution console; its scheduler
+wakes journaled deadlines and nothing else. Model SDK objects must be mapped to plain
 data before they can be state. Long CPU work belongs on another thread
 (`examples/worker`).
 
@@ -416,8 +505,10 @@ pipeline does not repeat work already completed by other agents.
 Two limits apply. Fan-out uses `Promise.all` over several `d.call`s; each is
 keyed by the position it was started at, so the calls must be started in the
 same order on every replay (a `map` over state does that), and each should
-have its own name so a drift is caught by name. There is also no scheduler. If the node hosting a supervisor stops,
-something must look it up again before it can continue.
+have its own name so a drift is caught by name. And a supervisor whose node
+stops mid-pipeline continues on its next activation. A [scheduler](#timers-and-the-scheduler)
+provides that activation only if the supervisor was sleeping or retrying;
+otherwise it comes from a lookup.
 
 ## Hosting
 

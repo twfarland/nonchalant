@@ -16,6 +16,7 @@ interface Entry {
   steps: Map<number, StepRecord[]>
   results: Map<string, [answer: Json, at: number]>
   dead: DeadLetter[]
+  wake: number | undefined
 }
 
 export interface MemoryStore extends Store {
@@ -32,7 +33,7 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
   const entry = (key: string): Entry => {
     let e = keys.get(key)
     if (e === undefined) {
-      e = { snapshot: undefined, version: 0, cursor: 0, epoch: 0, next: 1, log: [], steps: new Map(), results: new Map(), dead: [] }
+      e = { snapshot: undefined, version: 0, cursor: 0, epoch: 0, next: 1, log: [], steps: new Map(), results: new Map(), dead: [], wake: undefined }
       keys.set(key, e)
     }
     return e
@@ -55,9 +56,10 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
       return seq
     },
     pending: async (key, cursor) => entry(key).log.filter((l) => l.seq > cursor),
-    putStep: async (key, epoch, seq, index, name, result) => {
+    putStep: async (key, epoch, seq, index, name, result, wakeAt) => {
       const e = owned(key, epoch)
       e.steps.set(seq, [...(e.steps.get(seq) ?? []), { index, name, result }])
+      if (wakeAt !== undefined) e.wake = wakeAt
     },
     steps: async (key, seq) => [...(entry(key).steps.get(seq) ?? [])],
     commit: async (key, epoch, c) => {
@@ -65,12 +67,20 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
       e.snapshot = c.snapshot
       e.version = c.version
       e.cursor = c.cursor
+      e.wake = undefined
       for (const [callId, answer] of c.results) e.results.set(callId, [answer, now()])
       if (c.dead !== undefined) e.dead.push(c.dead)
       e.log = e.log.filter((l) => l.seq > c.cursor)
       for (const seq of [...e.steps.keys()]) if (seq <= c.cursor) e.steps.delete(seq)
     },
     result: async (key, callId) => entry(key).results.get(callId)?.[0],
+    due: async (at, until, limit) => {
+      const ready = [...keys].filter(([, e]) => e.wake !== undefined && e.wake <= at)
+        .sort(([, a], [, b]) => a.wake! - b.wake!)
+        .slice(0, limit)
+      for (const [, e] of ready) e.wake = until
+      return ready.map(([key]) => key)
+    },
     keys: () => keys.size,
     dead: (key) => [...entry(key).dead],
     prune: (before) => {

@@ -219,20 +219,26 @@ storage port. Isomorphic. [Processes on the server](server.md) is the guide.
 | `durable` | `durable<T extends Json, In extends Json \| DurableCall, Args>(proc: DurableProc<T, In, Args>, opts: DurableOpts<T, Args>)` → `Proc<T, In, Args>` | Wraps a process so each message is journaled before it is handled, and its state, cursor, and call answers are committed together when the process asks for the next one. The result is an ordinary `Proc`. |
 | `memoryStore` | `memoryStore(now?: () => number)` → `MemoryStore` | The in-memory `Store` adapter, for tests and demos. `now` (default `Date.now`) stamps committed answers for `prune`. |
 | `Fenced` | `class Fenced extends Error` | What a store write rejects with when a later `load` of the same key has claimed it. A durable process that meets it returns quietly and leaves the key to the newer activation. |
+| `scheduler` | `scheduler(opts: SchedulerOpts)` → `Scheduler` | Wakes keys whose journaled deadlines (or failed attempts) are due: asks the store's `due` every `interval` and calls `wake(key)` for each, usually a registry lookup. Runs a pass at once; disposable. |
+| `storeConformance` | `storeConformance(make: (now: () => number) => ConformanceStore \| Promise<ConformanceStore>, t: ConformanceTest)` → `void` | From `@nonchalant/durable/conformance`. Registers the `Store` contract as tests through the runner's own `describe`/`it`/`expect`; `make` returns an empty store stamping answers with `now`. |
 
 | type | what it is |
 |---|---|
 | `DurableProc<T, In, Args>` | `(self: Self<In>, args: Args, durable: Durable<T>) => AsyncGenerator<T>` |
-| `Durable<T>` | `restored: T \| undefined` (the last committed state, migrated); `step(name, fn: (idempotencyKey: string) => R \| Promise<R>)` (an effect recorded exactly once; `fn` gets `${key}#${seq}#${index}`, stable across replays); `call(name, invoke: (callId: string) => Promise<R>)` (a call with a replay-stable id); `sleep(name, ms)` (a journaled deadline). |
+| `Durable<T>` | `restored: T \| undefined` (the last committed state, migrated); `step(name, fn: (idempotencyKey: string) => R \| Promise<R>)` (an effect recorded exactly once; `fn` gets `${key}#${seq}#${index}`, stable across replays); `call(name, invoke: (callId: string) => Promise<R>)` (a call with a replay-stable id); `sleep(name, ms)` (a journaled deadline, which also makes the key due for a `scheduler`). |
 | `DurableOpts<T, Args>` | Below. |
 | `DurableCall` | `{ readonly callId: string; readonly reply: (res: never) => void }`: a call a durable process accepts carries its own id. |
-| `Store` | The storage port, seven methods, below. |
+| `Store` | The storage port, eight methods, below. |
 | `Loaded` | `{ snapshot: Json \| undefined; version: number; cursor: number; epoch: number }`: what `load` returns. |
 | `Logged` | `{ seq: number; msg: Json; callId?: string }`: one journaled message. |
 | `StepRecord` | `{ index: number; name: string; result: Json }`: one recorded effect; negative indices record failed attempts. |
 | `Commit` | `{ snapshot: Json \| undefined; version: number; cursor: number; results: [string, Json][]; dead?: DeadLetter }`: one message's acknowledgement. |
 | `DeadLetter` | `Logged & { error: string }`: a message given up on, with its last failure. |
 | `MemoryStore` | `Store & { keys(): number; dead(key): DeadLetter[]; prune(before: number): void }`: a key count for reclamation tests, a key's dead letters, and a retention sweep that forgets answers committed before `before`. |
+| `Scheduler` | `Disposable & { tick(): Promise<string[]> }`: `tick` runs one pass now and resolves with the keys it woke; disposing stops the passes. |
+| `SchedulerOpts` | Below. |
+| `ConformanceStore` | `Store & { dead(key): DeadLetter[] \| Promise<…>; prune(before: number): void \| Promise<void> }`: what the conformance suite needs beyond the port. |
+| `ConformanceTest` | `{ describe, it, expect }`: the subset of a test runner the suite calls (`expect(x).toBe`, `.toStrictEqual`). |
 
 `DurableOpts<T, Args>`:
 
@@ -240,11 +246,23 @@ storage port. Isomorphic. [Processes on the server](server.md) is the guide.
 |---|---|---|
 | `store` | required | The `Store` adapter. |
 | `key` | required | `(args: Args) => string`: the storage identity of an instance, usually from its lookup args. |
-| `now` | `Date.now` | Wall clock for `sleep`; injected so tests do not wait. |
+| `now` | `Date.now` | Wall clock for `sleep` and the wake times it records; injected so tests do not wait. |
 | `version` | `0` | The snapshot schema version this code writes. |
 | `migrate` | none | `(old: Json, from: number) => T`: brings a snapshot committed under another version up to date. Required once `version` moves. |
 | `maxAttempts` | no limit | How many times one message may crash the process before it is dead-lettered and the cursor steps past it. |
 | `onPoison` | none | `(key: string, dead: DeadLetter) => void`: told after a message is dead-lettered. |
+
+`SchedulerOpts`:
+
+| option | default | meaning |
+|---|---|---|
+| `store` | required | The `Store` whose wake times it reads. |
+| `wake` | required | `(key: string) => unknown`: activate one due key, e.g. `(id) => reg.lookup('order', { id })`. |
+| `interval` | `1000` | Milliseconds between passes; the next pass is scheduled after the last one ends. |
+| `lease` | `30_000` | How long a woken key stays hidden from other passes, on any scheduler, before it may be woken again. |
+| `limit` | `100` | Keys fetched per `due` call; a pass keeps fetching until it gets fewer. At least 1. |
+| `now` | `Date.now` | The clock wake times are compared against; the same one the durable processes use. |
+| `onError` | `console.error` | Told when a pass or a `wake` throws. The pass goes on. |
 
 `Store` methods. Every write carries the epoch `load` handed out and must
 change nothing and reject with `Fenced` if the key has been claimed since;
@@ -255,10 +273,11 @@ change nothing and reject with `Fenced` if the key has been claimed since;
 | `load` | `(key) => Promise<Loaded>` | Claim the key (raise its epoch) and return the acknowledged state. |
 | `append` | `(key, epoch, msg: Json, callId?) => Promise<number>` | Journal an inbound message before it is handled; returns its sequence number. |
 | `pending` | `(key, cursor) => Promise<Logged[]>` | Messages after `cursor`, in order: what a restart replays. |
-| `putStep` | `(key, epoch, seq, index, name, result: Json) => Promise<void>` | Record one completed effect, or a failed attempt, of message `seq`. |
+| `putStep` | `(key, epoch, seq, index, name, result: Json, wakeAt?: number) => Promise<void>` | Record one completed effect, or a failed attempt, of message `seq`. With `wakeAt`, the key is also due at that time, replacing any earlier wake. |
 | `steps` | `(key, seq) => Promise<StepRecord[]>` | What is already recorded for that message. |
-| `commit` | `(key, epoch, commit: Commit) => Promise<void>` | Acknowledge one message: snapshot, version, cursor, answers, and any dead letter land together or not at all. |
+| `commit` | `(key, epoch, commit: Commit) => Promise<void>` | Acknowledge one message: snapshot, version, cursor, answers, and any dead letter land together or not at all, and the key's wake time is cleared. |
 | `result` | `(key, callId) => Promise<Json \| undefined>` | The answer already given to that call, if any. |
+| `due` | `(now: number, until: number, limit: number) => Promise<string[]>` | Up to `limit` keys whose wake time is at or before `now`, earliest first; in the same operation each one's wake time moves to `until` (a lease). |
 
 ## @nonchalant/react
 

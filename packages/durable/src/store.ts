@@ -1,15 +1,15 @@
-// The port. `durable()` knows nothing about storage beyond these seven
-// methods, and storage knows nothing about processes — an adapter is a plain
+// The port. `durable()` and `scheduler()` know nothing about storage beyond
+// these eight methods, and storage knows nothing about processes — an adapter is a plain
 // object, written wherever the storage lives (this repo ships the in-memory
 // one; a Postgres or SQLite adapter belongs in whatever repo owns that
 // dependency).
 //
 // One key is one process instance: its acknowledged state, the log of messages
 // it has been sent, the effects completed inside the message it is handling
-// right now, the answers it has already given to calls, and the messages it
-// gave up on.
+// right now, the answers it has already given to calls, the messages it
+// gave up on, and the time it next needs waking, if any.
 //
-// Two rules an adapter must honour:
+// Three rules an adapter must honour:
 //
 // - `commit` is one transaction: snapshot, version, cursor, answers, and dead
 //   letter land together or not at all. A torn commit is the one failure the
@@ -19,6 +19,10 @@
 //   the key by raising its epoch; a write carrying an older one must change
 //   nothing and reject with `Fenced`. That is what keeps two hosts that both
 //   think they own a key from interleaving one log.
+// - A key's wake time is set by `putStep` (when given one), cleared by
+//   `commit`, and pushed forward by `due` for every key it hands out, in the
+//   same operation that reads it: that is what stops two schedulers sharing a
+//   store from both waking a key on the same pass.
 
 import type { Json } from '@nonchalant/core'
 
@@ -77,11 +81,15 @@ export interface Store {
   append(key: string, epoch: number, msg: Json, callId?: string): Promise<number>
   /** Messages after `cursor`, in order — what a restart must replay. */
   pending(key: string, cursor: number): Promise<Logged[]>
-  /** Record one completed effect (or failed attempt) of the message at `seq`. */
-  putStep(key: string, epoch: number, seq: number, index: number, name: string, result: Json): Promise<void>
+  /**
+   * Record one completed effect (or failed attempt) of the message at `seq`.
+   * With `wakeAt`, the key also becomes due at that time, replacing any wake
+   * it had; without, its wake is left as it was.
+   */
+  putStep(key: string, epoch: number, seq: number, index: number, name: string, result: Json, wakeAt?: number): Promise<void>
   /** Effects and failed attempts already recorded for that message. */
   steps(key: string, seq: number): Promise<StepRecord[]>
-  /** Acknowledge one message, atomically. */
+  /** Acknowledge one message, atomically, and clear the key's wake time. */
   commit(key: string, epoch: number, commit: Commit): Promise<void>
   /**
    * The answer this process already gave to that call, if it gave one. Answers
@@ -90,4 +98,11 @@ export interface Store {
    * them for a retention window and forgets them after.
    */
   result(key: string, callId: string): Promise<Json | undefined>
+  /**
+   * Up to `limit` keys whose wake time is at or before `now`, earliest first.
+   * Each key returned has its wake time moved to `until` in the same
+   * operation — a lease: another caller does not see it again until then,
+   * and if nothing commits it in the meantime it comes due again.
+   */
+  due(now: number, until: number, limit: number): Promise<string[]>
 }

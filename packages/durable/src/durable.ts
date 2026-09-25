@@ -82,13 +82,15 @@ const plainly = (msg: object): Json => {
   return copy as Json
 }
 
+// rejects on abort: a disposed process must not wake up and run the effects after its sleep
 const delay = (ms: number, signal: AbortSignal): Promise<void> =>
-  new Promise((resolve) => {
+  new Promise((resolve, reject) => {
+    signal.throwIfAborted()
     // drop the listener when the timer wins: one sleep per message would
     // otherwise leave one listener per message on a long-lived signal
     const onAbort = (): void => {
       clearTimeout(timer)
-      resolve()
+      reject(signal.reason)
     }
     const timer = setTimeout(() => {
       signal.removeEventListener('abort', onAbort)
@@ -246,7 +248,9 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
       [Symbol.asyncIterator]: () => deliver(false),
     }
 
-    const step = async <R extends Json>(name: string, fn: (idempotencyKey: string) => R | Promise<R>): Promise<R> => {
+    // `wakes`: the result is a deadline, and the key is due at it — so a
+    // scheduler activates it even if nothing looks it up
+    const step = async <R extends Json>(name: string, fn: (idempotencyKey: string) => R | Promise<R>, wakes?: true): Promise<R> => {
       const seq = handling
       const index = stepIndex++
       const done = recorded.find((s) => s.index === index)
@@ -256,17 +260,18 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
           throw new Error(`nonchalant/durable: step order drifted in '${key}' #${seq}: step ${index} was '${done.name}', now '${name}'`)
         return done.result as R
       }
+      self.signal.throwIfAborted() // disposed: the next activation runs it, not this one
       const result = await fn(`${key}#${seq}#${index}`)
-      await write(store.putStep(key, epoch, seq, index, name, result))
+      await write(store.putStep(key, epoch, seq, index, name, result, wakes && (result as number)))
       return result
     }
 
     const ctx: Durable<T> = {
       restored: latest,
-      step,
-      call: step,
+      step: (name, fn) => step(name, fn),
+      call: (name, fn) => step(name, fn),
       sleep: async (name, ms) => {
-        const left = (await step(`${name}:deadline`, () => now() + ms)) - now()
+        const left = (await step(`${name}:deadline`, () => now() + ms, true)) - now()
         if (left > 0) await delay(left, self.signal)
       },
     }
@@ -281,11 +286,12 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
       // superseded by a later activation: stop, and leave the key to it
       if (e instanceof Fenced) return
       // attempts live in the step journal at negative indices, so they survive
-      // the crash they record; a host dying outright is not counted
-      if (inside && maxAttempts !== Infinity) {
+      // the crash they record; a host dying outright, or disposal, is not counted
+      if (inside && maxAttempts !== Infinity && !self.signal.aborted) {
         const attempts = recorded.filter((s) => s.index < 0).length + 1
         const error = String(e)
-        if (attempts < maxAttempts) await write(store.putStep(key, epoch, handling, -attempts, 'attempt', error))
+        // due at once: a scheduler redelivers it where no supervisor restarts it
+        if (attempts < maxAttempts) await write(store.putStep(key, epoch, handling, -attempts, 'attempt', error, now()))
         else {
           const dead = { ...(current as Logged), error }
           await commit(dead)
