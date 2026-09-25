@@ -273,28 +273,49 @@ describe('crashes', () => {
 })
 
 describe('mailbox depth', () => {
-  it('200k queued casts drain in linear time', async () => {
-    const n = 200_000
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    let total = 0
-    const p = spawn(async function* (self: Self<number>) {
-      yield 0
-      await gate
-      for await (const m of self) {
-        total += m
-        if (total === n) yield total
-      }
-    }, undefined)
-    await tick()
-    for (let i = 0; i < n; i++) p.cast(1)
-    const start = performance.now()
-    release()
-    while (total < n) await tick()
-    const elapsed = performance.now() - start
-    // O(n) per dequeue measured ~7s at this depth; O(1) drains in tens of ms
-    expect(elapsed).toBeLessThan(1_000)
-    expect(p()).toBe(n)
-    p[Symbol.dispose]()
-  })
+  it('queued casts drain in linear time: 4x the backlog costs under 10x the time', async () => {
+    // a ratio of two drains on the same runner survives a slow runner where a
+    // wall-clock bound does not. O(1) dequeue scales ~4x from 50k to 200k and
+    // O(n) dequeue measures 16-19x. Runs interleave so a busy spell hits both
+    // sizes, each starts after a gc, and each figure is the quietest of five
+    const gc = (globalThis as { gc?: () => void }).gc
+    const drain = async (n: number): Promise<number> => {
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      let drained!: () => void
+      const done = new Promise<void>((resolve) => { drained = resolve })
+      let total = 0
+      const p = spawn(async function* (self: Self<number>) {
+        yield 0
+        await gate
+        for await (const m of self) {
+          total += m
+          if (total === n) {
+            drained()
+            yield total
+          }
+        }
+      }, undefined)
+      await tick()
+      for (let i = 0; i < n; i++) p.cast(1)
+      gc?.()
+      const start = performance.now()
+      release()
+      await done
+      const elapsed = performance.now() - start
+      await tick()
+      expect(p()).toBe(n)
+      p[Symbol.dispose]()
+      return elapsed
+    }
+
+    await drain(50_000) // warmup: let the JIT settle
+    let small = Number.POSITIVE_INFINITY
+    let large = Number.POSITIVE_INFINITY
+    for (let run = 0; run < 5; run++) {
+      small = Math.min(small, await drain(50_000))
+      large = Math.min(large, await drain(200_000))
+    }
+    expect(large / small).toBeLessThan(10)
+  }, 90_000) // a quadratic mailbox takes ~50 s here; let the ratio, not the timeout, report it
 })

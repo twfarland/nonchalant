@@ -15,6 +15,23 @@ const until = async (cond: () => boolean, tries = 200): Promise<void> => {
   if (!cond()) throw new Error('condition never became true')
 }
 
+// Resolves once the host has answered a frame sent now. Frames on one socket
+// arrive in order, so anything this socket sent earlier (a pong, say) has been
+// handled by then. The probe is a call on a ref nobody watches: it costs no
+// lookup and the host answers it at once.
+let probes = 0
+const roundTrip = (ws: WebSocket): Promise<void> =>
+  new Promise((resolve) => {
+    const ref = `probe-${++probes}`
+    const onMessage = (data: unknown): void => {
+      if ((JSON.parse(String(data)) as { ref?: string }).ref !== ref) return
+      ws.off('message', onMessage)
+      resolve()
+    }
+    ws.on('message', onMessage)
+    ws.send(JSON.stringify({ op: 'call', ref, id: 1, msg: { type: 'probe' } }))
+  })
+
 type CartState = { items: string[]; total: number }
 type CartMsg =
   | Cast<{ type: 'add'; item: string; price: number }>
@@ -253,11 +270,11 @@ describe('node host over real websockets', () => {
 
       vi.advanceTimersByTime(1_000) // round 1: both pinged
       await until(() => pongs === 1)
-      await new Promise((resolve) => setTimeout(resolve, 20)) // the pong crosses back to the host
+      await roundTrip(live) // the pong is on the wire ahead of this, so the host has it
       vi.advanceTimersByTime(1_000) // round 2: the silent one missed its pong
       await until(() => host.sessions() === 1)
       await until(() => pongs === 2)
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await roundTrip(live)
       vi.advanceTimersByTime(1_000) // round 3: the live one answered, so it stays
       await until(() => pongs === 3)
       expect(host.sessions()).toBe(1)
@@ -327,6 +344,16 @@ const blob: Proc<{ data: string }, BlobMsg, void> = async function* (self) {
   for await (const msg of self) yield { data: String(++n % 10).repeat(msg.bytes) }
 }
 
+const spawnCounter = (): { counted: Proc<number, never, { id: number }>; spawned: () => number } => {
+  let n = 0
+  const counted: Proc<number, never, { id: number }> = async function* (self) {
+    n++
+    yield 0
+    for await (const msg of self) yield msg
+  }
+  return { counted, spawned: () => n }
+}
+
 describe('node host hardening', () => {
   it('rejects nonsense limits at serve time', async () => {
     const defs = { cart: define(cart) }
@@ -337,6 +364,62 @@ describe('node host hardening', () => {
     await expect(serve(defs, { lookupRate: { max: 10, perMs: 0 } })).rejects.toThrow('lookupRate')
     await expect(serve(defs, { lookupRate: { max: 0.5, perMs: 10 } })).rejects.toThrow('lookupRate')
     await expect(serve(defs, { maxBufferedBytes: 0 })).rejects.toThrow('maxBufferedBytes')
+    await expect(serve(defs, { lookupRate: { max: 10, perMs: 10, burst: 1.5 } })).rejects.toThrow('lookupRate')
+    await expect(serve(defs, { totalLookupRate: { max: 10, perMs: -1 } })).rejects.toThrow('totalLookupRate')
+    await expect(serve(defs, { totalLookupRate: { max: 10, perMs: 10, burst: -1 } })).rejects.toThrow('totalLookupRate')
+    await expect(serve(defs, { maxEntries: 0 })).rejects.toThrow('maxEntries')
+    await expect(serve(defs, { maxEntries: 2.5 })).rejects.toThrow('maxEntries')
+  })
+
+  it('totalLookupRate bounds lookups across every connection together', async () => {
+    const { counted, spawned } = spawnCounter()
+    const host = await serve({ counted: define(counted) }, {
+      lookupRate: { max: 100, perMs: 60_000 },
+      totalLookupRate: { max: 5, perMs: 60_000 },
+    })
+    const clients = await Promise.all([1, 2, 3].map(() => rawSocket(host.url)))
+    let id = 0
+    for (const c of clients)
+      for (const ref of ['r1', 'r2', 'r3']) c.send({ op: 'lookup', ref, name: 'counted', args: { id: ++id }, v: 3 })
+    await until(() => clients.every((c) => c.received.length === 3))
+
+    const all = clients.flatMap((c) => c.received)
+    expect(all.filter((m) => m['op'] === 'yield')).toHaveLength(5)
+    const raised = all.filter((m) => m['op'] === 'raise')
+    expect(raised).toHaveLength(4)
+    for (const m of raised) expect(m['error']).toStrictEqual({ message: 'host lookup rate exceeded' })
+    expect(spawned()).toBe(5)
+
+    for (const c of clients) c.ws.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
+  it('the default per-connection burst admits a 500-ref page load; the 501st raises', async () => {
+    const host = await serve({ receipts: define(receipts) })
+    const c = await rawSocket(host.url)
+    for (let i = 1; i <= 501; i++) c.send({ op: 'lookup', ref: `r${i}`, name: 'receipts', v: 3 })
+    await until(() => c.received.length === 501, 2_000)
+    const raised = c.received.filter((m) => m['op'] === 'raise')
+    expect(raised).toStrictEqual([{ op: 'raise', ref: 'r501', error: { message: 'lookup rate exceeded' } }])
+    c.ws.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  }, 15000)
+
+  it('maxEntries evicts the least recently looked-up unwatched entry', async () => {
+    const { counted, spawned } = spawnCounter()
+    const host = await serve({ counted: define(counted) }, { maxEntries: 2 })
+    for (const id of [1, 2, 3]) host.registry.lookup('counted', { id })
+    await tick()
+    expect(spawned()).toBe(3)
+    host.registry.lookup('counted', { id: 3 })
+    await tick()
+    expect(spawned()).toBe(3) // kept
+    host.registry.lookup('counted', { id: 1 })
+    await tick()
+    expect(spawned()).toBe(4) // evicted when 3 arrived, so it spawns afresh
+    await host.close()
   })
 
   it('answers 404 for anything but GET /schema (with or without a query) and for upgrades off the socket path', async () => {

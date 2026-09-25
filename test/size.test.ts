@@ -50,6 +50,6 @@ describe('bundle size budgets (min+gzip)', () => {
       const size = gzipSize(entries, external)
       console.log(`${name}: ${size} bytes gzipped (budget ${limit})`)
       expect(size).toBeLessThanOrEqual(limit)
-    })
+    }, 30_000) // bundling is slow on a loaded machine; a timeout is not a size failure
   }
 })

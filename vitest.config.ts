@@ -1,5 +1,7 @@
 import { defaultClientConditions, defaultServerConditions } from 'vite'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
+
+const PERF = '**/*.perf.test.ts'
 
 export default defineConfig({
   // test the source: the `source` export condition points @nonchalant/* at src/*.ts
@@ -12,5 +14,19 @@ export default defineConfig({
     // later Nodes import it unflagged, and one that no longer knows the flag is
     // not handed it
     poolOptions: { forks: { execArgv: ['--expose-gc', ...(process.allowedNodeEnvironmentFlags.has('--experimental-sqlite') ? ['--experimental-sqlite'] : [])] } },
+    // `pnpm coverage` runs the unit project only: instrumentation slows
+    // reconcile several-fold, so the perf budget can't hold under it.
+    // Floors sit a few points under the measured 98% statements, 96% branches
+    coverage: {
+      provider: 'v8',
+      include: ['packages/*/src/**'],
+      thresholds: { statements: 95, lines: 95, functions: 95, branches: 92 },
+    },
+    projects: [
+      { extends: true, test: { name: 'unit', exclude: [...configDefaults.exclude, PERF] } },
+      // wall-clock budgets run alone, after every other file has finished, so
+      // a busy neighbour worker can't spend their time
+      { extends: true, test: { name: 'perf', include: [PERF], sequence: { groupOrder: 1 } } },
+    ],
   },
 })

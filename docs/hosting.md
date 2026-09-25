@@ -142,11 +142,16 @@ The host applies these per connection:
 
 - `maxWatchesPerConnection` caps the number of refs a connection may watch;
   lookups beyond the cap return an error. Omit it for no cap.
-- `lookupRate` caps lookups per window (default 100 per 10 seconds). Each
+- `lookupRate` caps how fast one connection may look processes up. Each
   distinct lookup may spawn a process, so without a rate a client could fill
   the registry by looking up `cart` with a thousand different arguments.
-  Lookups past the rate return an error. A scoped gateway that derives
-  arguments from the session removes the problem for its names entirely.
+  The rate is a token bucket: `max` tokens refill evenly over each `perMs`,
+  and up to `burst` of them can be held at once. The default is 100 per 10
+  seconds with a burst of 500. The burst exists for page loads: a page that
+  looks up a few hundred remote refs when it opens gets them all at once,
+  and after that the connection is held to 10 lookups a second. Lookups with
+  no token left return an error. A scoped gateway that derives arguments from
+  the session removes the problem for its names entirely.
 - `maxBufferedBytes` (default 8 MiB) bounds what the host queues for a client
   that is not reading. Past it the host terminates the socket rather than
   growing its memory. Nothing is lost by terminating: the client reconnects,
@@ -154,6 +159,26 @@ The host applies these per connection:
 - `heartbeatMs` (default 30 seconds; `0` disables) pings each socket and
   terminates it after a missed pong. This releases watches from half-open
   connections instead of waiting for the operating system to detect them.
+
+The host also applies these across all connections, because a per-connection
+limit multiplies with the number of connections:
+
+- `totalLookupRate` is the same kind of bucket, shared by every connection.
+  The default is 1000 per second with a burst of 10 000, which admits a
+  reconnect storm of a few thousand clients re-looking up a handful of refs
+  each. Lookups past it return `host lookup rate exceeded`. It counts every
+  lookup, including re-lookups of processes that already exist, so size it
+  for your reconnect peak.
+- `maxEntries` caps the host registry (default 10 000). Past it the least
+  recently looked-up entries that nobody is watching are disposed, and a
+  later lookup spawns them afresh. Watched entries are never evicted, so
+  live processes can exceed the cap by the number that clients hold open;
+  set `maxWatchesPerConnection` to bound that too. A process whose state must
+  outlive eviction should be durable, so the respawn resumes from its journal
+  (see [Processes on the server](server.md)). Pass `Infinity` for no cap.
+
+`packages/host/test/host.test.ts` checks the per-connection burst default, the
+shared bucket across several connections, and the registry cap.
 
 For an internet-facing service, also terminate TLS (`wss://`), set request and
 connection limits at the reverse proxy, keep `maxPayloadBytes` appropriate for

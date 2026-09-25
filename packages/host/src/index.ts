@@ -41,11 +41,24 @@ export interface ServeOpts<S extends { [K in keyof S]: Definition<unknown, unkno
   /** Cap on concurrently watched refs per connection; a lookup past it raises to that client. Omit for no cap. */
   maxWatchesPerConnection?: number
   /**
-   * Cap on lookups per connection per window; a lookup past it raises to that
-   * client. Each distinct lookup may spawn a process, so this bounds how fast
-   * one connection can grow the registry. Default 100 per 10 s.
+   * Token bucket for one connection's lookups: `max` per `perMs`, up to
+   * `burst` (default `max`) at once. A lookup with no token left raises to
+   * that client. Default 100 per 10 s with a burst of 500, so a page with a
+   * few hundred remote refs loads in one go.
    */
-  lookupRate?: { max: number; perMs: number }
+  lookupRate?: RateLimit
+  /**
+   * The same bucket shared by every connection, so many connections cannot
+   * multiply the spawn rate. A lookup past it raises `host lookup rate
+   * exceeded`. Default 1000 per second with a burst of 10 000.
+   */
+  totalLookupRate?: RateLimit
+  /**
+   * Most registry entries kept; past it the least recently looked-up
+   * unwatched entries are disposed (watched ones never are). Default 10 000;
+   * `Infinity` for no cap.
+   */
+  maxEntries?: number
   /**
    * Ping each socket at this interval (ms) and terminate it after a missed
    * pong, so half-open connections release their watches. Default 30 s; 0 disables.
@@ -58,6 +71,13 @@ export interface ServeOpts<S extends { [K in keyof S]: Definition<unknown, unkno
    * snapshot. Default 8 MiB.
    */
   maxBufferedBytes?: number
+}
+
+/** `max` tokens refill evenly over each `perMs`, up to `burst` (default `max`) held at once. */
+export interface RateLimit {
+  max: number
+  perMs: number
+  burst?: number
 }
 
 export type OriginPolicy = (
@@ -94,6 +114,28 @@ const wsTransport = (ws: WebSocket, maxBuffered: number): Transport => ({
   },
 })
 
+const checkRate = (option: string, rate: RateLimit): RateLimit => {
+  const burst = rate.burst ?? rate.max
+  if (!Number.isInteger(rate.max) || rate.max < 0 || !(rate.perMs > 0) || !Number.isInteger(burst) || burst < 0)
+    throw new Error(`nonchalant/host: ${option} needs non-negative integer max and burst and a positive perMs`)
+  return rate
+}
+
+// the same token bucket expose() applies per session
+const bucket = (rate: RateLimit): (() => boolean) => {
+  const burst = rate.burst ?? rate.max
+  let tokens = burst
+  let refilledAt = Date.now()
+  return () => {
+    const now = Date.now()
+    tokens = Math.min(burst, tokens + ((now - refilledAt) * rate.max) / rate.perMs)
+    refilledAt = now
+    if (tokens < 1) return false
+    tokens--
+    return true
+  }
+}
+
 /** Start hosting `defs` over WebSockets. Resolves once listening. */
 export async function serve<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }>(
   defs: S,
@@ -105,14 +147,17 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
   const maxWatches = opts?.maxWatchesPerConnection
   if (maxWatches !== undefined && (!Number.isInteger(maxWatches) || maxWatches < 0))
     throw new Error('nonchalant/host: maxWatchesPerConnection must be a non-negative integer')
-  const lookupRate = opts?.lookupRate ?? { max: 100, perMs: 10_000 }
-  if (!Number.isInteger(lookupRate.max) || lookupRate.max < 0 || !(lookupRate.perMs > 0))
-    throw new Error('nonchalant/host: lookupRate needs a non-negative integer max and a positive perMs')
+  const lookupRate = checkRate('lookupRate', opts?.lookupRate ?? { max: 100, perMs: 10_000, burst: 500 })
+  const totalRate = checkRate('totalLookupRate', opts?.totalLookupRate ?? { max: 1_000, perMs: 1_000, burst: 10_000 })
   const maxBuffered = opts?.maxBufferedBytes ?? 8 << 20
   if (!(maxBuffered > 0))
     throw new Error('nonchalant/host: maxBufferedBytes must be positive')
+  const maxEntries = opts?.maxEntries ?? 10_000
+  if (!(maxEntries > 0) || (Number.isFinite(maxEntries) && !Number.isInteger(maxEntries)))
+    throw new Error('nonchalant/host: maxEntries must be a positive integer or Infinity')
 
-  const reg = registry(defs)
+  const reg = registry(defs, { maxEntries })
+  const takeTotal = bucket(totalRate)
   const names = Object.keys(defs)
   const path = opts?.path ?? '/'
   const authorize = async (request: IncomingMessage): Promise<boolean> =>
@@ -191,7 +236,10 @@ export async function serve<S extends { [K in keyof S]: Definition<unknown, unkn
     ws.on('error', () => ws.terminate())
     const gate: Exposable = scopes.get(request) ?? reg
     const session: Exposable = {
-      lookup: (name, ...args) => gate.lookup(name, ...args),
+      lookup: (name, ...args) => {
+        if (!takeTotal()) throw new Error('host lookup rate exceeded')
+        return gate.lookup(name, ...args)
+      },
       principal: gate.principal ?? randomUUID(),
     }
     const admit = gate.admit?.bind(gate)
