@@ -2,6 +2,8 @@ import { defaultClientConditions, defaultServerConditions } from 'vite'
 import { configDefaults, defineConfig } from 'vitest/config'
 
 const PERF = '**/*.perf.test.ts'
+// agent worktrees under .claude/ are whole checkouts; their tests are not this tree's
+const EXCLUDE = [...configDefaults.exclude, '**/.claude/**']
 
 export default defineConfig({
   // test the source: the `source` export condition points @nonchalant/* at src/*.ts
@@ -23,10 +25,10 @@ export default defineConfig({
       thresholds: { statements: 95, lines: 95, functions: 95, branches: 92 },
     },
     projects: [
-      { extends: true, test: { name: 'unit', exclude: [...configDefaults.exclude, PERF] } },
+      { extends: true, test: { name: 'unit', exclude: [...EXCLUDE, PERF] } },
       // wall-clock budgets run alone, after every other file has finished, so
       // a busy neighbour worker can't spend their time
-      { extends: true, test: { name: 'perf', include: [PERF], sequence: { groupOrder: 1 } } },
+      { extends: true, test: { name: 'perf', include: [PERF], exclude: EXCLUDE, sequence: { groupOrder: 1 } } },
     ],
   },
 })
