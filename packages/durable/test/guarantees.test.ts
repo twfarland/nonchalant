@@ -298,6 +298,28 @@ describe('sleep', () => {
     second[Symbol.dispose]()
   })
 
+  it('disposed mid-sleep, runs none of the effects after it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const store = memoryStore()
+    const after: string[] = []
+    const sleeper: DurableProc<Nap, Msg, void> = async function* (self, _args, d) {
+      yield { woke: 0 }
+      for await (const _msg of self) {
+        await d.sleep('nap', 1000)
+        await d.step('ring', () => (after.push('ring'), 0))
+      }
+    }
+    const p = spawn(durable(sleeper, { store, key: (): string => 'nap4', maxAttempts: 1 }), undefined)
+    p.cast({ type: 'add', n: 1 })
+    await settle()
+    p[Symbol.dispose]()
+    await settle()
+
+    expect(after).toStrictEqual([])
+    expect(store.dead('nap4')).toStrictEqual([]) // and disposal is not an attempt
+    expect((await store.pending('nap4', 0)).map((l) => l.seq)).toStrictEqual([1])
+  })
+
   it('leaves no abort listener behind when the timer wins', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const added = vi.spyOn(AbortSignal.prototype, 'addEventListener')
