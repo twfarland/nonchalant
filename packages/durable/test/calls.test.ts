@@ -6,12 +6,9 @@
 import { describe, it, expect } from 'vitest'
 import { spawn } from '@nonchalant/core'
 import type { Call, Cast } from '@nonchalant/core'
+import fc from 'fast-check'
 import { durable, memoryStore, type DurableProc, type Store } from '../src/index.ts'
-
-const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 40; i++) await tick()
-}
+import { failAfter, settle, tick } from './rig.ts'
 
 type Vault = { reserved: number; receipts: string[] }
 type VaultMsg =
@@ -91,25 +88,107 @@ describe('durable calls', () => {
     p[Symbol.dispose]()
   })
 
-  it('survives the callee dying between answering and acknowledging', async () => {
+  it('withholds an answer whose commit failed, and gives the same one after the restart', async () => {
     worked = 0
     const store = memoryStore()
-    // let the answer be recorded, then refuse the commit that would acknowledge it
     const brittle: Store = { ...store, commit: async () => { throw new Error('CRASH') } }
 
     const dying = spawn(durable(vault, { store: brittle, key: (a: { id: string }) => a.id }), { id: 'v4' })
-    expect(await dying.call({ type: 'reserve', amount: 3, callId: 'order-9' })).toBe('receipt-1')
-    dying.cast({ type: 'clear' }) // provokes the commit, which crashes the process
-    await settle()
-    expect(dying.error).toBeInstanceOf(Error)
+    await expect(dying.call({ type: 'reserve', amount: 3, callId: 'order-9' })).rejects.toThrow('CRASH')
+    expect(await store.result('v4', 'order-9')).toBeUndefined()
     dying[Symbol.dispose]()
 
     const back = open(store, 'v4')
-    await settle()
-    expect(worked).toBe(1) // the unacknowledged call was answered already: not handled again
     expect(await back.call({ type: 'reserve', amount: 3, callId: 'order-9' })).toBe('receipt-1')
+    await settle()
+    expect(worked).toBe(1) // the replay answered the step from its journal
+    expect(back()).toStrictEqual({ reserved: 3, receipts: ['receipt-1'] }) // and the state moved once
+    back[Symbol.dispose]()
+  })
+
+  it('never acknowledges an answered call without its answer, however slow the store', async () => {
+    worked = 0
+    const store = memoryStore()
+    let p: ReturnType<typeof open> | undefined
+    // every write takes a turn, and the process dies the moment its commit lands
+    const slow: Store = {
+      ...failAfter(store, Number.POSITIVE_INFINITY, true),
+      commit: async (k, e, c) => {
+        await tick()
+        await store.commit(k, e, c)
+        p?.[Symbol.dispose]()
+      },
+    }
+    p = spawn(durable(vault, { store: slow, key: (a: { id: string }) => a.id }), { id: 'v5' })
+    const answer = p.call({ type: 'reserve', amount: 5, callId: 'order-7' })
+    await settle()
+
+    expect((await store.load('v5')).cursor).toBe(1)
+    expect(await store.result('v5', 'order-7')).toBe('receipt-1')
+    expect(await answer).toBe('receipt-1')
+
+    const back = open(store, 'v5')
+    expect(await back.call({ type: 'reserve', amount: 5, callId: 'order-7' })).toBe('receipt-1')
     expect(worked).toBe(1)
     back[Symbol.dispose]()
+  })
+
+  it('refuses a call without a callId instead of journaling its reply', async () => {
+    worked = 0
+    const store = memoryStore()
+    const p = open(store, 'v6')
+    const untyped = p.call as (msg: { type: 'reserve'; amount: number }) => Promise<string>
+    await expect(untyped({ type: 'reserve', amount: 1 })).rejects.toThrow('nonchalant/durable: a call needs a callId')
+    await settle()
+    expect(await store.pending('v6', 0)).toStrictEqual([])
+    expect(worked).toBe(0)
+    expect(p.error).toBeUndefined() // one bad caller does not take the process down
+    p[Symbol.dispose]()
+  })
+})
+
+describe('durable calls: crash consistency', () => {
+  const amounts = [3, 5, 7]
+
+  /** Callers retry every id until each is answered; crashes land per the schedule, on a slow store. */
+  const runThrough = async (schedule: number[]): Promise<{ answers: Map<string, string[]>; state: Vault | undefined }> => {
+    worked = 0
+    const store = memoryStore()
+    const answers = new Map<string, string[]>()
+    let state: Vault | undefined
+    for (const budget of [...schedule, Number.POSITIVE_INFINITY]) {
+      const p = spawn(durable(vault, { store: failAfter(store, budget, true), key: (a: { id: string }) => a.id }), { id: 'k' })
+      await Promise.all(amounts.map(async (amount, i) => {
+        const callId = `order-${i}`
+        try {
+          const receipt = await p.call({ type: 'reserve', amount, callId })
+          answers.set(callId, [...(answers.get(callId) ?? []), receipt])
+        } catch {
+          // crashed: the caller retries on the next activation
+        }
+      }))
+      await settle(100)
+      if (p.error === undefined) state = p()
+      p[Symbol.dispose]()
+      await tick()
+    }
+    return { answers, state }
+  }
+
+  it('any crash schedule: each call is answered one way, and moves the state once', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.nat(24), { maxLength: 3 }), async (schedule) => {
+        const { answers, state } = await runThrough(schedule)
+        const final = [...answers.values()].map((all) => {
+          expect(new Set(all).size).toBe(1) // a retry never hears a different answer
+          return all[0]
+        })
+        expect(final).toHaveLength(amounts.length)
+        expect(state?.reserved).toBe(amounts.reduce((a, b) => a + b, 0))
+        expect([...(state?.receipts ?? [])].sort()).toStrictEqual([...final].sort())
+      }),
+      { numRuns: 60 },
+    )
   })
 })
 

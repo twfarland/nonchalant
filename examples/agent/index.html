@@ -64,7 +64,7 @@
 
 <h2>Durability is a wrapper</h2>
 <p>The agent is wrapped in <code>durable()</code>: each message is journaled before it is handled, each <code>d.step</code> is journaled as it completes, and the state and the cursor are committed together when the process asks for its next message. Press <strong>kill the machine</strong> in the middle of a question — the process is disposed, the next lookup activates a new one, and it carries on from the journal instead of asking the model again.</p>
-<p>Two honest details. An effect that was <em>in flight</em> when the process died runs again, because its result never landed: journaled steps are exactly-once, everything else is at-least-once. And the store is a port: the adapter here keeps everything in a <code>Map</code>, and a real one implements the same eight methods over whatever it is built on, with the process above it unchanged.</p>
+<p>Two honest details. An effect that was <em>in flight</em> when the process died runs again, because its result never landed: a step executes at least once and is recorded exactly once, and it is handed an idempotency key so the outside world can make it exactly-once too. And the store is a port: the adapter here keeps everything in a <code>Map</code>, and a real one implements the same seven methods over whatever it is built on, with the process above it unchanged.</p>
 <pre><code><span class="k">const</span> run = durable(agent, { store, key: (args) =&gt; args.id })</code></pre>
 <p>The tests (<code>agent.test.ts</code>) run all of this with no DOM and no network: the model is an argument, the tools are processes, and the run reads as a transcript of yields.</p>
 </aside>

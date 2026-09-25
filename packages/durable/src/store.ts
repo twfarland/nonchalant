@@ -1,4 +1,4 @@
-// The port. `durable()` knows nothing about storage beyond these eight
+// The port. `durable()` knows nothing about storage beyond these seven
 // methods, and storage knows nothing about processes — an adapter is a plain
 // object, written wherever the storage lives (this repo ships the in-memory
 // one; a Postgres or SQLite adapter belongs in whatever repo owns that
@@ -6,21 +6,31 @@
 //
 // One key is one process instance: its acknowledged state, the log of messages
 // it has been sent, the effects completed inside the message it is handling
-// right now, and the answers it has already given to calls.
+// right now, the answers it has already given to calls, and the messages it
+// gave up on.
 //
-// The single ordering rule an adapter must honour: `commit` writes the snapshot
-// and the cursor together, or writes neither. Everything else follows from
-// that — a torn commit is the one failure the wrapper cannot recover from,
-// because it is what tells "this message was handled" from "this message must
-// be handled again".
+// Two rules an adapter must honour:
+//
+// - `commit` is one transaction: snapshot, version, cursor, answers, and dead
+//   letter land together or not at all. A torn commit is the one failure the
+//   wrapper cannot recover from, because it is what tells "this message was
+//   handled and answered" from "this message must be handled again".
+// - Every write is conditional on the epoch `load` handed out. `load` claims
+//   the key by raising its epoch; a write carrying an older one must change
+//   nothing and reject with `Fenced`. That is what keeps two hosts that both
+//   think they own a key from interleaving one log.
 
 import type { Json } from '@nonchalant/core'
 
 export interface Loaded {
   /** The last acknowledged state, or undefined if this key has never committed. */
   snapshot: Json | undefined
+  /** The version that snapshot was committed under; 0 before any. */
+  version: number
   /** The sequence number of the last acknowledged message; 0 before any. */
   cursor: number
+  /** This activation's fencing token: greater than every epoch handed out before for this key. */
+  epoch: number
 }
 
 export interface Logged {
@@ -31,29 +41,53 @@ export interface Logged {
 }
 
 export interface StepRecord {
+  /** The step's position within its message. Negative indices record failed attempts. */
   index: number
   name: string
   result: Json
 }
 
+/** A message given up on after too many failed attempts, with the last failure. */
+export interface DeadLetter extends Logged {
+  error: string
+}
+
+export interface Commit {
+  snapshot: Json | undefined
+  version: number
+  /** The message acknowledged; its steps and everything before it in the log may go. */
+  cursor: number
+  /** Answers given while handling it, as [callId, answer]. */
+  results: [string, Json][]
+  /** Set when the message at `cursor` is being dead-lettered rather than acknowledged. */
+  dead?: DeadLetter
+}
+
+/** A write refused because a later `load` of the same key has claimed it. */
+export class Fenced extends Error {
+  constructor(key: string) {
+    super(`nonchalant/durable: '${key}' claimed by a later activation`)
+  }
+}
+
 export interface Store {
-  load(key: string): Promise<Loaded | undefined>
+  /** Claim the key: raise its epoch and return it with the acknowledged state. */
+  load(key: string): Promise<Loaded>
   /** Journal an inbound message before it is handled; returns its sequence number. */
-  append(key: string, msg: Json, callId?: string): Promise<number>
+  append(key: string, epoch: number, msg: Json, callId?: string): Promise<number>
   /** Messages after `cursor`, in order — what a restart must replay. */
   pending(key: string, cursor: number): Promise<Logged[]>
-  /** Record one completed effect of the message at `seq`. */
-  putStep(key: string, seq: number, index: number, name: string, result: Json): Promise<void>
-  /** Effects already completed for that message. */
+  /** Record one completed effect (or failed attempt) of the message at `seq`. */
+  putStep(key: string, epoch: number, seq: number, index: number, name: string, result: Json): Promise<void>
+  /** Effects and failed attempts already recorded for that message. */
   steps(key: string, seq: number): Promise<StepRecord[]>
-  /** Acknowledge: snapshot and cursor land together, and that message's steps are dropped. */
-  commit(key: string, snapshot: Json, cursor: number): Promise<void>
+  /** Acknowledge one message, atomically. */
+  commit(key: string, epoch: number, commit: Commit): Promise<void>
   /**
    * The answer this process already gave to that call, if it gave one. Answers
    * outlive the message that produced them — they are what makes a retried
-   * call return rather than run again — so an adapter with real storage needs a
-   * retention window for them.
+   * call return rather than run again — so an adapter with real storage keeps
+   * them for a retention window and forgets them after.
    */
   result(key: string, callId: string): Promise<Json | undefined>
-  putResult(key: string, callId: string, value: Json): Promise<void>
 }

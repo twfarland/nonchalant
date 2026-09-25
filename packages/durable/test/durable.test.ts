@@ -3,13 +3,7 @@ import fc from 'fast-check'
 import { spawn } from '@nonchalant/core'
 import type { Cast } from '@nonchalant/core'
 import { durable, memoryStore, type DurableProc, type Store } from '../src/index.ts'
-
-// setImmediate, not setTimeout: on Windows a 0ms timer costs ~15ms, which
-// turns a settle loop into a test that looks like a hang
-const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 40; i++) await tick()
-}
+import { failAfter, settle, tick } from './rig.ts'
 
 type Msg = Cast<{ type: 'order'; n: number }>
 type State = { done: string[]; total: number }
@@ -45,24 +39,6 @@ const workflow = (log: Ledger): DurableProc<State, Msg, { id: string }> =>
     }
   }
 
-/** A store that dies after `budget` operations — a crash at an arbitrary point, deterministically placed. */
-const failAfter = (store: Store, budget: number): Store => {
-  let used = 0
-  const guard = (): void => {
-    if (used++ >= budget) throw new Error('CRASH')
-  }
-  return {
-    load: (k) => (guard(), store.load(k)),
-    append: (k, m, c) => (guard(), store.append(k, m, c)),
-    pending: (k, c) => (guard(), store.pending(k, c)),
-    putStep: (k, s, i, n, r) => (guard(), store.putStep(k, s, i, n, r)),
-    steps: (k, s) => (guard(), store.steps(k, s)),
-    commit: (k, s, c) => (guard(), store.commit(k, s, c)),
-    result: (k, c) => (guard(), store.result(k, c)),
-    putResult: (k, c, v) => (guard(), store.putResult(k, c, v)),
-  }
-}
-
 describe('durable', () => {
   it('restores its state and picks up where it stopped', async () => {
     const store = memoryStore()
@@ -91,9 +67,9 @@ describe('durable', () => {
     let writes = 0
     const flaky: Store = {
       ...store,
-      putStep: async (k, s, i, n, r) => {
+      putStep: async (k, e, s, i, n, r) => {
         if (++writes === 2) throw new Error('CRASH')
-        return store.putStep(k, s, i, n, r)
+        return store.putStep(k, e, s, i, n, r)
       },
     }
 
@@ -168,7 +144,7 @@ describe('durable', () => {
 
     const b = spawn(durable(after, opts), undefined)
     await settle()
-    expect(String(b.error)).toMatch(/order of steps/)
+    expect(String(b.error)).toBe("Error: nonchalant/durable: step order drifted in 'w4' #1: step 0 was 'charge', now 'refund'")
     b[Symbol.dispose]()
   })
 })
@@ -219,7 +195,7 @@ describe('durable: crash consistency', () => {
           expect(crashy.runs).toBeLessThanOrEqual(clean.runs + schedule.length * 2)
         },
       ),
-      { numRuns: 30 },
+      { numRuns: 200 },
     )
   })
 })
