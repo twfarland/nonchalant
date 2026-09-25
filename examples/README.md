@@ -3,12 +3,12 @@
 The examples are ordered from introductory to advanced. CI type-checks all of
 them with `pnpm check`, and entries marked ⏱ have dedicated tests or performance
 budgets. Most run entirely in the browser; the chat example uses the included
-local server.
+local server, and durable-sqlite is Node-only and runs as a test.
 
 | example | shows |
 |---|---|
 | `counter/` | widget state as a closed-over `cell`; a Process as a live slot |
-| `todomvc/` | ⏱ one state process + one view; the keyed list patches one row at a time |
+| `todomvc/` | ⏱ one state process + one view; the keyed list patches one row at a time; `?inspect` docks the inspector |
 | `typeahead/` | `latest()` queue conflation, lifetime abort via `self.signal` |
 | `form/` | a submission that receives its result through `call()` (try someone@taken.com) |
 | `router/` | pages as view processes over the userland router in `lib/router.ts` |
@@ -18,15 +18,17 @@ local server.
 | `bounce/` | one physics process rendered through both DOM and canvas output |
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
 | `worker/` | ⏱ the wire over a Web Worker port, keeping expensive work off the UI thread |
-| `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable |
+| `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable; `?inspect` docks the inspector |
 | `react-agent/` | ⏱ the agent's process tree rendered by React via `@nonchalant/react` |
 | `multi-agent/` | ⏱ delegation, hand-off, a state-machine supervisor, shared usage limits |
 | `messaging/` | ⏱ pub/sub and a work queue as ports, with in-memory adapters |
+| `durable-sqlite/` | ⏱ a durable `Store` on `node:sqlite`, certified by the conformance suite (Node only, no page) |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
 | `shared-cart/` | the same cart and view using either a local or remote registry |
-| `mario/` | ⏱ the golden demo: 1 view yield, ≤ 2 DOM writes/frame, CI-asserted |
+| `mario/` | ⏱ the golden demo: 1 view yield, at most 2 DOM writes in any frame, CI-asserted |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
-| `js-framework-benchmark/` | the standard krausest benchmark app, keyed |
+| `js-framework-benchmark/` | ⏱ the standard krausest benchmark app, keyed, with exact DOM-operation counts |
+| `inspector/` | `enable.ts`: the `?inspect` switch that docks `@nonchalant/inspect` on a page |
 
 `lib/` contains reusable code built from the public primitives. It currently
 includes hash and History API routers with replace-by-default navigation.
@@ -81,5 +83,19 @@ Notes:
 - **7guis/cells:** Type `=A1+1` into B1, `=B1*2` into C1, then edit A1.
   Only dependent cells recompute, which its test verifies by counting
   evaluations.
-- **js-framework-benchmark:** The app is implemented here. Submitting it to
-  the benchmark harness repo is a separate, external step.
+- **durable-sqlite:** Not a page. `sqlite-store.ts` maps the eight-method
+  `Store` port onto Node's built-in `node:sqlite`, and
+  `sqlite-store.test.ts` runs `@nonchalant/durable/conformance` against it,
+  then crashes a process mid-message, reopens the file, and checks that the
+  process resumes without repeating its charge and that a scheduler wakes a
+  sleep the crash cut short. Its [README](durable-sqlite/README.md) shows the
+  SQL behind each method.
+- **inspector:** Add `?inspect` to the todomvc or agent page. `enable.ts` is
+  imported first, so the recorder is installed before the page spawns
+  anything; the panel shows the process tree, a timeline of messages and
+  yields, and the state of any process at any recorded moment.
+- **js-framework-benchmark:** The app is implemented here. `bench.test.ts`
+  holds it to exact counts at 1,000 rows: swapping two rows is two moves,
+  select writes two class attributes, and appending a row inserts one and
+  rebinds the existing bindings in place without creating any. Submitting it
+  to the benchmark harness repo is a separate, external step.
