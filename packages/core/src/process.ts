@@ -33,6 +33,8 @@ export interface SpawnOpts<T> {
   maxRestarts?: number
   /** Mailbox bound; overflow drops the oldest message (drop-oldest, dev warning). */
   mailbox?: number
+  /** Crashes are expected and surfaced elsewhere (as `stale` and rejected calls); `onProcessError` skips them. */
+  quiet?: boolean
 }
 
 // ---------- mailbox ----------
@@ -251,7 +253,7 @@ export function spawnProcess<T, In, A>(
   proc: Proc<T, In, A>,
   args: A,
   opts?: SpawnOpts<T>,
-  internal?: { onWatchers?: (count: number) => void; onSettled?: () => void },
+  internal?: { onWatchers?: (count: number) => void; onSettled?: () => void; busy?: () => boolean },
 ): Process<T | undefined, In> {
   const mailboxBound = opts?.mailbox
   if (mailboxBound !== undefined && (!Number.isInteger(mailboxBound) || mailboxBound < 0))
@@ -306,6 +308,7 @@ export function spawnProcess<T, In, A>(
   }
 
   const pendingCalls = new Map<object, (err: unknown) => void>()
+  if (internal) internal.busy = () => pendingCalls.size > 0
   const rejectCalls = (err: unknown): void => {
     for (const reject of pendingCalls.values()) reject(err)
     pendingCalls.clear()
@@ -384,7 +387,7 @@ export function spawnProcess<T, In, A>(
           // a microtask later: a throwing handler surfaces as an unhandled
           // rejection instead of wedging this loop
           const report = crashHandler
-          if (report) void Promise.resolve().then(() => report(err, proc.name))
+          if (report && !opts?.quiet) void Promise.resolve().then(() => report(err, proc.name))
           if (opts?.restart === 'on-crash' && restarts < (opts.maxRestarts ?? 3)) {
             restarts++
             setMeta({ pending: true, stale: true, errored: true })

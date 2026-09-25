@@ -250,6 +250,26 @@ describe('crashes', () => {
     p[Symbol.dispose]()
     q[Symbol.dispose]()
   })
+
+  it('a quiet process crashes and restarts without an onProcessError report', async () => {
+    const seen: unknown[] = []
+    const off = onProcessError((error) => seen.push(error))
+    let starts = 0
+    const flaky = async function* (self: Self<'boom'>) {
+      starts++
+      yield 0
+      for await (const _ of self) throw new Error('boom')
+    }
+    const p = spawn(flaky, undefined, { restart: 'on-crash', quiet: true })
+    await tick()
+    p.cast('boom')
+    await tick()
+    expect(starts).toBe(2) // it crashed and restarted
+    await tick()
+    expect(seen).toEqual([])
+    off()
+    p[Symbol.dispose]()
+  })
 })
 
 describe('mailbox depth', () => {

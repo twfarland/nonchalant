@@ -184,9 +184,10 @@ export function connect<S extends { [K in keyof S]: Definition<unknown, unknown,
     const existing = entries.get(key)
     if (existing !== undefined) return existing.facade
     const ref = `${session}:${++refN}`
-    // infinite restarts: each raise crashes the pump (stale reads), each
+    // infinite, quiet restarts: each raise crashes the pump (stale reads, not an
+    // onProcessError report — a disconnect is not a bug), each
     // reconnect re-lookup feeds the fresh instance a full snapshot
-    const facade = spawn(pumpProc, undefined, { restart: 'on-crash', maxRestarts: Number.POSITIVE_INFINITY })
+    const facade = spawn(pumpProc, undefined, { restart: 'on-crash', maxRestarts: Number.POSITIVE_INFINITY, quiet: true })
     const withMailbox = facade as unknown as { cast(m: HostMsg): void }
     const deliver = withMailbox.cast.bind(facade)
     const entry: Entry = { ref, key, name, args, facade: facade as Process<unknown, unknown>, deliver, calls: new Map(), queued: [], dead: false }

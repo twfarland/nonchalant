@@ -11,7 +11,8 @@
 // (SWR semantics: an evicted entry simply respawns on the next lookup).
 // `maxEntries` bounds the cache: past it, the least recently looked-up
 // unwatched entries are disposed, so distinct args cannot grow memory without
-// bound. Watched entries are never evicted, so a registry whose every entry is
+// bound. Watched entries, and entries holding unanswered calls,
+// are never evicted, so a registry whose every entry is
 // watched may sit above the cap until watchers leave. Registry processes spawn `unscoped` —
 // shared state must not be owned by whichever process looked it up first.
 
@@ -48,6 +49,7 @@ interface Entry {
   process: Process<unknown, unknown>
   timer: ReturnType<typeof setTimeout> | undefined
   watchers: number
+  hooks: { busy?: () => boolean }
 }
 
 export interface RegistryOpts {
@@ -148,7 +150,7 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
       const def = defs[name as keyof S] as unknown as RuntimeDef | undefined
       if (def === undefined) throw new Error(`nonchalant: no definition named ${JSON.stringify(name)} in this registry`)
       const evictMs = def.opts?.evict
-      const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined, watchers: 0 }
+      const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined, watchers: 0, hooks: {} }
       const onWatchers = (count: number): void => {
         created.watchers = count
         if (evictMs === undefined) return
@@ -162,14 +164,14 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
         }
       }
       created.process = unscoped(() =>
-        spawnProcess(def.proc, args, def.opts, {
+        spawnProcess(def.proc, args, def.opts, Object.assign(created.hooks, {
           onWatchers,
           onSettled: () => {
             if (entries.get(key) !== created) return
             if (created.timer !== undefined) clearTimeout(created.timer)
             entries.delete(key)
           },
-        }),
+        })),
       ) as Process<unknown, unknown>
       entry = created
       entries.set(key, entry)
@@ -177,7 +179,8 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
       if (entries.size > max) {
         for (const [k, e] of entries) {
           if (entries.size <= max) break
-          if (!e.watchers && e !== created) drop(k)
+          // evicting an entry holding unanswered calls would reject them under their callers
+          if (!e.watchers && e !== created && !e.hooks.busy?.()) drop(k)
         }
       }
     }

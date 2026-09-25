@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { define, registry, effect, derive } from '../src/index.ts'
-import type { Proc } from '../src/index.ts'
+import type { Call, Cast, Proc } from '../src/index.ts'
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -332,6 +332,36 @@ describe('registry: maxEntries bounds the cache', () => {
     expect(reg.lookup('v', 1)).toBe(first)
     stop()
     reg.evict('v')
+  })
+
+  it('an entry holding unanswered calls is not evicted to make room', async () => {
+    type Msg = Call<{ type: 'get' }, number> | Cast<{ type: 'go' }>
+    const held: Proc<number, Msg, number> = async function* (self, id) {
+      let waiting: Extract<Msg, { type: 'get' }>[] = []
+      yield id
+      for await (const msg of self) {
+        switch (msg.type) {
+          case 'get':
+            waiting = [...waiting, msg]
+            continue
+          case 'go':
+            for (const w of waiting) w.reply(id)
+            waiting = []
+            continue
+        }
+      }
+    }
+    const reg = registry({ h: define(held) }, { maxEntries: 1 })
+    const first = reg.lookup('h', 1)
+    await tick()
+    const answers = [first.call({ type: 'get' }), first.call({ type: 'get' })]
+    await tick()
+    reg.lookup('h', 2)
+    await tick()
+    expect(reg.lookup('h', 1)).toBe(first)
+    first.cast({ type: 'go' })
+    expect(await Promise.all(answers)).toEqual([1, 1])
+    reg.evict('h')
   })
 })
 

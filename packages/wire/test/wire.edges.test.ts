@@ -4,7 +4,7 @@
 // disconnect).
 
 import { describe, it, expect, vi } from 'vitest'
-import { define, registry } from '@nonchalant/core'
+import { define, onProcessError, registry } from '@nonchalant/core'
 import type { Call, Cast, Definition, Json, Proc } from '@nonchalant/core'
 import { connect, WireError } from '../src/client.ts'
 import { expose, type Exposable, type ExposeOpts } from '../src/host.ts'
@@ -338,6 +338,21 @@ describe('client lifecycle edges', () => {
     conn.close()
     stop()
     reg.evict('room')
+  })
+
+  it('a disconnect marks refs stale without reporting a process crash', async () => {
+    const { link, conn, teardown } = setup()
+    const seen: unknown[] = []
+    const off = onProcessError((error) => seen.push(error))
+    const r = conn.lookup('room')
+    await until(() => r() !== undefined)
+    link.disconnect()
+    await until(() => r.stale)
+    link.reconnect()
+    await until(() => !r.stale)
+    expect(seen).toEqual([])
+    off()
+    teardown()
   })
 
   it('casts made while disconnected are sent after the re-lookup, in order', async () => {

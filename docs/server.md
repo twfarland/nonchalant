@@ -250,6 +250,12 @@ This provides four behaviors:
   the callee dies first, the caller's call rejects, the message is replayed
   from its journal, and the retry gets the answer the replay committed.
 
+Over the wire these hold per principal: the host namespaces every client's
+`callId` by the connection's principal. A `scope` that names a stable principal
+(the user id) keeps retries idempotent across reconnects; without one, each
+connection is its own principal and a retry after a reconnect runs the work
+again ([Hosting](hosting.md#durable-call-ids)).
+
 One consequence: a reply is released when the process asks for its next
 message, so a handler that replies and then sleeps holds the answer for the
 sleep. Reply at the end of the handler, or split the wait into its own message.

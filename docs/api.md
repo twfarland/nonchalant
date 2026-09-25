@@ -32,6 +32,7 @@ The runtime. No dependencies, no DOM.
 | `restart` | `'never' \| 'on-crash'` | `'never'` | `'on-crash'` re-runs the generator from its args after a throw; queued casts replay, pending and queued calls reject. |
 | `maxRestarts` | `number` (non-negative integer or `Infinity`) | `3` | Restart budget; past it the crash is terminal. |
 | `mailbox` | `number` (non-negative integer) | unbounded | Queue bound; overflow drops the oldest message (a dropped call rejects) with a one-time warning. |
+| `quiet` | `boolean` | `false` | The process's crashes are expected and surfaced elsewhere (as `stale` and rejected calls), so `onProcessError` skips them. The wire client's remote refs use it: a disconnect is not a bug. |
 
 ### The Process face
 
@@ -69,7 +70,7 @@ unwatched process alive (finite, non-negative; omit to never auto-evict).
 
 `RegistryOpts` is `{ maxEntries?: number }` (positive; omit for no cap). Past
 the cap, the least recently looked-up *unwatched* entries are disposed.
-Watched entries are never evicted, so a registry whose every entry is watched
+Watched entries, and entries holding unanswered calls, are never evicted, so a registry whose every entry is watched
 can sit above the cap until watchers leave. A watcher is an effect, or a
 derive or iterator an effect reads through; a derive read only as a snapshot
 does not keep an entry alive.

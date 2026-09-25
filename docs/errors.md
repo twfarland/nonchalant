@@ -83,6 +83,8 @@ stop()                               // removes this handler
 The handler runs a microtask after the crash, so one that throws surfaces as an
 unhandled rejection rather than disturbing the process. There is one handler at
 a time; installing another replaces it.
+Processes spawned with `quiet: true` are skipped; remote refs from `connect`
+are quiet, so a flaky network marks them `stale` without flooding the handler.
 
 ## Derives and effects
 

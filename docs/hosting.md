@@ -129,9 +129,11 @@ the top level of a call's message is rewritten into the connection's
 principal namespace: `order-7` becomes `["alice","order-7"]`. The principal is
 the gateway's `principal` when `scope` returns one. Otherwise the host
 generates a random principal for each connection, so no two connections ever
-share an answer record. Set `principal` to the user's stable id when a user's
-retries must land on the same record across reconnects, which is usually what
-you want. The rewritten id is what the process sees, and what it replies
+share an answer record. That default is safe but forgets across reconnects:
+a client whose call was cut off by a disconnect retries on a new connection,
+under a new principal, and the durable callee does the work again. Set
+`principal` to the user's stable id whenever retries must land on the same
+record, which for durable calls is almost always. The rewritten id is what the process sees, and what it replies
 under.
 
 ## Connection limits
