@@ -291,10 +291,10 @@ describe('registry: maxEntries bounds the cache', () => {
     return { proc, live }
   }
 
-  it('rejects a cap that is not a positive integer', () => {
+  it('rejects a cap that is not positive', () => {
     const { proc } = tracked()
     expect(() => registry({ v: define(proc) }, { maxEntries: 0 })).toThrow(/maxEntries/)
-    expect(() => registry({ v: define(proc) }, { maxEntries: 1.5 })).toThrow(/maxEntries/)
+    expect(() => registry({ v: define(proc) }, { maxEntries: -1 })).toThrow(/maxEntries/)
     expect(() => registry({ v: define(proc) }, { maxEntries: Number.NaN })).toThrow(/maxEntries/)
   })
 

@@ -46,9 +46,11 @@ dependencies recorded against a run that already ended.
 A computed's return value never carries proxies out. `unwrap()` runs on
 whatever a derive's getter returns, but only when that run opened a recorder.
 It replaces each proxy with the raw snapshot node behind it, using a
-`WeakMap` from proxy to target that is filled as proxies are created. It walks
-only the plain containers the getter built itself, and copies them on write,
-because a proxy's target is raw data all the way down. So
+`WeakMap` from proxy to target that is filled as proxies are created. A proxy
+is swapped whole, because its target is raw data all the way down. The plain
+containers around it can only have been built by the getter during the run,
+so they are patched in place (a frozen one keeps its proxies). A `seen` set
+makes cyclic results terminate. So
 `derive(() => p().items.filter((x) => x.done))` holds the snapshot's own
 items: identity matches untracked reads, `structuredClone` works, and a derive
 that returns an unchanged subtree gives downstream readers an equality cut. A

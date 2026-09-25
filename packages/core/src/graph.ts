@@ -218,7 +218,7 @@ export function source<T extends Json>(
 /** Does an effect sit at or downstream of this node? Disposed effects have flags 0. */
 function isWatched(node: ReactiveNode): boolean {
   if ('fn' in node) return node.flags !== 0
-  for (let l = node.subs; l !== undefined; l = l.nextSub) if (isWatched(l.sub)) return true
+  for (let l = node.subs; l; l = l.nextSub) if (isWatched(l.sub)) return true
   return false
 }
 
@@ -231,19 +231,19 @@ function count(gate: Gate, on: boolean): void {
 
 /** A computed just gained (`on`) or lost its watched path: re-judge the gates beneath it. */
 function rewatch(node: ReactiveNode, on: boolean): void {
-  for (let l = node.deps; l !== undefined; l = l.nextDep) {
+  for (let l = node.deps; l; l = l.nextDep) {
     const dep = l.dep
     const gate = (dep as SignalNode).gate
-    if (gate !== undefined) count(gate, on)
+    if (gate) count(gate, on)
     else if ('getter' in dep && (on || !isWatched(dep))) rewatch(dep, on)
   }
 }
 
-/** unlink, then settle a computed dep that kept other subscribers but may have lost its last watched one. */
+/** unlink, then settle a computed dep that may have lost its last watched subscriber (one that lost every subscriber already dropped its deps in `unwatched`). */
 function unlinkDep(l: Link, sub: ReactiveNode): Link | undefined {
   const dep = l.dep
   const next = unlink(l, sub)
-  if (dep.subs !== undefined && 'getter' in dep && !isWatched(dep)) rewatch(dep, false)
+  if ('getter' in dep && !isWatched(dep)) rewatch(dep, false)
   return next
 }
 
@@ -319,8 +319,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   try {
     ++cycle
     const oldValue = c.value
-    const v = c.getter(oldValue)
-    return !Object.is(oldValue, (c.value = openGates.length > mark ? unwrap(v) : v))
+    return !Object.is(oldValue, (c.value = settle(c.getter(oldValue), mark)))
   } finally {
     activeSub = prevSub
     c.flags &= ~RECURSED_CHECK
@@ -328,6 +327,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     purgeDeps(c)
   }
 }
+
+/** A getter's result, free of read proxies if the run opened any recorder. */
+const settle = <T>(v: T, mark: number): T => (openGates.length > mark ? unwrap(v) : v)
 
 function computedOper<T>(c: ComputedNode<T>): T {
   const flags = c.flags
@@ -346,8 +348,7 @@ function computedOper<T>(c: ComputedNode<T>): T {
     activeSub = c
     const mark = openGates.length
     try {
-      const v = c.getter()
-      c.value = openGates.length > mark ? unwrap(v) : v
+      c.value = settle(c.getter(), mark)
     } finally {
       activeSub = prevSub
       c.flags &= ~RECURSED_CHECK

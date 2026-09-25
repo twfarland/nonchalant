@@ -75,25 +75,26 @@ const isTrackable = (value: object): boolean => {
 const targets = new WeakMap<object, object>()
 
 /**
- * Replace read proxies with their raw targets throughout a value. Proxies are
- * swapped whole (their targets are raw snapshot data); only plain containers
- * built during the run are walked, and copied on write. Non-plain objects
- * (Date, Map, class instances) are left as they are.
+ * Replace read proxies with their raw targets throughout a value. A proxy is
+ * swapped whole (its target is raw snapshot data); the plain containers
+ * around it were built by the getter during the run, so they are patched in
+ * place (a frozen one keeps its proxies). Non-plain objects (Date, Map, class
+ * instances) are not walked.
  */
 export function unwrap<T>(value: T, seen = new Set<object>()): T {
   if (typeof value !== 'object' || value === null) return value
   const raw = targets.get(value)
-  if (raw !== undefined) return raw as T
-  if (seen.has(value) || !isTrackable(value)) return value
-  seen.add(value)
-  const src = value as { [key: string]: unknown }
-  let out: { [key: string]: unknown } | undefined
-  for (const k of Object.keys(src)) {
-    const v = src[k]
-    const u = unwrap(v, seen)
-    if (u !== v) (out ??= Array.isArray(src) ? (src.slice() as unknown as typeof src) : { ...src })[k] = u
+  if (raw) return raw as T
+  if (isTrackable(value) && !seen.has(value)) {
+    seen.add(value)
+    const box = value as { [key: string]: unknown }
+    for (const k of Object.keys(box)) {
+      const v = box[k]
+      const u = unwrap(v, seen)
+      if (u !== v) Reflect.set(box, k, u)
+    }
   }
-  return (out ?? value) as T
+  return value
 }
 
 export function createRecorder(): Recorder {
@@ -136,7 +137,7 @@ export function createRecorder(): Recorder {
           node.structural = true
           return target.length
         }
-        if (!Object.prototype.hasOwnProperty.call(target, key)) {
+        if (!Object.hasOwn(target, key)) {
           const v: unknown = Reflect.get(target, key)
           // prototype methods (map, slice, hasOwnProperty…): call sites keep
           // `this` = proxy, so the method's own reads still hit the traps

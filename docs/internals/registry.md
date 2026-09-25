@@ -48,9 +48,10 @@ all matter:
 |---|---|---|
 | `{ a: 1, b: 2 }` / `{ b: 2, a: 1 }` | same string (keys sorted) | argument order must not split the cache |
 | `1` vs `'1'` vs `true` | type-tagged (`number:1`, `string:"1"`, `true`) | no collisions across types |
-| `NaN`, `±Infinity`, `-0` | explicit tokens | `JSON.stringify` turns these into `null`/`0` |
+| `NaN`, `±Infinity`, `-0` | `number:NaN`, `number:Infinity`, `number:-0` | `JSON.stringify` turns these into `null`/`0`; `String()` spells all but `-0` |
 | `undefined` vs missing | `undefined` | distinguishable |
-| `bigint`, `symbol` | tagged; symbols get a stable id | not JSON-representable |
+| `bigint`, `symbol` | tagged; symbols get a stable id | not JSON-representable; `1n`, `1` and `'1'` stay distinct |
+| array holes | `hole` | `[, 1]` and `[undefined, 1]` are different arguments |
 | a cycle | `cycle:<id>` | encoding must terminate |
 | class instance, `Map`, `Date`, function | identity id from a `WeakMap` | no structural identity to rely on |
 

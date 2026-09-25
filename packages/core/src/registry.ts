@@ -51,7 +51,7 @@ interface Entry {
 }
 
 export interface RegistryOpts {
-  /** Most entries kept; past it the least recently looked-up unwatched entries are evicted. Omit for no cap. */
+  /** Most entries kept; past it the least recently looked-up unwatched entries are evicted. Omit for no cap. Positive. */
   maxEntries?: number
 }
 
@@ -66,9 +66,8 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
   defs: S,
   opts?: RegistryOpts,
 ): RegistryHandle<S> {
-  const max = opts?.maxEntries
-  if (max !== undefined && !(Number.isInteger(max) && max > 0))
-    throw new Error('nonchalant: maxEntries must be a positive integer')
+  const max = opts?.maxEntries ?? Number.POSITIVE_INFINITY
+  if (!(max > 0)) throw new Error('nonchalant: maxEntries must be positive')
   // Map order is recency order: a hit re-inserts its key at the end
   const entries = new Map<string, Entry>()
   const objectIds = new WeakMap<object, number>()
@@ -87,15 +86,11 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
   const encodeArg = (value: unknown, ancestors: Set<object>): string => {
     if (value === null) return 'null'
     switch (typeof value) {
-      case 'undefined': return 'undefined'
-      case 'boolean': return value ? 'true' : 'false'
+      case 'undefined':
+      case 'boolean': return String(value)
       case 'string': return `string:${JSON.stringify(value)}`
-      case 'number':
-        if (Number.isNaN(value)) return 'number:NaN'
-        if (value === Number.POSITIVE_INFINITY) return 'number:Infinity'
-        if (value === Number.NEGATIVE_INFINITY) return 'number:-Infinity'
-        if (Object.is(value, -0)) return 'number:-0'
-        return `number:${value}`
+      // String() spells NaN and ±Infinity; only -0 needs its own token
+      case 'number': return Object.is(value, -0) ? 'number:-0' : `number:${value}`
       case 'bigint': return `bigint:${value}`
       case 'symbol': {
         let id = symbolIds.get(value)
@@ -146,11 +141,10 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
     const args = rest[0]
     const key = name + SEP + argsKey(args)
     let entry = entries.get(key)
-    if (entry !== undefined && max !== undefined) {
+    if (entry !== undefined) {
       entries.delete(key)
       entries.set(key, entry)
-    }
-    if (entry === undefined) {
+    } else {
       const def = defs[name as keyof S] as unknown as RuntimeDef | undefined
       if (def === undefined) throw new Error(`nonchalant: no definition named ${JSON.stringify(name)} in this registry`)
       const evictMs = def.opts?.evict
@@ -180,10 +174,10 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
       entry = created
       entries.set(key, entry)
       onWatchers(0)
-      if (max !== undefined && entries.size > max) {
+      if (entries.size > max) {
         for (const [k, e] of entries) {
           if (entries.size <= max) break
-          if (e.watchers === 0 && e !== created) drop(k)
+          if (!e.watchers && e !== created) drop(k)
         }
       }
     }

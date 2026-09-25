@@ -860,7 +860,7 @@ describe('derive returns raw values, never read proxies', () => {
     meta[Symbol.dispose]()
   })
 
-  it('nested fresh containers are unwrapped copy-on-write; non-plain values pass through', () => {
+  it('proxies inside fresh containers are swapped at any depth; non-plain values pass through', () => {
     const snap = mkState()
     const src = source<State>(snap)
     const when = new Date(0)
@@ -870,6 +870,21 @@ describe('derive returns raw values, never read proxies', () => {
     expect(v.pair[0]).toBe(snap.meta)
     expect(v.when).toBe(when)
     shaped[Symbol.dispose]()
+  })
+
+  it('a cyclic result terminates, with its proxies swapped', () => {
+    const snap = mkState()
+    const src = source<State>(snap)
+    type Node = { meta: unknown; self?: Node }
+    const cyclic = derive(() => {
+      const node: Node = { meta: src().meta }
+      node.self = node
+      return node
+    })
+    const v = cyclic()
+    expect(v.self).toBe(v)
+    expect(v.meta).toBe(snap.meta)
+    cyclic[Symbol.dispose]()
   })
 })
 
