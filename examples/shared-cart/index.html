@@ -18,6 +18,19 @@
 <pre><code><span class="k">const</span> shop = registry({ cart: define(cart) })                             <span class="c">// this tab</span>
 <span class="c">// const shop = connect&lt;Shop&gt;(webSocketTransport('ws://127.0.0.1:4321/?token=alice-demo-token'))  // the server</span></code></pre>
 <p>Same messages, same <code>call()</code>, same fine-grained updates either way. Run <code>pnpm cart-server</code>, flip the line, and a disconnect leaves readers on the last value with <code>stale</code> set until the transport finds the server again.</p>
+<p>The cart itself is written with <code>reducer</code>, optional sugar for a process that only folds messages into state. It compiles to an ordinary generator process, which is why the registry and the wire need nothing special for it:</p>
+<pre><code><span class="k">export function</span> cartStep(s: CartState, msg: CartMsg): CartState {
+  <span class="k">switch</span> (msg.type) {
+    <span class="k">case</span> <span class="s">'add'</span>:
+      <span class="k">return</span> priced([...s.items, msg.item])
+    <span class="c">// …</span>
+    <span class="k">case</span> <span class="s">'checkout'</span>:
+      msg.reply({ ok: <span class="k">true</span>, charged: s.total })
+      <span class="k">return</span> s.items.length === 0 ? s : priced([])  <span class="c">// same state: no yield</span>
+  }
+}
+
+<span class="k">export const</span> cart = reducer((_: { userId: string }) =&gt; priced([]), cartStep)</code></pre>
 </aside>
 </div>
 <script type="module" src="./main.ts"></script>

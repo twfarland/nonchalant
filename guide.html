@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide · Nonchalant</title>
+<meta name="description" content="The Nonchalant model step by step: processes, messages, views and bindings, how updates stay small, and shared state.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23131312'/%3E%3Cpath d='M9 22V10l14 12V10' stroke='%23F5F5F4' stroke-width='2.5' fill='none' stroke-linecap='square'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..600&display=swap">
+<link rel="stylesheet" href="./site/styles.css">
+</head>
+<body>
+
+<div class="page">
+
+<nav class="topnav" aria-label="Site">
+  <a class="brand" href="./">NONCHALANT</a>
+  <a href="./">Overview</a>
+  <a href="./guide.html" aria-current="page">Guide</a>
+  <a href="./anywhere.html">Run anywhere</a>
+  <a href="./server.html">Server &amp; agents</a>
+  <a href="./examples/">Examples</a>
+  <span class="spacer"></span>
+  <a href="./docs/">Docs</a>
+  <a href="https://github.com/twfarland/nonchalant">GitHub</a>
+</nav>
+
+<header class="mast sub" id="top">
+  <div class="eyebrow">Guide</div>
+  <h1>The model, step by step</h1>
+  <p class="deck">Processes, messages, views, updates, and shared state, each building on the one before. The counter from the <a href="./#idea">overview</a> is all you need to start.</p>
+  <ol class="toc">
+    <li><a href="#processes">Processes</a></li>
+    <li><a href="#messages">Messages: cast and call</a></li>
+    <li><a href="#input">Input, in order</a></li>
+    <li><a href="#lifetime">Lifetime and ownership</a></li>
+    <li><a href="#views">Views and bindings</a></li>
+    <li><a href="#updates">How updates stay small</a></li>
+    <li><a href="#registry">Sharing state by name</a></li>
+    <li><a href="#sugar">Shorter forms</a></li>
+    <li><a href="#inspect">Seeing inside</a></li>
+    <li><a href="#reference">Quick reference</a></li>
+  </ol>
+</header>
+
+<section id="processes">
+  <div class="sec-head"><span class="sec-num">01</span><h2>Processes</h2></div>
+
+  <p>A process is an async generator run by <code>spawn</code>. In a real app you name its three types with <code>Proc&lt;State, Message, Args&gt;</code>: what it yields, what messages it accepts, and what it is started with.</p>
+
+<pre><code data-ts>
+import { spawn } from '@nonchalant/core'
+import type { Cast, Proc } from '@nonchalant/core'
+
+type Msg = Cast&lt;{ type: 'add'; by: number }&gt; | Cast&lt;{ type: 'reset' }&gt;
+
+const counter: Proc&lt;number, Msg, { start: number }&gt; = async function* (self, { start }) {
+  let n = start
+  yield n
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'add':
+        n += msg.by
+        break
+      case 'reset':
+        n = start
+        break
+    }
+    yield n
+  }
+}
+
+const c = spawn(counter, { start: 10 }, { initial: 10 })
+c.cast({ type: 'add', by: 5 })
+</code></pre>
+
+  <p>Messages are a union of object types told apart by their <code>type</code> field, and the loop handles them with a <code>switch</code>, one <code>case</code> per message. The loop body plays the part other libraries give to a reducer, except that it can also <code>await</code>, keep private variables, and yield more than once.</p>
+
+  <p>State is updated immutably: reassign the <code>let</code> with a new object, spreading in whatever didn't change, as in <code>s = { ...s, total }</code>. The parts that didn't change stay identical, which is what makes updates cheap (section 06 explains why).</p>
+
+  <p>The third argument to <code>spawn</code> holds options. Besides <code>initial</code>, the most useful is <code>restart: 'on-crash'</code>, which reruns the generator from its arguments if it throws.</p>
+</section>
+
+<section id="messages">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Messages: cast and call</h2></div>
+
+  <p>There are two kinds of message. A <strong>cast</strong> is one-way: the sender doesn't wait. A <strong>call</strong> expects an answer: the sender gets a promise, and the process answers by calling <code>msg.reply</code>. The message type says which is which:</p>
+
+<pre><code data-ts>
+type Item = { id: string; name: string; price: number }
+type Cart = { items: Item[]; total: number }
+type CartMsg =
+  | Cast&lt;{ type: 'add'; item: Item }&gt;
+  | Cast&lt;{ type: 'clear' }&gt;
+  | Call&lt;{ type: 'checkout' }, { ok: boolean; charged: number }&gt;
+
+const cart: Proc&lt;Cart, CartMsg, void&gt; = async function* (self) {
+  let s: Cart = { items: [], total: 0 }
+  yield s
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'add':
+        s = { items: [...s.items, msg.item], total: s.total + msg.item.price }
+        break
+      case 'clear':
+        s = { items: [], total: 0 }
+        break
+      case 'checkout':
+        msg.reply({ ok: s.items.length &gt; 0, charged: s.total })
+        continue                          // answered, state unchanged: no yield
+    }
+    yield s
+  }
+}
+</code></pre>
+
+  <p>Inside the loop, <code>break</code> leaves the <code>switch</code> and reaches the <code>yield</code> at the bottom. <code>continue</code> skips it, which is how a process says "nothing changed, publish nothing". From the outside:</p>
+
+<pre><code data-ts>
+const shop = spawn(cart, undefined, { initial: { items: [], total: 0 } })
+shop.cast({ type: 'add', item: boots })
+const receipt = await shop.call({ type: 'checkout' })   // typed: { ok: boolean; charged: number }
+</code></pre>
+
+  <p>TypeScript routes each message: <code>cast</code> refuses a call, <code>call</code> refuses a cast, and the reply is typed. If the process crashes, finishes, or is disposed before it answers, the promise rejects instead of hanging.</p>
+
+  <p>Every handle also has three status reads: <code>pending</code> (the process is working toward its next yield), <code>stale</code> (the value survived a crash or a lost connection), and <code>error</code> (the last failure). They are reads like any other, so a view shows them the same way it shows state.</p>
+
+  <div class="demo" data-demo="form">
+    <div class="demo-head">
+      <span class="demo-title">Form</span>
+      <span class="demo-note">call() hands the submit button the outcome of its own submission</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+</section>
+
+<section id="input">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Input, in order</h2></div>
+
+  <p>Messages wait in the mailbox and are handled one at a time. While a process is busy, awaiting a request for example, new messages queue behind it instead of interleaving with it. That removes a whole class of race: a double-clicked submit is handled twice, in order, never both at once.</p>
+
+  <p>When only the newest input matters, loop over <code>self.latest()</code> instead of <code>self</code>. Each time the loop asks for the next message, it gets the most recent one, and anything older is dropped. That is a typeahead with no debounce timer:</p>
+
+<pre><code data-ts>
+for await (const { q } of self.latest()) {             // skip to the newest query
+  yield { q, results, pending: true }
+  try {
+    results = await search(q, { signal: self.signal })  // aborted if the process is disposed
+    yield { q, results, pending: false }
+  } catch {
+    /* aborted or failed: keep listening */
+  }
+}
+</code></pre>
+
+  <p><code>self.signal</code> is an <code>AbortSignal</code> that fires when the process is disposed or crashes. Pass it to every fetch, and work that belongs to a process that no longer exists is cancelled. The <a href="./#demos">typeahead demo</a> on the overview runs this loop.</p>
+</section>
+
+<section id="lifetime">
+  <div class="sec-head"><span class="sec-num">04</span><h2>Lifetime and ownership</h2></div>
+
+  <p>A process ends when its generator returns, when it throws (unless it is set to restart), or when it is disposed:</p>
+
+<pre><code data-ts>
+c[Symbol.dispose]()               // start teardown now
+await c[Symbol.asyncDispose]()    // or: start it, and wait until every finally block has run
+</code></pre>
+
+  <p>Disposal closes the mailbox, aborts <code>self.signal</code>, and runs the generator's <code>finally</code> blocks. Anything a process spawns belongs to it and is disposed with it, so cleanup follows structure: dispose a page and everything the page started goes too.</p>
+
+  <div class="note"><b>One rule to remember.</b> A process owns what it spawns during the synchronous part of each step. Spawn children before your first <code>await</code>; a spawn after it runs unowned.</div>
+
+  <p>Processes are cheap enough to be short-lived. This demo starts one per drag: it begins on pointer-down, yields a position for each move, and is disposed on pointer-up, taking its subscriptions with it.</p>
+
+  <div class="demo" data-demo="drag">
+    <div class="demo-head">
+      <span class="demo-title">Drag</span>
+      <span class="demo-note">a process that lives for one pointer gesture</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+</section>
+
+<section id="views">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Views and bindings</h2></div>
+
+  <p>Views are plain function calls. <code>@nonchalant/dom/tags</code> exports one function per HTML element, called as <code>div(attributes, ...children)</code>, and <code>h('my-element', attributes, ...children)</code> covers any other tag. Nothing is parsed from strings, so text from your data can never turn into markup.</p>
+
+  <p>A component is an ordinary function that takes the processes it needs and returns a tree:</p>
+
+<pre><code data-ts>
+function Summary(shop: Process&lt;Cart, CartMsg&gt;): VNode {
+  return div({},
+    span({}, () =&gt; `${shop().items.length} items, $${shop().total}`),   // a text binding
+    button({
+      disabled: () =&gt; shop().items.length === 0,                       // an attribute binding
+      onclick: () =&gt; shop.cast({ type: 'clear' }),
+    }, 'clear'),
+    ul({}, () =&gt; shop().items.map((item) =&gt; li({ key: item.id }, item.name))))  // a keyed list
+}
+</code></pre>
+
+  <p>The function runs once. Each function inside the tree is a <strong>binding</strong>, whether it sits in a child position or an attribute, and so is a process placed directly in the tree. A binding runs again whenever something it read changes, and it updates only its own spot on the page. (<code>onclick</code> is different: it's an event handler, called when the event fires.)</p>
+
+  <p>Structure changes happen inside bindings too. A binding that returns elements is a <strong>region</strong>, which the renderer patches in place. A binding that returns an array of elements with <code>key</code>s is a keyed list: rows are matched by key, and only the rows that were added, removed, or moved touch the DOM.</p>
+
+  <p>Outside a view, two functions subscribe in the same way:</p>
+
+<pre><code data-ts>
+const itemCount = derive(() =&gt; shop().items.length)
+const stop = effect(() =&gt; {
+  document.title = `Cart (${itemCount()})`
+})
+</code></pre>
+
+  <p><code>derive</code> computes a value from other processes and can be read like a process itself; it notifies its readers only when its result actually changes. <code>effect</code> runs a side effect now, and again whenever what it read changes. It is for pushing state to things outside Nonchalant, such as the document title, and it returns a function that stops it.</p>
+
+  <div class="note"><b>Reads don't subscribe by accident.</b> Reading <code>shop()</code> inside a binding, <code>derive</code>, or <code>effect</code> subscribes to what was read. Anywhere else, such as an event handler, it returns the current value and subscribes to nothing.</div>
+</section>
+
+<section id="updates">
+  <div class="sec-head"><span class="sec-num">06</span><h2>How updates stay small</h2></div>
+
+  <p class="lede">Libraries usually make you choose between plain data and precise updates. Nonchalant gives you both.</p>
+
+  <p>With plain immutable data (React, Redux), state is easy to reason about, but a change re-runs whole components, and you memoize to win back the cost. With reactive containers (signals, observable stores), updates are precise, but your state is no longer plain data. Nonchalant keeps plain data and makes updates precise in three steps:</p>
+
+  <ol>
+    <li><strong>Each yield is diffed.</strong> The new state is compared with the previous one, producing a list of changed paths. Immutable updates keep unchanged parts identical, so the comparison skips them without looking inside. Its cost follows the size of the change, not the size of the state.</li>
+    <li><strong>Each binding records what it reads.</strong> While a binding runs, its reads go through a short-lived proxy that notes which paths it touched, such as <code>total</code> or <code>items[3].done</code>.</li>
+    <li><strong>Only matching bindings run.</strong> A binding runs again only if the diff includes a path it read.</li>
+  </ol>
+
+<pre><code data-ts>
+s = { ...s, total: s.total + item.price }   // an ordinary immutable update
+yield s                                     // the diff: total changed
+
+// () =&gt; cart().total              runs again
+// () =&gt; cart().items[3].done      does not
+</code></pre>
+
+  <p>There is no compiler and no dependency list. What it asks of you is the update style: reassign with <code>let</code> and spread. Mutating an object in place hides the change from the diff, and deep-cloning everything makes every part look changed.</p>
+
+  <h3>A game at 60 frames per second</h3>
+
+  <p>This demo ports the physics of the classic <a href="https://elm-lang.org/examples/mario">Elm Mario example</a>. One process holds the world. Animation frames and arrow keys arrive as messages, and only frames move the world forward, so holding a key can never advance the physics twice in one frame. The view is built once. After that, the busiest frame makes two DOM writes, and no element is ever replaced.</p>
+
+  <div class="demo" data-demo="mario">
+    <div class="demo-head">
+      <span class="demo-title">Mario</span>
+      <span class="demo-note">click the stage, then use the arrow keys; up jumps</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <h3 id="budgets">Checked in CI</h3>
+
+  <p>These numbers are assertions in the test suite, so a change that breaks one fails the build:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>What is checked</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Changing one label in a 50-row list is one DOM write</td><td><code>dom.test.ts</code></td></tr>
+      <tr><td>The game above: the view is built once, the busiest frame makes at most 2 DOM writes, and nothing is replaced</td><td><code>mario.golden.test.ts</code></td></tr>
+      <tr><td>Swapping two of 1,000 keyed rows is exactly 2 DOM moves</td><td><code>bench.test.ts</code></td></tr>
+      <tr><td>Selecting a row in 1,000 is exactly 2 class writes</td><td><code>bench.test.ts</code></td></tr>
+      <tr><td>Appending to 1,000 rows inserts 1 row, writes to none of the others, and re-creates none of their bindings</td><td><code>bench.test.ts</code></td></tr>
+      <tr><td>Updating every 10th of 1,000 rows is exactly 100 text writes</td><td><code>bench.test.ts</code></td></tr>
+      <tr><td>Diffing a 10,000-row state with one changed row takes at most 100 µs</td><td><code>reconcile.perf.test.ts</code></td></tr>
+      <tr><td>Nothing is retained after a process is disposed</td><td><code>process.leaks.test.ts</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="registry">
+  <div class="sec-head"><span class="sec-num">07</span><h2>Sharing state by name</h2></div>
+
+  <p>A process that one component uses can be spawned right where it's needed. State that several parts of an app need, or that is expensive to create, goes in a <strong>registry</strong>:</p>
+
+<pre><code data-ts>
+import { define, registry } from '@nonchalant/core'
+
+const app = registry({
+  cart: define(cart, { initial: { items: [], total: 0 } }),
+  product: define(product, { evict: 60_000 }),     // dropped a minute after its last reader leaves
+})
+
+const mine = app.lookup('cart')                    // the cart, wherever it is asked for
+const p1 = app.lookup('product', { id: 'boots' })  // starts the process
+const p2 = app.lookup('product', { id: 'boots' })  // the same process as p1
+</code></pre>
+
+  <p><code>lookup(name, args)</code> is get-or-spawn. The first lookup starts the process; later lookups with the same name and arguments return the same one. That one mechanism does three jobs:</p>
+
+  <ul>
+    <li><strong>Dependency injection.</strong> A component asks for what it needs by name, with no provider tree and no prop drilling.</li>
+    <li><strong>A query cache.</strong> The arguments are the cache key, every reader shares one entry, and <code>evict</code> drops the entry a set time after its last reader leaves.</li>
+    <li><strong>Remote addressing.</strong> A connection to a worker or a server has the same <code>lookup</code>, so the same call can reach a process somewhere else. That's the <a href="./anywhere.html">next page</a>.</li>
+  </ul>
+
+  <div class="demo" data-demo="shared">
+    <div class="demo-head">
+      <span class="demo-title">Shared state</span>
+      <span class="demo-note">two panels built separately share one cart because they asked for the same name</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+</section>
+
+<section id="sugar">
+  <div class="sec-head"><span class="sec-num">08</span><h2>Shorter forms</h2></div>
+
+  <p>Everything so far is the generator. Two common cases have a shorter way to write one. Each produces an ordinary process, so everything on this site treats it the same way:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Shorthand</th><th>What it stands for</th></tr></thead>
+    <tbody>
+      <tr><td><code>cell(initial)</code></td><td>A process whose messages are its next values: widget state, the <code>useState</code> case.</td></tr>
+      <tr><td><code>reducer(init, reduce)</code></td><td>The loop, <code>switch</code>, and <code>yield</code> process, written as a function from state and message to the next state.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Here is a counter written with <code>reducer</code>. Returning the same state means nothing changed, so nothing is yielded:</p>
+
+<pre><code data-ts>
+import { reducer } from '@nonchalant/core'
+import type { Call, Cast } from '@nonchalant/core'
+
+type Msg = Cast&lt;{ type: 'add'; by: number }&gt; | Call&lt;{ type: 'get' }, number&gt;
+
+function count(n: number, msg: Msg): number {
+  switch (msg.type) {
+    case 'add':
+      return n + msg.by
+    case 'get':
+      msg.reply(n)
+      return n                    // the same state: nothing is yielded
+  }
+}
+const counter = reducer(() =&gt; 0, count)
+</code></pre>
+
+  <p>A reducer is synchronous and keeps no private state. Once a process needs to await, yield more than once for a message, or clean up in <code>finally</code>, write the generator instead; its messages and its callers stay the same.</p>
+</section>
+
+<section id="inspect">
+  <div class="sec-head"><span class="sec-num">09</span><h2>Seeing inside</h2></div>
+
+  <p>A process keeps its state inside a suspended generator, where browser devtools can't see it. <code>@nonchalant/inspect</code> can. It records every spawn, message, reply, yield, crash, and exit, and shows the live process tree, a timeline of events, and the state of any process at any recorded moment.</p>
+
+<pre><code data-ts>
+import { mountInspector } from '@nonchalant/inspect'
+
+const panel = mountInspector(document.getElementById('inspector')!)   // before the processes it should see
+</code></pre>
+
+  <p>Yields are stored as the same patches the diff produces, so stepping back in time replays them instead of keeping a copy of every state. To try it, add <code>?inspect</code> to the <a href="./examples/todomvc/?inspect">TodoMVC</a> or <a href="./examples/agent/?inspect">agent</a> example.</p>
+</section>
+
+<section id="reference">
+  <div class="sec-head"><span class="sec-num">10</span><h2>Quick reference</h2></div>
+
+  <p>A handle, from the outside:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Member</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>p()</code></td><td>Reads the latest value. Inside a binding, <code>derive</code>, or <code>effect</code>, it also subscribes to the paths read.</td></tr>
+      <tr><td><code>p.cast(msg)</code></td><td>Sends a one-way message.</td></tr>
+      <tr><td><code>p.call(msg)</code></td><td>Sends a request and returns a promise of the typed reply. Rejects if the process crashes, finishes, or is disposed first.</td></tr>
+      <tr><td><code>p.pending</code>, <code>p.stale</code>, <code>p.error</code></td><td>Working toward the next yield; the value survived a failure; the last failure.</td></tr>
+      <tr><td><code>for await (const v of p)</code></td><td>Iterates over values. A slow reader gets the newest value, never a backlog.</td></tr>
+      <tr><td><code>p[Symbol.dispose]()</code></td><td>Starts teardown now.</td></tr>
+      <tr><td><code>await p[Symbol.asyncDispose]()</code></td><td>Starts teardown and waits for it, children included, to finish.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>And <code>self</code>, from the inside:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Member</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>for await (const msg of self)</code></td><td>Takes queued messages in order.</td></tr>
+      <tr><td><code>self.latest()</code></td><td>The same loop, skipping to the newest message each time.</td></tr>
+      <tr><td><code>self.signal</code></td><td>An <code>AbortSignal</code> that fires on disposal or a crash.</td></tr>
+      <tr><td><code>self.cast(msg)</code></td><td>Sends a message to the process's own mailbox, so background work can report back.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Every export of every package is in the <a href="./docs/api.html">API reference</a>, and each concept's exact behavior is in <a href="./docs/concepts.html">Concepts</a>.</p>
+
+  <a class="next" href="./anywhere.html">
+    <span class="next-label">Next</span>
+    <span class="next-title">Run it anywhere →</span>
+    <span class="next-blurb">Move a process into a worker, another tab, or a server, and keep the code that uses it.</span>
+  </a>
+</section>
+
+<footer>
+  Nonchalant is experimental alpha software: a TypeScript runtime for stateful async-generator processes.<br>
+  MIT © Tim Farland · <a href="https://github.com/twfarland/nonchalant">github.com/twfarland/nonchalant</a> · The demos on this page run in your browser.
+</footer>
+
+</div>
+
+<script type="module" src="./site/main.ts"></script>
+</body>
+</html>

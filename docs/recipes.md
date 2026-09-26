@@ -16,6 +16,36 @@ function cell<T>(initial: T): Process<T, T> {
 `cell` is a convenience wrapper for this common pattern. A cell created inside
 a view belongs to that view and is disposed with it. See `examples/counter`.
 
+## A reducer instead of a loop
+
+When a process only folds messages into state, with no awaiting and at most
+one new state per message, `reducer` from `@nonchalant/core` writes it
+as a function. It is optional sugar and compiles to the same `Proc` as the
+loop:
+
+```ts nocheck
+export function cartStep(s: CartState, msg: CartMsg): CartState {
+  switch (msg.type) {
+    case 'add':
+      return priced([...s.items, msg.item])
+    case 'remove': {
+      const items = s.items.filter((it) => it.name !== msg.name)
+      return items.length === s.items.length ? s : priced(items)
+    }
+    case 'checkout':
+      msg.reply({ ok: true, charged: s.total })
+      return s.items.length === 0 ? s : priced([])  // the same state: no yield
+  }
+}
+
+export const cart = reducer((_: { userId: string }) => priced([]), cartStep)
+```
+
+`cartStep` tests as a plain function, and `cart` works unchanged with
+`define`, `connect`, and `durable`. See `examples/shared-cart`, and
+[Layers](concepts.md#layers-the-primitive-and-its-sugar) for what the sugar
+covers and when to go back to a generator.
+
 ## Typeahead with the latest queued input
 
 `self.latest()` reads the mailbox in "skip to newest" mode: while a search is
@@ -201,6 +231,31 @@ A queue worker reserves a job under a lease, handles it, and acknowledges it.
 If the worker dies, the lease expires and another worker can receive the job.
 See `examples/messaging` and [Processes on the server](server.md).
 
+## Delegation as a call tree
+
+Make every tool run a process that yields its own trace node, and make an agent
+a tool whose run spawns one run per tool call. The agent merges its children's
+streams and folds each snapshot into its node's `children`, so the root's state
+is the whole live call tree: one plain value that a view draws recursively and a
+test iterates.
+
+```ts nocheck
+n = { ...n, status: 'calling', children: [...n.children, ...queued] }
+yield n
+const runs = calls.map((c) => spawn(c.use.run, c.run, { initial: c.node }))
+for await (const [i, child] of merge(runs, self.signal)) {
+  n = { ...n, children: n.children.with(at + i, child) }
+  yield n
+}
+```
+
+Two details carry the lifecycle. The runs are spawned straight after a yield,
+not after the `await` on the model, so they are owned and die with the agent.
+And `merge` takes `self.signal`: a disposed process unwinds only once its
+pending await settles, and its children are disposed after that, so a merge
+still waiting on them must give up on abort. `examples/delegation`
+(`delegation.test.ts`, "aborts every run in the tree when the root is disposed").
+
 ## Where are the operators?
 
 Nonchalant does not define a large operator API. Common RxJS and FRP operations
@@ -210,7 +265,7 @@ map to the existing primitives:
 |---|---|
 | `map` / `filter` / `scan` over values | `derive(() => f(p()))` or code in the process loop |
 | `combineLatest` | one derive reading several processes |
-| `fold` / reducers | the `for await` loop *is* the fold |
+| `fold` / reducers | the `for await` loop *is* the fold; `reducer` writes it as a function |
 | queued-input conflation | `self.latest()` |
 | `startWith` | `initial` |
 | retry / error channels | `restart` policies, `stale`, `error` |

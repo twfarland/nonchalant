@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run anywhere · Nonchalant</title>
+<meta name="description" content="Move a Nonchalant process into a Web Worker, another tab, or a server. The code that uses it stays the same, and only patches of data cross the connection.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23131312'/%3E%3Cpath d='M9 22V10l14 12V10' stroke='%23F5F5F4' stroke-width='2.5' fill='none' stroke-linecap='square'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..600&display=swap">
+<link rel="stylesheet" href="./site/styles.css">
+</head>
+<body>
+
+<div class="page">
+
+<nav class="topnav" aria-label="Site">
+  <a class="brand" href="./">NONCHALANT</a>
+  <a href="./">Overview</a>
+  <a href="./guide.html">Guide</a>
+  <a href="./anywhere.html" aria-current="page">Run anywhere</a>
+  <a href="./server.html">Server &amp; agents</a>
+  <a href="./examples/">Examples</a>
+  <span class="spacer"></span>
+  <a href="./docs/">Docs</a>
+  <a href="https://github.com/twfarland/nonchalant">GitHub</a>
+</nav>
+
+<header class="mast sub" id="top">
+  <div class="eyebrow">Run anywhere</div>
+  <h1>Run it anywhere</h1>
+  <p class="deck">A process doesn't know where it runs. Move it into a worker, another tab, or a server, and the code that uses it stays the same.</p>
+  <ol class="toc">
+    <li><a href="#one-line">One line changes</a></li>
+    <li><a href="#worker">A Web Worker</a></li>
+    <li><a href="#tabs">Another tab</a></li>
+    <li><a href="#server">A server</a></li>
+    <li><a href="#wire">What crosses the connection</a></li>
+    <li><a href="#hosting">Hosting safely</a></li>
+  </ol>
+</header>
+
+<section id="one-line">
+  <div class="sec-head"><span class="sec-num">01</span><h2>One line changes</h2></div>
+
+  <p>The <a href="./guide.html#registry">guide</a> ended with the registry: <code>lookup(name, args)</code> gets or starts a process by name. A registry can also be served from somewhere else, such as a Web Worker, another tab, or a server, and reached through a <strong>connection</strong>. A connection has the same <code>lookup</code>, so choosing where state lives takes one line:</p>
+
+<pre><code data-ts>
+const shop = registry({ cart: define(cart) })                        // this tab
+const shop = connect&lt;Shop&gt;(portTransport(new Worker(url)))           // another thread
+const shop = connect&lt;Shop&gt;(broadcastChannelTransport('shop'))        // another tab
+const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // another machine
+</code></pre>
+
+  <p>A <strong>transport</strong> is anything that carries messages in order: a worker port, a <code>BroadcastChannel</code> between tabs, or a WebSocket. Everything that uses <code>shop</code> stays the same:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>What stays the same</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>The process</td><td>It has no transport-specific code. <a href="./examples/shared-cart/">The shared-cart example</a> runs one definition both in the tab and on a Node server.</td></tr>
+      <tr><td><code>cast</code> and <code>call</code></td><td>They work the same way and keep the same types.</td></tr>
+      <tr><td>Precise updates</td><td>A remote handle receives patches and applies them locally, so a binding on <code>items[3].done</code> still sleeps through a change to <code>total</code>.</td></tr>
+      <tr><td>Loading and failure</td><td><code>pending</code>, <code>stale</code>, and <code>error</code> are the same reads. If the connection drops, the last value stays readable and <code>stale</code> becomes true.</td></tr>
+      <tr><td>Cleanup</td><td>Disposing the handle ends the subscription, and the host can let the process go once nobody is watching it.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>What does change</h3>
+
+  <p>Two things. Values that cross a connection must be JSON: objects, arrays, strings, numbers, booleans, and <code>null</code>. A <code>Date</code> or a class instance works locally but doesn't survive the trip. And calls can now fail or arrive late for reasons that have nothing to do with the process, so handle the rejection.</p>
+</section>
+
+<section id="worker">
+  <div class="sec-head"><span class="sec-num">02</span><h2>A Web Worker</h2></div>
+
+  <p>A long computation on the main thread freezes the page. Moving its process into a worker keeps the page responsive without changing how the page reads it. Inside the worker, serving a registry takes one line after the imports:</p>
+
+<pre><code data-ts>
+import { define, registry } from '@nonchalant/core'
+import { expose, portTransport, workerEndpoint } from '@nonchalant/wire'
+import { primes } from './primes.ts'
+
+expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))
+</code></pre>
+
+  <p>The demo gives the worker deliberately heavy work: testing numbers above a trillion for primality, in 30&nbsp;ms batches. The hand beside it is animated by the page's own thread, and keeps sweeping smoothly while the worker grinds.</p>
+
+  <div class="demo" data-demo="worker">
+    <div class="demo-head">
+      <span class="demo-title">Worker</span>
+      <span class="demo-note">the page reads a process on another thread while its own animation keeps running</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <p>The <a href="./examples/worker/">worker example</a> goes further: it moves the calculation between the main thread and a worker while it runs, with a frame meter to show the difference.</p>
+</section>
+
+<section id="tabs">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Another tab</h2></div>
+
+  <p>Open the <a href="./examples/multi-tab/">multi-tab example</a> in two tabs. They share state over a <code>BroadcastChannel</code>: one tab hosts the processes and the others connect to it. When the hosting tab closes, another one takes over. No server is involved.</p>
+</section>
+
+<section id="server">
+  <div class="sec-head"><span class="sec-num">04</span><h2>A server</h2></div>
+
+  <p>The chat example puts its rooms on a Node server. A room is a plain process that keeps the last 50 messages. It knows nothing about sockets, sessions, or servers:</p>
+
+<pre><code data-ts>
+export const room: Proc&lt;RoomState, RoomMsg, { name: string }&gt; = async function* (self) {
+  let lines: ChatLine[] = []
+  let nextId = 1
+  yield { lines }
+  for await (const msg of self) {
+    lines = [...lines.slice(-49), { id: nextId++, from: msg.from, text: msg.text }]
+    yield { lines }
+  }
+}
+</code></pre>
+
+  <p>The server serves a registry of rooms over WebSockets, and each tab connects and looks up the room it wants:</p>
+
+<pre><code data-ts>
+// the server (examples/chat/server.ts)
+const host = await serve({ room: define(room, { evict: 3_600_000 }) }, {
+  port: 4322,
+  allowedOrigins: loopback,
+  scope: (request, reg) =&gt; {
+    const from = nickname(request)                       // identity fixed when the socket opens
+    return {
+      lookup: (name: string, args: unknown) =&gt; {
+        if (name !== 'room') throw new Error(`not exposed: ${name}`)
+        return reg.lookup('room', roomArgs(args))         // arguments checked before any room starts
+      },
+      admit: (_name, msg) =&gt; admitPost(msg, from),       // every post rebuilt with its real sender
+    }
+  },
+  maxWatchesPerConnection: 64,
+})
+
+// a tab
+const conn = connect&lt;ChatSchema&gt;(webSocketTransport('ws://127.0.0.1:4322/'))
+const lobby = conn.lookup('room', { name: 'lobby' })     // get-or-spawn, on the server
+</code></pre>
+
+  <p>The name and arguments are the address, so every tab that looks up <code>room</code> with <code>{ name: 'lobby' }</code> reaches the same process. The first lookup starts the room, and the registry disposes it an hour after the last tab leaves. An idle room is a suspended generator, which costs little memory, so one Node process can host many.</p>
+
+  <details class="diagram">
+    <summary>Diagram: several tabs, one process per room</summary>
+    <div class="diagram-body"><pre data-mermaid>flowchart LR
+  T1["tab A"] -- "lookup room lobby" --> H
+  T2["tab B"] -- "lookup room lobby" --> H
+  T3["tab C"] -- "lookup room dev" --> H
+  H["the host: one session per socket"] --> REG["registry: a name plus its args is the address"]
+  REG --> P1[["room lobby"]]
+  REG --> P2[["room dev"]]
+  P1 -- "yield, diffed to a patch" --> H
+  H -- "patch" --> T1
+  H -- "patch" --> T2</pre></div>
+  </details>
+
+  <p>The <code>scope</code> function runs once per connection and decides what that connection can reach. Here it fixes the sender's nickname when the socket opens, checks the room name before any room starts, and uses <code>admit</code> to rebuild each incoming post with that nickname. A client can't post as someone else, and a malformed message can't crash a room.</p>
+
+  <div class="note"><b>Try it locally.</b> The hosted site can't run a server, so run <code>pnpm chat-server</code>, then <code>pnpm dev</code>, and open <code>/examples/chat/</code> in several tabs. <code>pnpm cart-server</code> does the same for the shared cart, which switches between local and hosted with one commented line.</div>
+</section>
+
+<section id="wire">
+  <div class="sec-head"><span class="sec-num">05</span><h2>What crosses the connection</h2></div>
+
+  <p>The protocol has eight message types. Four go from client to host (<code>lookup</code>, <code>cast</code>, <code>call</code>, <code>exit</code>) and four come back (<code>yield</code>, <code>reply</code>, <code>done</code>, <code>raise</code>). A yield carries a <strong>patch</strong>, the paths that changed and their new values, and never HTML or code. So a message's size follows the size of the change rather than the size of the state, and rendering and local interaction stay in the browser.</p>
+
+  <p>After a disconnect, the client keeps the last value, marked stale. When the transport reconnects, it repeats its lookups and receives a full snapshot, which is diffed against what it kept, so bindings whose values didn't change stay asleep.</p>
+
+  <p>The protocol doesn't depend on JavaScript. <code>packages/wire/spec/</code> holds conformance vectors, so a host written in another language can prove it speaks the same protocol. The <a href="./docs/PROTOCOL.html">protocol document</a> has the details.</p>
+</section>
+
+<section id="hosting">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Hosting safely</h2></div>
+
+  <p>The Node host in <code>@nonchalant/host</code> is open by default so the examples need no setup. Before exposing one to the internet, configure its guards:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Option</th><th>What it prevents</th></tr></thead>
+    <tbody>
+      <tr><td><code>allowedOrigins</code>, <code>authorize</code></td><td>Other websites opening a socket with a visitor's cookies, and connections without a valid credential.</td></tr>
+      <tr><td><code>scope</code></td><td>A client reaching processes or data that aren't theirs. It decides, per connection, what can be looked up, and can supply the arguments itself.</td></tr>
+      <tr><td><code>admit</code></td><td>Malformed or forged messages. It screens every cast and call before delivery, and can rebuild them.</td></tr>
+      <tr><td><code>lookupRate</code>, <code>totalLookupRate</code>, <code>maxWatchesPerConnection</code>, <code>maxEntries</code></td><td>One client, or many together, filling server memory by looking up endless different arguments.</td></tr>
+      <tr><td><code>maxBufferedBytes</code>, <code>heartbeatMs</code>, <code>maxPayloadBytes</code></td><td>Clients that stop reading, connections that silently died, and oversized messages.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>The set of names a host serves limits what can be looked up, but it doesn't say who is asking: authorization is up to these options and your processes. <a href="./docs/hosting.html">Hosting safely</a> covers each option in detail.</p>
+
+  <a class="next" href="./server.html">
+    <span class="next-label">Next</span>
+    <span class="next-title">Servers, workflows, and agents →</span>
+    <span class="next-blurb">State that survives a crash, timers that survive a restart, and AI agents built from the same processes.</span>
+  </a>
+</section>
+
+<footer>
+  Nonchalant is experimental alpha software: a TypeScript runtime for stateful async-generator processes.<br>
+  MIT © Tim Farland · <a href="https://github.com/twfarland/nonchalant">github.com/twfarland/nonchalant</a> · The demos on this page run in your browser.
+</footer>
+
+</div>
+
+<script type="module" src="./site/main.ts"></script>
+</body>
+</html>

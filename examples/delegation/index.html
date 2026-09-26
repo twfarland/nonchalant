@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delegation — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .tree { list-style: none; margin: 0; padding: 0 0 0 1.1rem; border-left: 1px solid var(--line); }
+  .tree.root { border-left: 0; padding: 0; margin-top: 0.75rem; }
+  .node { margin: 0.35rem 0; }
+  .head { display: flex; gap: 0.6rem; align-items: baseline; }
+  .kind { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); width: 3.2rem; }
+  .agent > .head .kind { color: var(--accent); }
+  .name { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.85rem; }
+  .status { font-size: 0.75rem; color: var(--muted); }
+  .thinking > .head .status, .calling > .head .status, .running > .head .status,
+  .streaming > .head .status { color: var(--accent); font-weight: 600; }
+  .done > .head .status { color: var(--ok); }
+  .failed > .head .status { color: var(--danger); }
+  .out { margin: 0.15rem 0 0 3.8rem; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>Delegation <span class="muted">— a call tree that is one process's state</span></h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>A tool run is a process that yields its own trace node. An agent is a tool whose run spawns more runs, one per tool call, and folds their streams into its node's <code>children</code>. So the root's state is the whole tree, and the graph is a view of that one value.</p>
+<pre><code><span class="k">const</span> runs = calls.map((c) =&gt; spawn(c.use.run, c.run, { initial: c.node }))
+<span class="k">for</span> <span class="k">await</span> (<span class="k">const</span> [i, child] <span class="k">of</span> merge(runs, self.signal)) {
+  n = { ...n, children: n.children.with(at + i, child) }
+  <span class="k">yield</span> n
+}</code></pre>
+<p>Parallel tool calls are just several spawns merged. The runs belong to the agent that spawned them, so <strong>stop</strong> disposes the root and every model call and search under it aborts through <code>self.signal</code>.</p>
+<p>The tests (<code>delegation.test.ts</code>) iterate the root run with no DOM and check the tree, the parallelism at both levels, and that disposal reaches every leaf.</p>
+</aside>
+</div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

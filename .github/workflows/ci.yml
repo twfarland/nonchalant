@@ -1,5 +1,5 @@
 # Type-checks and tests every push and pull request. `pnpm test` includes the
-# budgets (bundle size, reconcile perf, Mario's DOM-write golden, leak
+# budgets (reconcile perf, Mario's DOM-write golden, keyed-list counts, leak
 # checks) — they are CI assertions, so a regression fails the build here.
 
 name: CI

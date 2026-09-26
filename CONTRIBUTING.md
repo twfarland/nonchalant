@@ -12,7 +12,7 @@ enable` picks it up).
 ```sh
 pnpm install
 pnpm check        # strict tsc, the no-DOM package boundaries, and the doc samples
-pnpm test         # vitest: unit, property, leak, perf, size, and golden budgets
+pnpm test         # vitest: unit, property, leak, perf, and golden budgets
 pnpm dev          # the doc site at /, the example gallery at /examples/
 ```
 
@@ -24,6 +24,7 @@ is ready when both are green locally.
 |---|---|
 | `pnpm check` | `tsc --noEmit` over everything; `check:boundaries` compiles core, wire, and durable without the DOM library (and host against Node only); `check:docs` type-checks the TypeScript samples in `README.md` and `docs/` |
 | `pnpm test` | the whole suite, including every budget |
+| `pnpm size` | prints each entry point's min+gzip size; a report, not a gate |
 | `pnpm build` | builds each package to `dist/` (`.js` + `.d.ts`), in dependency order |
 | `pnpm verify:pack` | builds, packs each package as `pnpm publish` would, and lints the tarballs with publint and are-the-types-wrong |
 | `pnpm build:site` | the static doc site and gallery, as GitHub Pages publishes it |
@@ -33,7 +34,7 @@ is ready when both are green locally.
 
 - **Budgets are assertions. Tighten them if you can; never loosen one to make a
   change fit.** They live in `packages/core/test/reconcile.perf.test.ts`,
-  `examples/mario/mario.golden.test.ts`, `test/size.test.ts`,
+  `examples/mario/mario.golden.test.ts`,
   `test/room-memory.test.ts`, and `packages/core/test/process.leaks.test.ts`.
   If a change cannot fit, find a leaner design.
 - **The wire spec is a cross-language contract.** Changing the protocol or

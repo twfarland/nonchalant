@@ -1,5 +1,6 @@
 // @nonchalant/core — the public surface: the Process type and its runtime
-// (spawn/derive/cell/channel), reconcile, the registry, and the generic mount.
+// (spawn/derive/channel, and the cell/reducer sugar), reconcile, the registry,
+// and the generic mount.
 // The type surface is verified by test/types.check.ts, compiled under strict
 // TypeScript with load-bearing @ts-expect-error negative cases.
 
@@ -17,6 +18,8 @@ export type { SpawnOpts } from './process.ts'
 export { define, registry } from './registry.ts'
 export type { DefineOpts, RegistryHandle, RegistryOpts } from './registry.ts'
 export { channel } from './mailbox.ts'
+export { reducer } from './reducer.ts'
+export type { Reducer } from './reducer.ts'
 export { onProcessError, instrument } from './instrument.ts'
 export type { ProcessEvent } from './instrument.ts'
 

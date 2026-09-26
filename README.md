@@ -7,21 +7,29 @@
 > migration path. Read it, run the demos, take the ideas — but do not put it in
 > production.
 
-Nonchalant is an experimental TypeScript runtime for managing state with async
-generators. Optional packages add DOM rendering and remote connections. Each
-process owns its state, handles messages in order, publishes snapshots, and has
-a defined lifetime. Calling `spawn` returns a typed handle for reading state,
-casting messages, making calls, iterating over values, and disposing the
-process.
+Write application state as async generators. The page updates only where the
+state changed, and the same process runs in a worker, another tab, or on your
+server.
 
-The project asks whether one process model can cover widget state, shared
-application state, cached work, remote state, agent loops, and durable
-workflows. It is not a React component model, an Erlang runtime, or a full query
-client. Its focus is narrower: ordered message handling, targeted snapshot
-updates, process ownership, and a compact protocol that carries data.
+**[Read the site](https://twfarland.github.io/nonchalant/)**: an overview, a
+guide, live demos, the documentation, and the example gallery.
 
-Visit **[twfarland.github.io/nonchalant](https://twfarland.github.io/nonchalant/)**
-for an overview, live demos, and the full example gallery.
+## Why it exists
+
+A typical web app manages its state with several different tools: hooks or
+signals for component state, a store for shared state, a query cache for server
+data, a socket layer to keep live data in sync, and a workflow engine for
+long-running backend jobs. Each has its own API, lifecycle, and failure modes,
+and moving state from one to another means rewriting it. The same bugs recur in
+all of them: clicks racing each other, stale closures, missing dependencies,
+responses that land after the user has moved on, and re-renders caused by
+changes a component doesn't display.
+
+Nonchalant tries one primitive for all of it, and it is one JavaScript already
+has. An async generator keeps state in local variables, takes input in order
+with `for await`, publishes with `yield`, and cleans up in `finally`.
+Nonchalant runs it as a **process**: `spawn` returns a typed handle for reading
+its state, sending it messages, and disposing it.
 
 ```ts
 import { spawn } from '@nonchalant/core'
@@ -30,28 +38,25 @@ import { mount } from '@nonchalant/dom'
 import { button, div, span } from '@nonchalant/dom/tags'
 
 const counter = spawn(async function* (self: Self<number>) {
-  let n = 0                          // this is the state
-  yield n
-  for await (const d of self) {      // this is the input
+  let n = 0                          // the state: an ordinary variable
+  yield n                            // publish it
+  for await (const d of self) {      // take each message, in order
     n += d
-    yield n                          // this is the output
+    yield n                          // publish the new state
   }
 }, undefined, { initial: 0 })
 
 mount(document.getElementById('app')!, div({},
   button({ onclick: () => counter.cast(-1) }, '−'),
-  span({}, counter),                 // a live binding
+  span({}, counter),                 // a binding: updates itself, nothing else re-runs
   button({ onclick: () => counter.cast(1) }, '+')))
 ```
 
-## Why use processes?
-
-Async generators already provide the main parts of a state process: local `let`
-variables, sequential input through `for await`, and a lifetime that ends with
-`return` or `dispose`. The same interface can represent a local cell, a cached
-query, or a process on a server. `registry.lookup` handles shared dependencies,
-cached process instances, and remote addresses. Views execute once, and later
-state changes notify bindings according to the paths they read.
+The view runs once. A process or a function placed in the tree is a binding
+that updates only its own spot on the page when the state it read changes. The
+same process can be shared by name through a registry, moved to a worker or a
+server by changing one line, or made durable so it survives a restart. It is not
+a React component model, an Erlang runtime, or a full query client.
 
 ## What it offers
 
@@ -140,11 +145,37 @@ const it = todosProc(self, undefined)
 expect((await it.next()).value).toMatchObject({ todos: [{ title: 'milk' }] })
 ```
 
+- **Sugar is optional and compiles to the primitive.** `cell` covers widget
+  state, and `reducer` writes the common
+  loop-switch-yield process as a function of state and message. Both produce
+  an ordinary process, so the registry, the wire, `durable`, and the inspector
+  treat them the same as a hand-written generator, and a reducer that later
+  needs to await can be rewritten as one without its callers changing
+  ([the layers](docs/concepts.md#layers-the-primitive-and-its-sugar)).
+
+<!-- ts-prelude
+import { reducer } from '@nonchalant/core'
+import type { Cast } from '@nonchalant/core'
+type Msg = Cast<{ type: 'add'; by: number }>
+-->
+```ts
+function count(n: number, msg: Msg): number {
+  switch (msg.type) {
+    case 'add':
+      return n + msg.by
+  }
+}
+const counter = reducer(() => 0, count)  // a Proc, like any async generator
+```
+
 - **The wire protocol is language-independent.** Eight JSON operations carry
   state patches rather than markup or code. Other languages can implement a
   host against the conformance vectors in `packages/wire/spec/`.
-- **Small, with enforced limits.** CI keeps core at or below 8.3 KB gzipped and
-  core + DOM + tags at or below 13.6 KB gzipped (`test/size.test.ts`).
+- **One library where you would otherwise assemble a stack.** Local and shared
+  state, rendering, a query cache, worker, tab, and server sync, durable
+  workflows, and an inspector all come from the same process model, instead
+  of separate libraries with separate lifecycles. Size is reported rather than
+  capped: `pnpm size` prints what each entry point costs.
 - **Text is never parsed as HTML.** The DOM renderer creates elements and text
   nodes directly and sets attributes with `setAttribute`, so markup in
   application data stays inert text. That closes markup injection; it does not
@@ -177,7 +208,8 @@ explicit thunks for reactive expressions, and no BEAM-style preemption.
 ```sh
 pnpm install
 pnpm dev         # the doc site at /, the example gallery at /examples/
-pnpm test        # the whole suite, including the perf/size/granularity budgets
+pnpm test        # the whole suite, including the perf and granularity budgets
+pnpm size        # what each entry point costs, min+gzip
 pnpm check       # strict TypeScript across packages, examples, the site, and doc samples
 pnpm build:site  # the static site, as GitHub Pages publishes it
 ```
@@ -204,7 +236,7 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 
 | package | contents |
 |---|---|
-| `@nonchalant/core` | `Process`, `spawn`, `derive`, the registry, `reconcile`, the reactive graph. Zero dependencies, no DOM. |
+| `@nonchalant/core` | `Process`, `spawn`, `derive`, the registry, `reconcile`, the reactive graph, and the optional `cell` and `reducer` sugar. Zero dependencies, no DOM. |
 | `@nonchalant/dom` | tag constructors, `h()`, the DOM sink, keyed reconciliation, `mount`. |
 | `@nonchalant/wire` | the protocol, codec, transports (WebSocket, worker port, BroadcastChannel, in-memory), `connect`. Isomorphic. |
 | `@nonchalant/durable` | `durable(proc)`: the message journal, the effect journal, durable calls, and the `Store` port. Isomorphic; ships the in-memory adapter. |

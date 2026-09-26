@@ -264,6 +264,119 @@ network constraints: wire values are JSON, requests can fail, and access must
 be authorized at the host and inside application processes. See
 [Hosting safely](hosting.md).
 
+## Layers: the primitive and its sugar
+
+Everything above rests on one primitive, an async generator run by `spawn`.
+A few exports are shorter ways to write a common case of it. Each one
+compiles to the primitive, so the runtime, the registry, the wire, and the
+inspector see an ordinary process. Anything written with sugar can be
+rewritten by hand without its callers noticing, and all of it is optional.
+
+| sugar | what it stands for | import |
+|---|---|---|
+| `cell(initial)` | `spawn` of a loop that yields each message it receives, with `initial` | `@nonchalant/core` |
+| `reducer(init, reduce)` | the loop-switch-yield process: yield `init(args)`, then yield `reduce(state, msg)` whenever it returns a new state | `@nonchalant/core` |
+| `div(attrs, …children)` and the other tags | `h('div', attrs, …children)`; `tagFn(name)` makes one for any tag | `@nonchalant/dom/tags` |
+
+A separate layer holds *wrappers*: functions that take a `Proc` and return a
+`Proc`, adding behavior rather than shortening syntax. `durable(proc)` from
+`@nonchalant/durable` ([Processes on the server](server.md)) is one, and so
+is the undo/redo middleware in `examples/undo-redo`. Because sugar produces a
+`Proc` and wrappers accept one, they compose: `durable(reducer(init, reduce))`
+is a durable process whose snapshot is its reducer state.
+
+### reducer
+
+Most processes in the examples share one shape: a loop, a `switch` over the
+message, and one `yield` after it. `reducer` writes that shape as a function
+of the state and the message:
+
+<!-- ts-prelude
+import { reducer } from '@nonchalant/core'
+import type { Cast, Call, Proc } from '@nonchalant/core'
+-->
+```ts
+type Msg =
+  | Cast<{ type: 'add'; by: number }>
+  | Call<{ type: 'get' }, number>
+
+// the primitive
+const counter: Proc<number, Msg, void> = async function* (self) {
+  let n = 0
+  yield n
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'add':
+        n += msg.by
+        break
+      case 'get':
+        msg.reply(n)
+        continue // no state change, no yield
+    }
+    yield n
+  }
+}
+
+// the same process, as sugar
+function count(n: number, msg: Msg): number {
+  switch (msg.type) {
+    case 'add':
+      return n + msg.by
+    case 'get':
+      msg.reply(n)
+      return n // the same state: nothing is yielded
+  }
+}
+const counter2 = reducer(() => 0, count)
+```
+
+- `init` receives the spawn (or lookup) arguments and runs once per start,
+  and again after an `on-crash` restart. Under `durable`, the restored
+  snapshot is used instead.
+- Returning the state it was given (`===`) means "no change", so nothing is
+  yielded. This replaces the choice between `break` and `continue` in the loop.
+- A `Call` answers through `msg.reply` before `reduce` returns. A throw is a
+  crash, the same as a throw in a generator.
+- The process is named after the `reduce` function, which is the name the
+  inspector and `onProcessError` report.
+- The first yield is `init(args)`, but the type of a read cannot see that:
+  pass `initial` to `spawn` or `define` when you want `T` rather than
+  `T | undefined`.
+
+`reduce` is synchronous, and its state is also what readers see. Anything
+beyond that is a job for the generator:
+
+- awaiting: a fetch, a call to another process, a timer
+- more than one yield per message: progress states, or streaming like the
+  agent loop's one yield per word
+- state readers should not see: a reply parked for a later message, an abort
+  controller, a timer handle
+- a different way of receiving: `self.latest()`, or a phase with its own loop
+- `finally` cleanup, owned children, `self.signal`, `self.cast`
+
+Moving a process from one form to the other rewrites that one definition. Its
+message type, its handle, its callers, and any test that drives it through
+`channel` stay the same.
+
+### Why layers instead of a second primitive
+
+- **One set of semantics.** Mailbox order, restarts, ownership, call
+  rejection, `stale`, the wire, and the inspector are defined once, on the
+  generator. Sugar inherits them instead of restating them, so there is no
+  second model to learn or to keep consistent.
+- **Unused sugar is free.** Core is marked side-effect free, so a bundler
+  drops `cell` and `reducer` from an application that never imports them.
+- **No migration cliff.** When a reducer needs to await or stream, rewrite
+  that one process as a generator. Nothing else changes.
+- **Two levels of testing.** The `reduce` function is a plain function you
+  can call with a state and a message
+  (`examples/shared-cart/shared.test.ts`), and the `Proc` it compiles to
+  drives through `channel` like any generator.
+
+Tests: `packages/core/test/reducer.test.ts` (identity skip, calls, restart,
+naming, registry), `packages/durable/test/reducer.test.ts` (resuming from a
+snapshot), and the reducer cases in `types.check.ts` (per-case reply types).
+
 ## What updates cost, measured
 
 The structural diff is the heart of the write path, so its costs are worth
@@ -289,6 +402,5 @@ your own data shapes when the write path is performance-sensitive.
 | reconcile: 1 change in 10k ≤ 100 µs | `reconcile.perf.test.ts` |
 | Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 node churn | `mario.golden.test.ts` |
 | js-framework-benchmark: exact DOM operation counts per operation (swap = 2 moves, clear = one bulk removal) | `bench.test.ts` |
-| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.6 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB, inspect ≤ 15 KB | `test/size.test.ts` |
 | an idle registry process (a chat room) ≤ 8 KB of heap | `test/room-memory.test.ts` |
 | nothing retained after dispose | `process.leaks.test.ts` |

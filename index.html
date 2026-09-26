@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nonchalant: processes for TypeScript application state</title>
-<meta name="description" content="A TypeScript UI library where async-generator processes own state, receive messages, and publish snapshots in the browser or on a server.">
+<title>Nonchalant: application state as processes</title>
+<meta name="description" content="A TypeScript library where async generators own application state. The page updates only where the state changed, and the same process runs in a worker, another tab, or on a server.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23131312'/%3E%3Cpath d='M9 22V10l14 12V10' stroke='%23F5F5F4' stroke-width='2.5' fill='none' stroke-linecap='square'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,175 +15,148 @@
 
 <div class="page">
 
-<nav class="topnav">
-  <a class="brand" href="#top">NONCHALANT</a>
-  <a href="#idea">The idea</a>
-  <a href="#get">Get it</a>
-  <a href="#process">The primitive</a>
-  <a href="#demos">Live demos</a>
-  <a href="#updates">Updates</a>
-  <a href="#wire">The wire</a>
-  <a href="#backend">On the server</a>
-  <a href="#tools">Inspector</a>
-  <a href="#more">Read more</a>
+<nav class="topnav" aria-label="Site">
+  <a class="brand" href="./">NONCHALANT</a>
+  <a href="./" aria-current="page">Overview</a>
+  <a href="./guide.html">Guide</a>
+  <a href="./anywhere.html">Run anywhere</a>
+  <a href="./server.html">Server &amp; agents</a>
+  <a href="./examples/">Examples</a>
   <span class="spacer"></span>
+  <a href="./docs/">Docs</a>
   <a href="https://github.com/twfarland/nonchalant">GitHub</a>
 </nav>
 
-<div class="alpha" role="note">
-  <span class="alpha-tag">Alpha</span>
-  <p><b>This is experimental alpha software.</b> It is a research project, not a product: nothing is published to npm, there is no versioning policy, and the API, the wire protocol, and the package names may all change without notice or a migration path. Read it, run the demos, take the ideas — but do not put it in production.</p>
-</div>
-
 <header class="mast" id="top">
-  <div class="eyebrow">TypeScript &nbsp;·&nbsp; MIT &nbsp;·&nbsp; core + DOM under 14&nbsp;KB gzipped</div>
+  <div class="eyebrow">TypeScript &nbsp;·&nbsp; MIT &nbsp;·&nbsp; browser, worker, and server</div>
   <h1>Nonchalant</h1>
-  <p class="deck">Build application state with processes that receive messages in order and publish snapshots. Run the same process in a browser, a worker, or on a server.</p>
-  <hr class="mast-rule">
-  <div class="mast-meta">
-    <span>Async generators with plain <code>let</code> state</span>
-    <span>Views execute once</span>
-    <span>Targeted updates without a compiler</span>
-    <span>Experimental, not yet on npm</span>
+  <p class="deck">Write application state as async generators. The page updates only where the state changed, and the same process runs in a worker, another tab, or on your server.</p>
+  <div class="cta">
+    <a class="primary" href="./guide.html">Read the guide</a>
+    <a href="#demos">See it run</a>
+    <a href="https://github.com/twfarland/nonchalant">GitHub</a>
   </div>
 </header>
 
+<div class="alpha" role="note">
+  <span class="alpha-tag">Alpha</span>
+  <p><b>A research project, not a product.</b> Nothing is on npm, and the API and wire protocol may change without notice. Read it, run the demos, take the ideas, but don't ship it to production yet.</p>
+</div>
+
+<section id="why">
+  <div class="sec-head"><span class="sec-num">01</span><h2>Why it exists</h2></div>
+
+  <p class="lede">A typical web app manages its state with several different tools, each with its own rules.</p>
+
+  <p>Component state lives in hooks or signals. Shared state lives in a store. Server data lives in a query cache. Live updates need a socket layer that keeps a local copy in sync, and long-running backend jobs need a workflow engine. Each has its own API, its own lifecycle, and its own ways to fail, and moving a piece of state from one to another means rewriting it.</p>
+
+  <p>The same bugs turn up in all of them: two clicks racing each other, a callback reading a stale value, a dependency array missing an entry, a response arriving after the user has moved on, a component re-rendering because of a change it doesn't even display.</p>
+
+  <p>Nonchalant tries one primitive for all of it, and it's one JavaScript already has. An async generator can keep state in local variables, take input in order with <code>for await</code>, publish with <code>yield</code>, and clean up in <code>finally</code>. Nonchalant runs it as a <strong>process</strong> and handles the rest: delivering messages, updating the page, and carrying state across threads and networks.</p>
+</section>
+
 <section id="idea">
-  <div class="sec-head"><span class="sec-num">01</span><h2>The idea</h2></div>
+  <div class="sec-head"><span class="sec-num">02</span><h2>A process in one minute</h2></div>
 
-  <p class="lede">Async generators are a practical fit for application state. Local variables hold the current value, a loop handles input in order, and the generator has a clear lifetime. Nonchalant runs the generator and returns a handle for working with it.</p>
-
-  <p>A process is an async generator. Call <code>spawn</code> to run it and get a typed handle that supports reads, messages, requests, iteration, and disposal. Use ordinary <code>let</code> variables for state, <code>for await</code> for input, and <code>yield</code> for output. You do not need to configure a store, register reducers, or maintain dependency arrays.</p>
+  <p>A process owns one piece of state and handles messages one at a time. Here is a counter:</p>
 
 <pre><code data-ts>
 import { spawn } from '@nonchalant/core'
 import type { Self } from '@nonchalant/core'
+
+async function* counter(self: Self&lt;number&gt;) {
+  let n = 0                        // the state: an ordinary variable
+  yield n                          // publish it
+  for await (const d of self) {    // take each message, in order
+    n += d
+    yield n                        // publish the new state
+  }
+}
+
+const count = spawn(counter, undefined, { initial: 0 })
+count.cast(1)                      // send it a message
+count()                            // read the latest state
+</code></pre>
+
+  <p><code>spawn</code> starts the generator and returns a <strong>handle</strong>. Its second argument is what the process is started with (this counter needs nothing), and <code>initial</code> is what a read returns before the first <code>yield</code>. Calling the handle, <code>count()</code>, reads the latest state. <code>count.cast(1)</code> puts a message in the process's <strong>mailbox</strong>. Messages are handled strictly in order, so three quick clicks always add three.</p>
+
+  <p>There is no store to configure and no reducer to register. The state is a <code>let</code>, the update logic is the loop body, and the process lives until its generator returns or you dispose it.</p>
+
+  <h3>Putting it on the page</h3>
+
+  <p>Views are built from tag functions and mounted once:</p>
+
+<pre><code data-ts>
 import { mount } from '@nonchalant/dom'
 import { button, div, span } from '@nonchalant/dom/tags'
 
-const counter = spawn(async function* (self: Self&lt;number&gt;) {
-  let n = 0                          // this is the state
-  yield n
-  for await (const d of self) {      // this is the input
-    n += d
-    yield n                          // this is the output
-  }
-}, undefined, { initial: 0 })
-
 mount(document.getElementById('app')!, div({},
-  button({ onclick: () =&gt; counter.cast(-1) }, '−'),
-  span({}, counter),                 // a live binding
-  button({ onclick: () =&gt; counter.cast(1) }, '+')))
+  button({ onclick: () =&gt; count.cast(-1) }, '−'),
+  span({}, count),                                         // a binding: shows the count
+  button({ onclick: () =&gt; count.cast(1) }, '+'),
+  span({}, () =&gt; (count() % 2 === 0 ? ' even' : ' odd'))))  // so is a function
 </code></pre>
 
-  <p>The model stays the same as an application grows. A process can manage one widget, shared state addressed by name, or a cached query with an idle timeout. Move it to a server and only the connection changes; callers still use the same process interface.</p>
-
-  <div class="note"><b>Scope.</b> Nonchalant is not a React-compatible component model, an Erlang runtime, or a complete query client. It explores how much of an application can be built around one primitive, with its current limits documented alongside its features.</div>
-</section>
-
-<section id="get">
-  <div class="sec-head"><span class="sec-num">02</span><h2>Get it</h2></div>
-
-  <p>The packages have not been published to npm yet. Until the first release, clone the repository to try the library:</p>
-
-<pre><code>git clone https://github.com/twfarland/nonchalant
-cd nonchalant
-pnpm install
-
-pnpm dev     # this site at /, the example gallery at /examples/
-pnpm test    # the whole suite, including the perf, size, and DOM-write budgets
-pnpm check   # strict TypeScript across packages, examples, and this site</code></pre>
-
-  <div class="grid2">
-    <div class="card">
-      <h4>@nonchalant/core</h4>
-      <p>Process runtime, reactive graph, structural diffing, and registry. It has no dependencies and does not access the DOM.</p>
-    </div>
-    <div class="card">
-      <h4>@nonchalant/dom</h4>
-      <p>Tag constructors and DOM output. Nodes are created with <code>createElement</code>; strings are never parsed as markup.</p>
-    </div>
-    <div class="card">
-      <h4>@nonchalant/wire</h4>
-      <p>An eight-operation protocol, codec, and transports. It works in browsers and on servers, with conformance vectors for other languages.</p>
-    </div>
-    <div class="card">
-      <h4>@nonchalant/durable</h4>
-      <p>Durable process support built from message and effect journals, durable timers and a scheduler, and an eight-method storage interface with a conformance suite for adapters.</p>
-    </div>
-    <div class="card">
-      <h4>@nonchalant/host</h4>
-      <p>A Node WebSocket host with origin checks, handshake authorization, per-connection scope, message screening, and rate, watch, and buffer limits.</p>
-    </div>
-    <div class="card">
-      <h4>@nonchalant/inspect</h4>
-      <p>A recorder and panel for the process tree, a timeline of messages and yields, and past states.</p>
-    </div>
-  </div>
-</section>
-
-<section id="process">
-  <div class="sec-head"><span class="sec-num">03</span><h2>The primitive</h2></div>
-
-  <p>The API has two perspectives. <strong>Process</strong> is the handle used by callers, while <strong>Self</strong> is the interface available inside the generator.</p>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>From the outside</th><th>What it does</th></tr></thead>
-    <tbody>
-      <tr><td><code>p()</code></td><td>Reads the latest value synchronously. In a binding, effect, or derived value, it also subscribes to the paths that were read.</td></tr>
-      <tr><td><code>p.cast(msg)</code></td><td>Sends a message without waiting for a response. It is available when the message type includes <code>Cast</code> messages.</td></tr>
-      <tr><td><code>p.call(msg)</code></td><td>Sends a typed request and waits for its response. It is available for <code>Call</code> messages and rejects if the process crashes, finishes, or is disposed.</td></tr>
-      <tr><td><code>p.pending</code> / <code>p.stale</code> / <code>p.error</code></td><td>Exposes lifecycle state through regular reads, using the same mechanism as application state.</td></tr>
-      <tr><td><code>for await (v of p)</code></td><td>Iterates over current values. Slow consumers receive the newest value rather than a backlog.</td></tr>
-      <tr><td><code>p[Symbol.dispose]()</code></td><td>Starts teardown now: closes the mailbox, aborts the signal, and asks the generator to return. Owned children are disposed once it settles. It does not wait for asynchronous <code>finally</code> work.</td></tr>
-      <tr><td><code>await p[Symbol.asyncDispose]()</code></td><td>Starts the same teardown and resolves once this process and its owned children have finished their finalizers.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>From the inside</th><th>What it does</th></tr></thead>
-    <tbody>
-      <tr><td><code>for await (msg of self)</code></td><td>Reads queued messages in order. Handling is sequential by default, so repeated submissions wait instead of racing.</td></tr>
-      <tr><td><code>self.latest()</code></td><td>Drops queued messages and returns the newest one, which is useful for inputs such as typeahead search.</td></tr>
-      <tr><td><code>self.signal</code></td><td>An <code>AbortSignal</code> triggered by disposal or a crash. Pass it to fetches and other cancellable work.</td></tr>
-      <tr><td><code>self.cast(msg)</code></td><td>Sends a message to the process's own mailbox, allowing background work to report its result.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <p>A one-way message is a <code>Cast</code>; a request that expects a response is a <code>Call</code>. TypeScript separates the two, so <code>cast</code> cannot accept a call and <code>call</code> cannot accept a cast.</p>
-
-<pre><code data-ts>
-type CartMsg =
-  | Cast&lt;{ type: 'add'; item: Item }&gt;                             // a cast
-  | Call&lt;{ type: 'checkout' }, { ok: boolean; charged: number }&gt;  // a call
-
-cart.cast({ type: 'add', item })                 // fine
-const res = await cart.call({ type: 'checkout' }) // res is typed; a crash rejects it
-</code></pre>
-</section>
-
-<section id="demos">
-  <div class="sec-head"><span class="sec-num">04</span><h2>Live demos</h2></div>
-
-  <p class="lede">These demos use the library directly in this page. They run without a server, and one runs in a Web Worker. Each source listing comes from the same file that powers the demo.</p>
+  <p>The view runs once and creates real DOM nodes. A process or a function placed in the tree is a <strong>binding</strong>: a live spot that updates itself when the state it read changes. Nothing else runs again. There is no re-render, so there are no dependency arrays, no memoization, and no stale closures to manage.</p>
 
   <div class="demo" data-demo="counter">
     <div class="demo-head">
       <span class="demo-title">Counter</span>
-      <span class="demo-note">local state and queued messages · click quickly to see the mailbox keep order</span>
+      <span class="demo-note">click quickly: every click is queued and applied in order</span>
     </div>
     <div class="demo-stage" data-stage></div>
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
+</section>
+
+<section id="different">
+  <div class="sec-head"><span class="sec-num">03</span><h2>What's different</h2></div>
+
+  <p>Each of these gets a full explanation later; the link under each one goes there.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>Plain data, precise updates</h4>
+      <p>State is ordinary immutable objects and arrays, not signals or observable stores. Each <code>yield</code> is compared with the previous one, and only the bindings that read a changed value run again. Editing one row of a long list writes to that row alone.</p>
+      <a class="more" href="./guide.html#updates">How updates stay small →</a>
+    </div>
+    <div class="card">
+      <h4>Input can't race</h4>
+      <p>Each process handles one message at a time. A double-submitted form queues instead of colliding, a search box can skip straight to the newest query, and in-flight requests are cancelled when their process ends.</p>
+      <a class="more" href="./guide.html#input">Input, in order →</a>
+    </div>
+    <div class="card">
+      <h4>Location doesn't matter</h4>
+      <p>A process doesn't know where it runs. One line moves it into a Web Worker, another tab, or a server, and the code that reads it stays the same. Only small patches of data cross the connection, never HTML.</p>
+      <a class="more" href="./anywhere.html">Run it anywhere →</a>
+    </div>
+    <div class="card">
+      <h4>One model, front to back</h4>
+      <p>The same shape covers a toggle, shared app state, a cached query, a chat room on a server, an order that survives a crash, and an AI agent that waits for a person's approval. One library where you would otherwise assemble a stack.</p>
+      <a class="more" href="./server.html">Servers, workflows, and agents →</a>
+    </div>
+    <div class="card">
+      <h4>Tests without a browser</h4>
+      <p>A process is a generator, so a test sends it messages and checks what it yields. Clocks and services are passed in as messages and arguments, so tests run without a DOM, a network, or real delays.</p>
+      <a class="more" href="./docs/testing.html">Testing →</a>
+    </div>
+    <div class="card">
+      <h4>Measured, not promised</h4>
+      <p>The claims about update precision are assertions in CI: exact DOM-write counts for a game and a 1,000-row benchmark, a bound on diff time, and checks that nothing leaks after disposal.</p>
+      <a class="more" href="./guide.html#budgets">The numbers →</a>
+    </div>
+  </div>
+</section>
+
+<section id="demos">
+  <div class="sec-head"><span class="sec-num">04</span><h2>See it run</h2></div>
+
+  <p>These demos run on this page using the library directly. Under each one, <em>source</em> shows the file that is running, so the listing and the demo are always the same code.</p>
 
   <div class="demo" data-demo="todos">
     <div class="demo-head">
       <span class="demo-title">Todos</span>
-      <span class="demo-note">one process manages the list · rows are keyed</span>
+      <span class="demo-note">one process owns the list · toggling a row updates only that row</span>
     </div>
     <div class="demo-stage" data-stage></div>
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
@@ -192,410 +165,106 @@ const res = await cart.call({ type: 'checkout' }) // res is typed; a crash rejec
   <div class="demo" data-demo="typeahead">
     <div class="demo-head">
       <span class="demo-title">Typeahead</span>
-      <span class="demo-note">self.latest() keeps only the newest queued input</span>
+      <span class="demo-note">type quickly: while a search runs, only the newest query waits its turn</span>
     </div>
     <div class="demo-stage" data-stage></div>
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
 
-  <div class="demo" data-demo="form">
-    <div class="demo-head">
-      <span class="demo-title">Form</span>
-      <span class="demo-note">call() returns the result of a submission</span>
-    </div>
-    <div class="demo-stage" data-stage></div>
-    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
-  </div>
-
-  <div class="demo" data-demo="drag">
-    <div class="demo-head">
-      <span class="demo-title">Drag</span>
-      <span class="demo-note">a process for the duration of a pointer gesture</span>
-    </div>
-    <div class="demo-stage" data-stage></div>
-    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
-  </div>
-
-  <div class="demo" data-demo="shared">
-    <div class="demo-head">
-      <span class="demo-title">Shared state</span>
-      <span class="demo-note">lookup(name, args) returns an existing process or starts one</span>
-    </div>
-    <div class="demo-stage" data-stage></div>
-    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
-  </div>
-
-  <div class="demo" data-demo="worker">
-    <div class="demo-head">
-      <span class="demo-title">Worker</span>
-      <span class="demo-note">state runs on another thread while the animation stays responsive</span>
-    </div>
-    <div class="demo-stage" data-stage></div>
-    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
-  </div>
-
-  <p>The worker runs an intentionally expensive task: trial division above a trillion in 30&nbsp;ms batches. The page reads its process just as it would read one on the main thread. Because the calculation stays in the worker, the main thread remains free to animate the hand. The worker setup takes four lines:</p>
-
-<pre><code data-ts>
-import { define, registry } from '@nonchalant/core'
-import { expose, portTransport, workerEndpoint } from '@nonchalant/wire'
-import { primes } from './primes.ts'
-
-expose(registry({ primes: define(primes) }), portTransport(workerEndpoint()))
-</code></pre>
-
-  <div class="demo" data-demo="mario">
-    <div class="demo-head">
-      <span class="demo-title">Mario</span>
-      <span class="demo-note">click the stage, use the arrow keys, and press up to jump</span>
-    </div>
-    <div class="demo-stage" data-stage></div>
-    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
-  </div>
-
-  <p>Mario ports the physics from the classic <a href="https://elm-lang.org/examples/mario">Elm example</a>. The process stores the current arrow-key state, while only animation ticks advance the world. Holding a key therefore cannot update the physics twice in one frame. The view yields once; later frames update two attribute bindings. CI verifies one view yield, at most two DOM writes in the busiest frame, and no node replacement.</p>
-
-  <div class="note">
-    <b>More examples.</b> The <a href="./examples/">example gallery</a> includes TodoMVC, code-split routing, undo and redo through function composition, a query cache with write-through mutations, canvas and DOM renderers driven by the same process, the seven GUIs, a larger Mario demo, and the js-framework-benchmark app. All but the chat example run entirely in the browser; chat uses a local WebSocket host.
-  </div>
+  <p>There are more demos further on: a form, a drag gesture, and a game in <a href="./guide.html">the guide</a>, a Web Worker in <a href="./anywhere.html#worker">Run anywhere</a>, and an AI agent in <a href="./server.html#agents">Server &amp; agents</a>. The <a href="./examples/">example gallery</a> adds TodoMVC, routing, undo and redo, a query cache, the 7GUIs, and the js-framework-benchmark app.</p>
 </section>
 
-<section id="updates">
-  <div class="sec-head"><span class="sec-num">05</span><h2>Why the updates stay small</h2></div>
+<section id="fit">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Where it fits</h2></div>
 
-  <p>State updates use standard immutable JavaScript. Each yielded value is compared structurally with the previous snapshot. A reader is notified only when the diff includes a path that it read.</p>
-
-<pre><code data-ts>
-s = { ...s, total: s.total + item.price }   // an ordinary immutable update
-yield s                                     // diffed → only /total readers wake;
-                                            // a binding on items[3].done sleeps through it
-</code></pre>
-
-  <p>Dependencies are recorded automatically. While a binding runs, a temporary proxy tracks the paths it reads. This removes the need for dependency arrays and manual memoization. Views are created once. Structure changes through keyed lists and replaceable regions: a binding that returns a subtree, which the renderer patches or swaps in place.</p>
-
-  <p>CI enforces the following performance, size, and cleanup limits:</p>
+  <p>Nonchalant borrows from projects you may already know:</p>
 
   <div class="scroll">
   <table>
-    <thead><tr><th>Budget</th><th>Enforced in</th></tr></thead>
+    <thead><tr><th>If you know</th><th>You'll recognize</th></tr></thead>
     <tbody>
-      <tr><td>1 changed row in 10,000 diffs in ≤ 100 µs</td><td><code>reconcile.perf.test.ts</code></td></tr>
-      <tr><td>One changed label in a 50-row list is one DOM write</td><td><code>dom.test.ts</code></td></tr>
-      <tr><td>A 60 fps game: 1 view yield, at most 2 DOM writes in any frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
-      <tr><td>1,000 keyed rows: swap is exactly 2 moves; select writes exactly 2 class attributes; appending a row inserts 1, rebinds the 1,000 existing bindings in place with 0 re-created, and writes to no existing row; update every 10th is exactly 100 text writes</td><td><code>bench.test.ts</code></td></tr>
-      <tr><td>core ≤ 8.3 KB gzip, core + DOM ≤ 13.6 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB</td><td><code>size.test.ts</code></td></tr>
-      <tr><td>Nothing retained after dispose</td><td><code>process.leaks.test.ts</code></td></tr>
+      <tr><td>Erlang/OTP</td><td>Processes with mailboxes, <code>cast</code> and <code>call</code>, processes addressed by name, and children that end with their parent.</td></tr>
+      <tr><td>Solid and signals</td><td>Fine-grained updates with no virtual DOM. The propagation engine is a port of <a href="https://github.com/stackblitz/alien-signals">alien-signals</a>.</td></tr>
+      <tr><td><a href="https://crank.js.org">Crank</a></td><td>Generators that keep their own state between updates.</td></tr>
+      <tr><td>TanStack Query</td><td>Entries cached by their arguments, shared by every reader, and dropped when idle.</td></tr>
+      <tr><td>Phoenix LiveView</td><td>State owned by a server and pushed to the browser, except as data patches rather than HTML.</td></tr>
+      <tr><td>Temporal, Restate</td><td>Workflows that survive a restart because what they did was written down.</td></tr>
     </tbody>
   </table>
   </div>
+
+  <p>What's new is putting all of these behind one primitive. A piece of state can grow from a widget into shared state, move to a server, and become a durable workflow without being rewritten, and the code that reads it doesn't change along the way.</p>
+
+  <h3>What it isn't</h3>
+
+  <ul>
+    <li><strong>Not React-compatible.</strong> Views are function calls such as <code>div({}, …)</code> rather than JSX, and there is no re-render to hook into.</li>
+    <li><strong>Not an Erlang runtime.</strong> Processes are cooperative JavaScript: no preemption, no isolation, no supervision trees. A long loop still blocks its thread; move it to a worker.</li>
+    <li><strong>No server-side rendering yet.</strong> A server holds processes and sends their state; the browser builds every DOM node.</li>
+  </ul>
 </section>
 
-<section id="wire">
-  <div class="sec-head"><span class="sec-num">06</span><h2>Over the wire</h2></div>
+<section id="start">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Get started</h2></div>
 
-  <p><code>lookup(name, args)</code> can locate a shared dependency, a cached query, or a remote process. Transports provide <code>send</code> and <code>subscribe</code> over an ordered, reliable channel such as a socket, worker port, or tab-to-tab bus. Choosing where state runs changes one line:</p>
+  <p>Nothing is on npm yet. To try it, clone the repository:</p>
 
-<pre><code data-ts>
-const shop = registry({ cart: define(cart) })                        // this tab
-const shop = connect&lt;Shop&gt;(portTransport(new Worker(url)))           // another thread
-const shop = connect&lt;Shop&gt;(broadcastChannelTransport('shop'))        // another tab
-const shop = connect&lt;Shop&gt;(webSocketTransport('wss://…'))            // another machine
-</code></pre>
+<pre><code>git clone https://github.com/twfarland/nonchalant
+cd nonchalant
+pnpm install
 
-  <p>The rest of the application uses the same process API in all four cases:</p>
+pnpm dev     # this site at /, the example gallery at /examples/
+pnpm test    # the whole suite, including the update-count budgets
+pnpm check   # strict TypeScript across packages, examples, and this site</code></pre>
 
-  <div class="scroll">
-  <table>
-    <thead><tr><th>The same at every distance</th><th>Why</th></tr></thead>
-    <tbody>
-      <tr><td>The process itself</td><td>The process has no transport-specific code. <code>examples/shared-cart</code> uses one definition in both the tab and Node host. <a href="./examples/worker/">examples/worker</a> can move one definition across a thread boundary while it is running.</td></tr>
-      <tr><td><code>cast</code> and <code>call</code></td><td>A cast uses one wire operation. A call pairs a request with its response. TypeScript preserves the distinction between them.</td></tr>
-      <tr><td>Targeted updates</td><td>A remote handle applies patches to a local process. A binding on <code>/items/3/done</code> is not notified when <code>/total</code> changes, regardless of where the source process runs.</td></tr>
-      <tr><td>Loading and failure</td><td><code>pending</code>, <code>stale</code>, and <code>error</code> are regular reads. If a host disconnects, the last value remains available and <code>stale</code> becomes true.</td></tr>
-      <tr><td>Teardown</td><td><code>Symbol.dispose</code> releases the subscription. The host can reclaim the process after its last subscriber leaves.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <p>The wire carries patches made from plain data, not markup or executable code. Rendering and local interaction remain on the client, and payload size follows the size of the state change rather than the page. Other languages can implement a compatible host using the conformance vectors in <code>packages/wire/spec/</code>. After reconnecting, the client repeats its lookups and receives a full snapshot. That snapshot is compared with the retained value, so unchanged paths do not notify their readers.</p>
-
-  <p>Remote state comes with constraints. Values must be JSON-shaped; a <code>Date</code> or class instance is treated as an atomic value and cannot survive a remote lookup. Calls may fail or arrive late. The published schema limits which names are available, but it does not authenticate users. Authorization is enforced by the host and the processes; the table below lists what the host provides. In return, the application can share one implementation of its state across local and remote use.</p>
-
-  <p>The Node host is open by default so local examples need no setup, and every guard is an option a deployment sets:</p>
+  <p>It is split into packages so an app takes only what it uses:</p>
 
   <div class="scroll">
   <table>
-    <thead><tr><th>Host option</th><th>What it stops</th></tr></thead>
+    <thead><tr><th>Package</th><th>What it gives you</th></tr></thead>
     <tbody>
-      <tr><td><code>allowedOrigins</code>, <code>authorize</code></td><td>Other websites opening a socket with a visitor's cookies, and connections without a valid credential.</td></tr>
-      <tr><td><code>scope</code></td><td>A client naming another user's data. The gateway it returns decides which processes a connection reaches, and can supply their arguments itself.</td></tr>
-      <tr><td><code>admit</code></td><td>Malformed or forged messages. It screens every cast and call before delivery and can rebuild the message; a throw counts as a refusal.</td></tr>
-      <tr><td><code>principal</code></td><td>One connection's call ids colliding with another's. Durable call ids are namespaced by the principal, so a retry from the same user lands on the same answer.</td></tr>
-      <tr><td><code>lookupRate</code>, <code>maxWatchesPerConnection</code></td><td>A client filling the registry by looking up one name with thousands of different arguments.</td></tr>
-      <tr><td><code>totalLookupRate</code>, <code>maxEntries</code></td><td>Many connections together doing the same: a lookup budget shared by all of them, and a registry cap that disposes the least recently used entries nobody is watching.</td></tr>
-      <tr><td><code>maxBufferedBytes</code>, <code>heartbeatMs</code>, <code>maxPayloadBytes</code></td><td>Memory growth from a client that stops reading, half-open sockets, and oversized frames.</td></tr>
+      <tr><td><code>@nonchalant/core</code></td><td>Processes, the registry, and the reactive graph. No dependencies and no DOM, so it runs anywhere JavaScript does.</td></tr>
+      <tr><td><code>@nonchalant/dom</code></td><td>Tag functions and the renderer. Text is never parsed as HTML.</td></tr>
+      <tr><td><code>@nonchalant/wire</code></td><td>Connections to processes in a worker, another tab, or a server.</td></tr>
+      <tr><td><code>@nonchalant/durable</code></td><td>Processes that survive a crash or a restart, over a storage interface you can implement for your database.</td></tr>
+      <tr><td><code>@nonchalant/host</code></td><td>A Node WebSocket server for processes, with origin checks, authorization, and rate limits.</td></tr>
+      <tr><td><code>@nonchalant/inspect</code></td><td>A panel that shows live processes, the messages between them, and their past states.</td></tr>
     </tbody>
   </table>
   </div>
-
-  <div class="note"><b>Running the hosted demos.</b> Start the chat room or shared cart with <code>pnpm chat-server</code> or <code>pnpm cart-server</code>, then open its page through <code>pnpm dev</code>. The shared cart can also keep its state in the tab; a commented line switches between local and hosted modes. Read <a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a> before exposing a host to the internet. It covers origin checks, authorization, per-connection scope, and limits you must configure.</div>
-
-  <p>Two distributed examples need no server. Open <a href="./examples/multi-tab/">multi-tab</a> twice to see one tab become the host over a <code>BroadcastChannel</code>; another takes over when the host closes. The <a href="./examples/worker/">worker</a> example can move the calculation between the main thread and a worker while it runs. Its results stay the same, while the frame meter shows the effect on responsiveness.</p>
-</section>
-
-<section id="backend">
-  <div class="sec-head"><span class="sec-num">07</span><h2>The same primitive on the server</h2></div>
-
-  <p class="lede">The core package has no browser dependency. Its combination of a mailbox, generator, and supervision follows the actor model established by Erlang. The next three examples use processes for server state, durable state, and agent workflows.</p>
-
-  <h3>A chat room on a server</h3>
-
-  <p>The chat example starts with a simple process. A room adds posts to a limited history. It does not know about sockets, sessions, or the server that hosts it:</p>
-
-<pre><code data-ts>
-export const room: Proc&lt;RoomState, RoomMsg, { name: string }&gt; = async function* (self) {
-  let lines: ChatLine[] = []
-  let nextId = 1
-  yield { lines }
-  for await (const msg of self) {
-    lines = [...lines.slice(-49), { id: nextId++, from: msg.from, text: msg.text }]
-    yield { lines }
-  }
-}
-</code></pre>
-
-  <p>The server registers the process, and browser tabs reach it through the same lookup API used locally. The name and arguments identify the room, so every lookup for the same room reaches the same process.</p>
-
-<pre><code data-ts>
-// the server (examples/chat/server.ts)
-const host = await serve({ room: define(room, { evict: 3_600_000 }) }, {
-  port: 4322,
-  allowedOrigins: loopback,
-  scope: (request, reg) =&gt; {
-    const from = nickname(request)                       // identity fixed at the handshake
-    return {
-      lookup: (name: string, args: unknown) =&gt; {
-        if (name !== 'room') throw new Error(`not exposed: ${name}`)
-        return reg.lookup('room', roomArgs(args))         // args checked before any spawn
-      },
-      admit: (_name, msg) =&gt; admitPost(msg, from),     // every post rebuilt with its sender
-    }
-  },
-  maxWatchesPerConnection: 64,
-})
-
-// a tab
-const conn = connect&lt;ChatSchema&gt;(webSocketTransport('ws://127.0.0.1:4322/'))
-const lobby = conn.lookup('room', { name: 'lobby' })   // get-or-spawn, on the server
-</code></pre>
-
-  <details class="diagram">
-    <summary>Architecture: several tabs and one process per room</summary>
-    <div class="diagram-body"><pre data-mermaid>flowchart LR
-  T1["tab A"] -- "lookup room lobby" --> H
-  T2["tab B"] -- "lookup room lobby" --> H
-  T3["tab C"] -- "lookup room dev" --> H
-  H["the host: one wire session per socket"] --> REG["registry: a name plus its args is the address"]
-  REG --> P1[["room lobby"]]
-  REG --> P2[["room dev"]]
-  P1 -- "yield, diffed to a patch" --> H
-  H -- "patch" --> T1
-  H -- "patch" --> T2</pre></div>
-  </details>
-
-  <p>The <code>scope</code> function runs once per connection and returns the gateway that connection's lookups and messages go through. Here it fixes the sender's name at the handshake, validates room arguments before anything spawns, and uses <code>admit</code> to rebuild every post with that name as <code>from</code>, so a client can neither speak as someone else nor crash a room with a malformed message.</p>
-
-  <p>The registry manages each room's lifetime. The first lookup starts it, later lookups share it, and the registry evicts it one hour after the last tab leaves. Suspended generators use little memory, allowing one Node process to host many rooms. If the server stops, tabs retain their latest snapshot with <code>stale: true</code>. Once the transport reconnects, a new lookup supplies a full snapshot.</p>
-
-  <div class="note"><b>Try it locally.</b> Run <code>pnpm chat-server</code>, then open <code>/examples/chat/</code> in several tabs. Before exposing a host to the internet, read <a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a> for guidance on origins, authorization, connection scope, and resource limits.</div>
-
-  <h3>State that survives a restart</h3>
-
-  <p>Losing a chat room may be acceptable, but orders and long-running jobs must survive restarts. <code>@nonchalant/durable</code> records a process so it can recover. The wrapper returns a regular <code>Proc</code>, which can still be registered, accessed over a transport, and bound to a view.</p>
-
-<pre><code data-ts>
-const orders = registry({
-  order: define(durable(order, { store, key: (args) => args.id })),
-})
-</code></pre>
-
-  <p>Each message forms a transaction boundary. The wrapper records the message before delivery and records every completed <code>d.step</code> effect. When the process requests another message, the new state and updated message cursor are committed together. If it crashes before that commit, recovery delivers the message again. The generator repeats its work, but completed effects are read from the journal instead of running again.</p>
-
-  <details class="diagram">
-    <summary>Architecture: what is recorded and when</summary>
-    <div class="diagram-body"><pre data-mermaid>sequenceDiagram
-  participant C as caller
-  participant D as durable wrapper
-  participant S as store (a port)
-  participant P as your process
-  C->>D: cast, or call with a callId
-  D->>S: append(message)
-  D->>P: deliver
-  P->>D: step("charge")
-  D->>S: putStep(result)
-  P->>D: yield state
-  P->>D: request the next message
-  D->>S: commit(state, cursor) - together, or not at all
-  Note over D,S: a crash before that commit delivers the message again
-  Note over D,S: recorded steps answer from the journal instead of running</pre></div>
-  </details>
-
-  <p><strong>Calls also survive retries.</strong> A <code>call</code> includes an idempotency key, and the response is stored under that key. Retrying the call returns the stored response. <code>d.call</code> derives a stable key from the caller, current message, and call name, so replay uses the same key:</p>
-
-<pre><code data-ts>
-const receipt = await d.call('reserve', (callId) =>
-  vault.call({ type: 'reserve', amount: 100, callId }))
-</code></pre>
-
-  <p>This prevents a retry from repeating completed work. Calls with the same ID share one result, callers can recover a response after restarting, and a callee does not repeat a message after recording its answer.</p>
-
-  <p>Storage is defined by an eight-method <strong>port</strong>. It requires no base class or registration, and the durable wrapper does not depend on a particular database. Every write carries an epoch, so a stale activation of the same key is fenced out instead of overwriting a newer one. The package includes an in-memory adapter as the reference implementation and as the target of the crash-consistency tests. An adapter for a real database certifies itself by running <code>@nonchalant/durable/conformance</code>, the storage contract as a test suite. <code>examples/durable-sqlite</code> does exactly that for a store on Node's built-in <code>node:sqlite</code>, then crashes a process mid-message, reopens the file, and checks that the completed charge is not repeated.</p>
-
-  <p><strong>Timers survive restarts too.</strong> <code>d.sleep(name, ms)</code> journals its deadline, and the same write tells the store when the key next needs waking. If the process has been evicted or its host restarted by then, a scheduler asks the store which keys are due and looks each one up:</p>
-
-<pre><code data-ts>
-await d.sleep('cool-off', 3_600_000)   // the deadline is journaled, not the timer
-
-const timers = scheduler({ store, wake: (id) =&gt; orders.lookup('order', { id }) })
-</code></pre>
-
-  <p>The lookup activates the key, which replays its log, finds the deadline passed, and carries on. <code>due</code> leases each key it returns, so two schedulers on one store do not both wake it, and a wake whose activation dies before committing comes due again. <code>packages/durable/test/scheduler.test.ts</code> covers each case with fake timers.</p>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>How durable execution is usually done</th><th>The trade</th></tr></thead>
-    <tbody>
-      <tr><td><b>Temporal</b> replays workflow code against an event history</td><td>Replay is exact, but workflow code must remain deterministic and effects must run as activities.</td></tr>
-      <tr><td><b>DBOS</b> and <b>Restate</b> journal individual steps in ordinary code</td><td>Code can remain conventional, but a step interrupted in progress may run more than once.</td></tr>
-      <tr><td><b>Nonchalant</b> journals messages and steps, then commits the snapshot with its cursor</td><td>Recovery loads one snapshot rather than replaying the full history. Recorded steps run once, while an effect interrupted before it was recorded may run again.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <p>The package does not include worker fleet management, cron, configurable retry policies beyond <code>restart</code> and <code>maxAttempts</code>, or an execution console; its scheduler wakes journaled deadlines and nothing else. Fencing keeps the log correct when two hosts activate the same ID, but deciding which host should own it (a registry per node, a lease, a consistent hash) stays outside the library.</p>
-
-  <h4>Messaging and queues</h4>
-
-  <p>Backends often need pub/sub and work queues. The <a href="./examples/messaging/">messaging demo</a> defines both behind ports and provides in-memory adapters. A subscription can itself be a process: subscribe during setup, cast each event through <code>self.cast</code>, and unsubscribe when the process is disposed. This turns an external stream into state that views can read. Looking up the process by topic also lets the registry share one subscription among all readers of that topic.</p>
-
-  <p>A queue worker can also be modeled as a process: reserve a job under a lease, handle it, acknowledge success, and release it after failure. In the demo, press <b>kill</b> while a worker holds a job. Because the job is not acknowledged, its lease expires and another worker receives it with a higher <code>attempts</code> count. The queue provides at-least-once delivery, much as <code>durable()</code> does for messages inside a process.</p>
-
-  <h3>Agent workflows</h3>
-
-  <p>An agent receives a question, calls tools, examines their responses, and publishes progress. Those operations fit the same process API used by the earlier examples. The demo below combines the process from section 03 with the durable wrapper described above.</p>
-
-  <div class="demo" data-demo="agent">
-    <div class="demo-head">
-      <span class="demo-title">Agent</span>
-      <span class="demo-note">stub model · ask about processes, patches, workers, or durability · try "refund 20"</span>
-    </div>
-    <div class="demo-stage" data-stage></div>
-    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
-  </div>
-
-  <p><strong>Tools can be processes, reached with <code>call()</code>.</strong> Their state is observable; for example, the search tool tracks its call count. A registry lookup can reach the tool locally or through a transport.</p>
-
-  <p><strong>Human approval uses the same request flow.</strong> Enter <em>refund 20</em> in the demo. The approval tool holds the request until you choose a response. The agent waits with a normal <code>await</code>, while the approval queue is process state rendered by a regular view.</p>
-
-<pre><code data-ts>
-for await (const msg of self) {
-  switch (msg.type) {
-    case 'request':                                    // parked until somebody decides
-      waiting = [...waiting, { ...msg, reply: msg.reply }]
-      break
-    case 'decide':                                     // a person decided
-      waiting[0]?.reply(msg.ok)
-      waiting = waiting.slice(1)
-      break
-  }
-  yield state()
-}
-</code></pre>
-
-  <p>Press <b>kill it</b> while a question is running. The current process is disposed, and the next lookup starts a replacement that recovers from the journal without calling the model again.</p>
-
-  <h4>Several agents</h4>
-
-  <p>Common agent orchestration patterns can be written with the process API. In <a href="./examples/multi-agent/">the multi-agent demo</a>, a supervisor sends a brief to a researcher, passes the result to a writer, and requests approval before publishing.</p>
-
-  <details class="diagram">
-    <summary>Architecture: a supervisor, two delegates, and one budget</summary>
-    <div class="diagram-body"><pre data-mermaid>flowchart TB
-  V["the page: bindings on the supervisor's state"] --- B
-  B["supervisor (durable)"] -- "d.call research" --> R["researcher (durable)"]
-  B -- "d.call write" --> W["writer (durable)"]
-  B -- "d.step approve" --> A["approvals: a reply parked until a person clicks"]
-  R -- "call" --> SR["search tool"]
-  R -- "call" --> M["budget: one limit for the whole system"]
-  W -- "call" --> M
-  W -- "call" --> MO["the model"]</pre></div>
-  </details>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>The pattern</th><th>What it is here</th></tr></thead>
-    <tbody>
-      <tr><td>Single agent</td><td>A single process.</td></tr>
-      <tr><td>Agent delegation</td><td>Another agent acts as a tool, and delegation becomes a durable call. If the supervisor restarts during the pipeline, the completed research is reused.</td></tr>
-      <tr><td>Programmatic handoff</td><td>The supervisor passes one agent's output to the next as an argument, without a shared history or blackboard.</td></tr>
-      <tr><td>Graph-based control flow</td><td>A <code>stage</code> field records the current node, and code between yields defines each transition. Because the graph is data, the UI can render it directly.</td></tr>
-      <tr><td>System-wide usage limits</td><td>Every agent calls one budget process inside a <code>step</code>, preventing replay from spending the same allocation twice.</td></tr>
-      <tr><td>Shared dependencies</td><td>Pass dependencies as arguments or locate shared ones through the registry.</td></tr>
-      <tr><td>Streaming a run to a UI</td><td>The run is process state. A view binds to it locally, and a transport sends remote updates as patches.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <p>The test suite exercises these workflows without a DOM or network. In <code>examples/agent/agent.test.ts</code> and <code>examples/multi-agent/multi-agent.test.ts</code>, the model is passed as an argument, tools run as processes, and yielded states form the execution record. Tests in <code>packages/durable</code> generate crash schedules and verify that recovered workflows reach the same state as uninterrupted runs.</p>
-</section>
-
-<section id="tools">
-  <div class="sec-head"><span class="sec-num">08</span><h2>Seeing inside</h2></div>
-
-  <h3>Seeing inside a process</h3>
-
-  <p>A process keeps its state in <code>let</code> variables inside a suspended generator, where browser devtools cannot see it. <code>@nonchalant/inspect</code> records every process event as it happens: spawns, casts, calls and replies, yields, crashes, restarts, and exits. Its panel shows the tree of live processes nested by ownership, a timeline of events, and the state of any process at any recorded moment.</p>
-
-<pre><code data-ts>
-import { mountInspector } from '@nonchalant/inspect'
-
-const panel = mountInspector(document.getElementById('inspector')!)   // before the processes it should see
-</code></pre>
-
-  <p>Yields are recorded as patches, the same ones the wire sends, so going back in time applies stored patches to a process's starting state instead of keeping copies. A property test checks that the state reconstructed at every retained yield equals the state the process yielded there (<code>record.test.ts</code>). Core reports events through one hook, <code>instrument(sink)</code>; with no sink installed, a yield is diffed once and no event object is built (<code>instrument.test.ts</code>), and the hook costs core about 220 bytes (<code>size.test.ts</code>). Add <code>?inspect</code> to the <a href="./examples/todomvc/?inspect">TodoMVC</a> or <a href="./examples/agent/?inspect">agent</a> example to dock the panel under the page.</p>
 </section>
 
 <section id="more">
-  <div class="sec-head"><span class="sec-num">09</span><h2>Read more</h2></div>
+  <div class="sec-head"><span class="sec-num">07</span><h2>Read on</h2></div>
 
-  <p>This page gives an overview. The documentation covers each topic in more detail and links performance and update-granularity claims to the tests that enforce them.</p>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>Document</th><th>What it is</th></tr></thead>
-    <tbody>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/tutorial.md">Thinking in processes</a></td><td>A tutorial that builds a cart locally, then moves it to a server.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/concepts.md">Concepts</a></td><td>Reference material for each concept, its contract, and its tests.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/api.md">API reference</a></td><td>Every export of every package, with its signature.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/errors.md">Error handling</a></td><td>Crashes, stale values, call rejections, and render and wire failures.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/recipes.md">Recipes</a></td><td>Typeahead, forms, query cache, routing, undo/redo, drag, durable processes.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/testing.md">Testing</a></td><td>How to drive generators directly and test sequences of messages and yields.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/migration.md">Migration</a></td><td>Guidance for React, Solid, and LiveView users, including the tradeoffs.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/inspect.md">The inspector</a></td><td>The instrumentation hook, the recorder, time travel, and the panel.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/server.md">Processes on the server</a></td><td>Virtual actors, durable execution, timers and the scheduler, the storage port, agent loops, and their current limits.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a></td><td>Origins, authorization, connection scoping, message screening, principals, and connection limits.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/PROTOCOL.md">Protocol</a></td><td>The eight-operation data wire (revision 3) and its conformance rules.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/internals/README.md">Internals</a></td><td>Contributor notes on the core implementation and its invariants.</td></tr>
-    </tbody>
-  </table>
+  <div class="grid2">
+    <div class="card">
+      <h4>The guide</h4>
+      <p>The whole model, one idea at a time: processes, messages, views, how updates stay small, and shared state.</p>
+      <a class="more" href="./guide.html">Start the guide →</a>
+    </div>
+    <div class="card">
+      <h4>Run it anywhere</h4>
+      <p>Move a process into a worker, another tab, or a server, and what crosses the connection.</p>
+      <a class="more" href="./anywhere.html">Run it anywhere →</a>
+    </div>
+    <div class="card">
+      <h4>Servers, workflows, and agents</h4>
+      <p>State that survives a crash, timers that survive a restart, and AI agents with tools and human approval.</p>
+      <a class="more" href="./server.html">On the server →</a>
+    </div>
+    <div class="card">
+      <h4>The example gallery</h4>
+      <p>Every example, each with a short explanation of how it works beside it.</p>
+      <a class="more" href="./examples/">Open the gallery →</a>
+    </div>
   </div>
 
-  <h3>Prior art it stands on</h3>
-  <p>The propagation core is ported from <a href="https://github.com/stackblitz/alien-signals">alien-signals</a>. <a href="https://crank.js.org">Crank</a> demonstrated generator components with local state. Erlang/OTP informed the mailboxes, casts, calls, and named processes. Cache keys, sharing, and idle eviction draw from TanStack Query. The targeted keyed diff follows ideas from Solid and lit-html. LiveView inspired server-owned state, though Nonchalant sends data patches instead of HTML.</p>
+  <p>The <a href="./docs/">documentation</a> goes deeper: <a href="./docs/tutorial.html">a tutorial</a>, <a href="./docs/concepts.html">each concept</a> with the tests that enforce it, <a href="./docs/api.html">the full API</a>, <a href="./docs/recipes.html">recipes</a>, <a href="./docs/migration.html">notes for React, Solid, and LiveView users</a>, and <a href="./docs/PROTOCOL.html">the wire protocol</a>.</p>
 </section>
 
 <footer>
-  Nonchalant is an experimental TypeScript runtime for stateful async-generator processes.<br>
+  Nonchalant is experimental alpha software: a TypeScript runtime for stateful async-generator processes.<br>
   MIT © Tim Farland · <a href="https://github.com/twfarland/nonchalant">github.com/twfarland/nonchalant</a> · The demos on this page run in your browser.
 </footer>
 

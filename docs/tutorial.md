@@ -277,7 +277,9 @@ themselves. See [Hosting safely](hosting.md).
 
 ## Where to next
 
-- [Concepts](concepts.md): reference material with links to tests.
+- [Concepts](concepts.md): reference material with links to tests. Its
+  [Layers](concepts.md#layers-the-primitive-and-its-sugar) section covers the
+  optional sugar (`cell`, `reducer`) and when to write the generator instead.
 - [API reference](api.md): every export, with its signature.
 - [Error handling](errors.md): what fails, how it surfaces, and what to do.
 - [Recipes](recipes.md): typeahead, undo/redo, routing, forms, and drag.

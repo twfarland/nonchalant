@@ -5,9 +5,13 @@
 // and drives the interactions the captions promise.
 
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { posix } from 'node:path'
 import { flush } from '@nonchalant/core'
+import { docOrder, renderDocs } from './docs.ts'
+import { demos } from './demos.ts'
 import { highlight } from './highlight.ts'
+import { sitePages } from './pages.ts'
 import { showSources } from './sources.ts'
 import { run as counter } from './demos/counter.ts'
 import { run as todos } from './demos/todos.ts'
@@ -272,15 +276,76 @@ describe('source listings', () => {
   })
 })
 
+// the hand-written pages, plus docs/*.md as the build renders them (the
+// rendered files are gitignored, so they are rendered here rather than read)
+const pages = new Map<string, string>([
+  ...sitePages.map((page) => [page, readFileSync(page, 'utf8')] as const),
+  ...renderDocs(),
+])
+
+// A multi-page site breaks quietly: a renamed anchor or a moved demo shows up
+// as a dead link or an empty box, never as an error. These read the pages as
+// text and check what they point at.
+describe('the pages', () => {
+  it('link only to files and anchors that exist', () => {
+    let checked = 0
+    for (const [page, html] of pages) {
+      for (const [, href = ''] of html.matchAll(/href="([^"]+)"/g)) {
+        if (/^[a-z]+:/.test(href)) continue // off-site
+        const [, path = '', fragment = ''] = /^([^?#]*)(?:\?[^#]*)?(?:#(.*))?$/.exec(href) ?? []
+        let target = path === '' ? page : posix.normalize(posix.join(posix.dirname(page), path))
+        if (path.endsWith('/') || target === '.') target = posix.join(target, 'index.html')
+        expect(pages.has(target) || existsSync(target), `${page}: ${href}`).toBe(true)
+        if (fragment !== '') {
+          const doc = pages.get(target) ?? readFileSync(target, 'utf8')
+          expect(doc.includes(`id="${fragment}"`), `${page}: ${href}`).toBe(true)
+        }
+        checked++
+      }
+    }
+    expect(checked).toBeGreaterThan(200)
+  })
+
+  it('list every document in docs/ on the documentation contents', () => {
+    const listed = new Set(docOrder.map(([file]) => file))
+    const top = readdirSync('docs').filter((f) => f.endsWith('.md'))
+    expect(top.filter((f) => !listed.has(f))).toStrictEqual([])
+    expect(listed.has('internals/README.md')).toBe(true)
+  })
+
+  it('name only demos that exist, and every demo appears on some page', () => {
+    const shown = new Set<string>()
+    for (const [page, html] of pages) {
+      for (const [, id = ''] of html.matchAll(/data-demo="([^"]+)"/g)) {
+        expect(demos[id], `${page}: ${id}`).toBeDefined()
+        shown.add(id)
+      }
+    }
+    expect([...shown].sort()).toStrictEqual(Object.keys(demos).sort())
+  })
+})
+
 describe('the architecture diagrams', () => {
   it('are valid mermaid', async () => {
-    const html = readFileSync('index.html', 'utf8')
-    const sources = [...html.matchAll(/<pre data-mermaid>([\s\S]*?)<\/pre>/g)].map((m) => (m[1] ?? '').trim())
+    const sources = [...pages.values()].flatMap((html) =>
+      [...html.matchAll(/<pre data-mermaid>([\s\S]*?)<\/pre>/g)].map((m) =>
+        // the entities decoded, as the browser's textContent hands them to mermaid
+        (m[1] ?? '')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, '&')
+          .trim()))
     expect(sources.length).toBeGreaterThan(0)
 
     const { default: mermaid } = await import('mermaid')
     mermaid.initialize({ startOnLoad: false })
-    for (const source of sources) await mermaid.parse(source) // throws on a bad one
+    for (const source of sources) {
+      // throws on a bad one, naming the diagram so it can be found
+      await mermaid.parse(source).catch((e: unknown) => {
+        throw new Error(`${String(e)}\nin the diagram:\n${source}`)
+      })
+    }
     await expect(mermaid.parse('flowchart LR; A[[[broken')).rejects.toBeTruthy() // and a bad one fails
   }, 30_000)
 })

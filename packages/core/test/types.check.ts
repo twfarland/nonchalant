@@ -3,7 +3,7 @@
 // them, the type surface has regressed. This file is the contract the runtime
 // implementation must satisfy.
 
-import { spawn, derive, cell, define, registry } from '../src/index.ts'
+import { spawn, derive, cell, define, registry, reducer } from '../src/index.ts'
 import type { Call, Cast, Definition, Proc, Process, Registry, Self } from '../src/index.ts'
 
 type Item = { id: number; title: string; done: boolean }
@@ -129,7 +129,28 @@ const hist = spawn(withHistory(cartProc), { userId: 'u1' })
 hist.cast({ type: 'undo' })
 hist.cast({ type: 'add', item: { id: 2, title: 'y', done: false } })
 
+// --- reducer sugar: an ordinary Proc, with per-case reply types ---
+const cartReducer = reducer((_: { userId: string }): CartState => ({ items: [], total: 0 }), function cartR(s, msg: CartMsg) {
+  switch (msg.type) {
+    case 'add':
+      return { ...s, items: [...s.items, msg.item] }
+    case 'remove':
+      return { ...s, items: s.items.filter((i) => i.id !== msg.id) }
+    case 'checkout':
+      // @ts-expect-error — the reply is narrowed to this case's response type
+      msg.reply(true)
+      return s
+  }
+})
+const asProc: Proc<CartState, CartMsg, { userId: string }> = cartReducer
+const rcartSpawned = spawn(cartReducer, { userId: 'u1' }, { initial: { items: [], total: 0 } })
+const rcartOk: Promise<{ ok: boolean; orderId?: string }> = rcartSpawned.call({ type: 'checkout' })
+// @ts-expect-error — a reducer returns the next state, not a partial of it
+reducer((): CartState => ({ items: [], total: 0 }), (s: CartState, _msg: CartMsg) => ({ total: s.total }))
+// @ts-expect-error — init's args are the spawn args
+spawn(cartReducer, { user: 'u1' })
+
 // silence unused locals
 void total0; void total1; void rcart; void hist; void cart; void cartDisposed; void lc; void found; void counted; void fakeDefinition
-void rcartState; void clockNow; void seededNow; void maybeNow
+void rcartState; void asProc; void rcartOk; void clockNow; void seededNow; void maybeNow
 export {}

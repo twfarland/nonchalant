@@ -163,12 +163,12 @@ sequenceDiagram
     participant G as gate
     participant P as publish
 
-    E->>G: first read; recorder opens
+    E->>G: first read, recorder opens
     P->>G: publish lands mid-run
     G->>G: park ops (deferred)
     E->>E: more reads (still the old snapshot)
     E->>G: run ends
-    G->>G: finalize(); paths sealed
+    G->>G: finalize(), paths sealed
     G->>G: affects(sealed paths, parked ops)?
     G-->>E: yes → wake now
     G-->>E: no → sleep

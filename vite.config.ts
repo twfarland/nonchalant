@@ -1,22 +1,34 @@
-// Build config for the static site: the documentation page at the root, plus
+// Build config for the static site: the documentation pages at the root, plus
 // the example gallery under /examples/. `pnpm dev` is unaffected — this file
 // only adds build inputs, so the dev server still serves the repo as before.
 //
 // Deployed with `vite build --base=/nonchalant/` (see .github/workflows/pages.yml).
 
+import { writeFileSync } from 'node:fs'
 import { cp, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defaultClientConditions, defaultServerConditions, defineConfig, type Plugin } from 'vite'
+import { renderDocs } from './site/docs.ts'
+import { sitePages } from './site/pages.ts'
 
 const root = dirname(fileURLToPath(import.meta.url))
+
+/** The markdown in docs/ as site pages, written beside their sources (gitignored) so dev and build both serve them. */
+const writeDocs = (): string[] => {
+  const docs = renderDocs(root)
+  for (const [path, html] of docs) writeFileSync(resolve(root, path), html)
+  return [...docs.keys()]
+}
+const docPages = writeDocs()
 
 // Every page that runs in the browser alone. `examples/chat/` is deliberately
 // absent: it dials ws://127.0.0.1:4322 at module scope, and constructing an
 // insecure WebSocket from an https page throws outright, which would leave the
 // page blank rather than merely disconnected. It stays a run-it-locally demo.
 const pages = [
-  'index.html',                                  // the documentation site
+  ...sitePages,                                  // the documentation site
+  ...docPages,                                   // docs/*.md, rendered
   'examples/index.html',                         // the gallery
   'examples/counter/index.html',
   'examples/todomvc/index.html',
@@ -31,6 +43,7 @@ const pages = [
   'examples/worker/index.html',
   'examples/agent/index.html',
   'examples/multi-agent/index.html',
+  'examples/delegation/index.html',
   'examples/messaging/index.html',
   'examples/shared-cart/index.html',
   'examples/mario/index.html',
@@ -51,6 +64,19 @@ const marioSprites = (): Plugin => ({
   async writeBundle(options) {
     const out = options.dir ?? resolve(root, 'dist')
     await cp(resolve(root, 'examples/mario/img'), resolve(out, 'examples/mario/img'), { recursive: true })
+  },
+})
+
+/** In dev, an edited doc re-renders and the page reloads. */
+const liveDocs = (): Plugin => ({
+  name: 'nonchalant:live-docs',
+  apply: 'serve',
+  configureServer(server) {
+    server.watcher.on('change', (file) => {
+      if (!/[\\/]docs[\\/].*\.md$/.test(file)) return
+      writeDocs()
+      server.ws.send({ type: 'full-reload' })
+    })
   },
 })
 
@@ -92,5 +118,5 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: { input: pages.map((p) => resolve(root, p)) },
   },
-  plugins: [marioSprites(), noJekyll(), chatIsLocalOnly()],
+  plugins: [liveDocs(), marioSprites(), noJekyll(), chatIsLocalOnly()],
 })

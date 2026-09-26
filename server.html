@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server &amp; agents · Nonchalant</title>
+<meta name="description" content="Nonchalant processes on the server: state that survives a crash, timers that survive a restart, and AI agents with tools and human approval.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23131312'/%3E%3Cpath d='M9 22V10l14 12V10' stroke='%23F5F5F4' stroke-width='2.5' fill='none' stroke-linecap='square'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..600&display=swap">
+<link rel="stylesheet" href="./site/styles.css">
+</head>
+<body>
+
+<div class="page">
+
+<nav class="topnav" aria-label="Site">
+  <a class="brand" href="./">NONCHALANT</a>
+  <a href="./">Overview</a>
+  <a href="./guide.html">Guide</a>
+  <a href="./anywhere.html">Run anywhere</a>
+  <a href="./server.html" aria-current="page">Server &amp; agents</a>
+  <a href="./examples/">Examples</a>
+  <span class="spacer"></span>
+  <a href="./docs/">Docs</a>
+  <a href="https://github.com/twfarland/nonchalant">GitHub</a>
+</nav>
+
+<header class="mast sub" id="top">
+  <div class="eyebrow">Server &amp; agents</div>
+  <h1>Servers, workflows, and agents</h1>
+  <p class="deck">The core has no browser dependency. The same processes hold server state, survive restarts, and run AI agents with tools and human approval.</p>
+  <ol class="toc">
+    <li><a href="#durable">State that survives a restart</a></li>
+    <li><a href="#agents">Agents</a></li>
+    <li><a href="#messaging">Messaging and queues</a></li>
+  </ol>
+</header>
+
+<section id="intro">
+  <p class="lede">A process with a mailbox, addressed by name, is what Erlang calls an actor, and actors are a well-proven way to build servers.</p>
+
+  <p>The <a href="./anywhere.html#server">previous page</a> put chat rooms on a server as plain processes. This page adds what backends need beyond that: state that survives a crash, timers that survive a restart, agents that call tools and wait for people, and queues.</p>
+</section>
+
+<section id="durable">
+  <div class="sec-head"><span class="sec-num">01</span><h2>State that survives a restart</h2></div>
+
+  <p>Losing a chat room when the server restarts may be fine. Losing an order halfway through checkout is not. <code>@nonchalant/durable</code> wraps a process so it can recover. <code>durable(proc, options)</code> returns an ordinary process, so it can be registered, reached over a connection, and bound to a view like any other.</p>
+
+  <p>The process inside is written the usual way, with two additions: it starts from <code>d.restored</code>, the last saved state, if there is one, and it runs side effects through <code>d.step</code>:</p>
+
+<pre><code data-ts>
+const order: DurableProc&lt;Order, OrderMsg, { id: string }&gt; = async function* (self, _args, d) {
+  let s: Order = d.restored ?? { status: 'open', total: 0, charged: 0 }   // the last saved state
+  yield s
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'add':
+        s = { ...s, total: s.total + msg.price }
+        break
+      case 'checkout': {
+        if (s.status !== 'open') continue
+        const receipt = await d.step('charge', (key) =&gt; payments.charge(s.total, { key }))
+        s = { ...s, status: 'charged', charged: receipt.amount }
+        break
+      }
+    }
+    yield s
+  }
+}
+
+const orders = registry({
+  order: define(durable(order, { store, key: (a: { id: string }) =&gt; a.id })),
+})
+</code></pre>
+
+  <p>Here is what gets saved, and when:</p>
+
+  <ol>
+    <li>Each message is saved <strong>before</strong> the process handles it.</li>
+    <li>Each <code>d.step</code> result is saved as soon as the step completes.</li>
+    <li>When the process asks for its next message, its new state and its position in the message log are saved together, in one transaction.</li>
+  </ol>
+
+  <p>If the server dies partway through a message, recovery loads the last saved state and delivers that message again. The handler runs again, but a step that already completed returns its saved result instead of running, so the card isn't charged twice. A step that was interrupted mid-flight does run again. For that case each step gets a stable <code>key</code> to pass to the outside service, as <code>payments.charge</code> does above, so the service can recognize the retry.</p>
+
+  <details class="diagram">
+    <summary>Diagram: what is saved, and when</summary>
+    <div class="diagram-body"><pre data-mermaid>sequenceDiagram
+  participant C as caller
+  participant D as durable wrapper
+  participant S as store
+  participant P as your process
+  C->>D: cast, or call with a callId
+  D->>S: append(message)
+  D->>P: deliver
+  P->>D: step("charge")
+  D->>S: putStep(result)
+  P->>D: yield state
+  P->>D: request the next message
+  D->>S: commit(state, cursor) - together, or not at all
+  Note over D,S: a crash before that commit delivers the message again
+  Note over D,S: saved steps answer from the journal instead of running</pre></div>
+  </details>
+
+  <p>Durable execution is usually done in one of two ways, each with a cost. Nonchalant makes a different trade:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Approach</th><th>The trade</th></tr></thead>
+    <tbody>
+      <tr><td><b>Temporal</b> replays workflow code against an event history</td><td>Replay is exact, but workflow code must be deterministic, and effects must run as separate activities.</td></tr>
+      <tr><td><b>DBOS</b> and <b>Restate</b> journal individual steps in ordinary code</td><td>Code stays conventional, but a step interrupted in progress may run more than once.</td></tr>
+      <tr><td><b>Nonchalant</b> journals messages and steps, and saves the state with its log position</td><td>Recovery loads one snapshot instead of replaying the whole history. Saved steps run once; a step interrupted before it was saved may run again.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Calls that survive retries</h3>
+
+  <p>A call to a durable process carries an ID, and the answer is saved under it, so retrying with the same ID returns the saved answer instead of doing the work twice. Inside a durable process, <code>d.call</code> makes the ID for you from the caller, the current message, and the call's name, so a replay after a crash asks with the same ID:</p>
+
+<pre><code data-ts>
+const receipt = await d.call('reserve', (callId) =&gt;
+  vault.call({ type: 'reserve', amount: 100, callId }))
+</code></pre>
+
+  <p>When a server hosts durable processes for many users, its <code>principal</code> option gives each user's call IDs their own namespace, so one client can't collide with, or read, another's saved answers.</p>
+
+  <h3>Timers that survive restarts</h3>
+
+  <p><code>d.sleep(name, ms)</code> saves its deadline instead of holding a timer. If the process has been evicted, or the server restarted, by the time the deadline arrives, a <code>scheduler</code> asks the store which processes are due and looks each one up. The lookup restores the process, which finds its deadline passed and carries on.</p>
+
+<pre><code data-ts>
+await d.sleep('cool-off', 3_600_000)   // the deadline is saved, not the timer
+
+const timers = scheduler({ store, wake: (id) =&gt; orders.lookup('order', { id }) })
+</code></pre>
+
+  <p>Two schedulers sharing a store won't both wake the same process, and a wake-up that fails before saving comes due again.</p>
+
+  <h3>Storage is yours</h3>
+
+  <p>The wrapper talks to storage through an interface of eight methods, so it isn't tied to any database. The package ships an in-memory store for tests and development. An adapter for a real database proves itself by passing <code>@nonchalant/durable/conformance</code>, the storage contract written as a test suite. <code>examples/durable-sqlite</code> does that for Node's built-in SQLite, then crashes a process mid-message, reopens the file, and checks that the charge wasn't repeated.</p>
+
+  <p>If two servers ever activate the same order, every write carries an <em>epoch</em> number, and the older activation's writes are refused instead of overwriting the newer one's. Deciding which server should own an order in the first place (a lease, a consistent hash) is left to you.</p>
+
+  <p>Not included: a worker fleet, cron, retry policies beyond <code>restart</code> and <code>maxAttempts</code>, or an execution dashboard. The scheduler wakes saved deadlines and nothing else.</p>
+</section>
+
+<section id="agents">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Agents</h2></div>
+
+  <p>An agent takes a question, calls tools, reads the results, and reports progress as it goes. Each of those is something a process already does, so an agent is a process. The one below is also durable.</p>
+
+  <div class="demo" data-demo="agent">
+    <div class="demo-head">
+      <span class="demo-title">Agent</span>
+      <span class="demo-note">a stub model · ask about processes, patches, workers, or durability · try "refund 20"</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
+
+  <p><strong>Tools are processes, reached with <code>call()</code>.</strong> Their state is visible like any other (the search tool counts its calls), and the registry can put a tool in the same thread or across a connection.</p>
+
+  <p><strong>Human approval is a call that hasn't been answered yet.</strong> Type <em>refund 20</em>. The approval tool keeps the request, with its <code>reply</code>, until you click. The agent is simply awaiting its call, and the list of waiting requests is process state, shown by an ordinary view:</p>
+
+<pre><code data-ts>
+const approvals: Proc&lt;{ pending: number }, ApprovalMsg, void&gt; = async function* (self) {
+  let waiting: Request[] = []
+  yield { pending: 0 }
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'request':
+        waiting = [...waiting, msg]            // the message carries its own reply
+        break
+      case 'decide': {
+        const [head, ...rest] = waiting
+        if (head === undefined) continue
+        head.reply(msg.ok)                     // the agent's await resolves here
+        waiting = rest
+        break
+      }
+    }
+    yield { pending: waiting.length }
+  }
+}
+</code></pre>
+
+  <p><strong>A crash doesn't lose the run.</strong> Press <b>kill it</b> while a question is running. The agent's process is disposed, and the next lookup starts a replacement that recovers from its journal without asking the model again.</p>
+
+  <p><strong>Tests need no model.</strong> The model is passed in as an argument, so <code>examples/agent/agent.test.ts</code> runs the loop with a stub, no DOM, and no network, and checks the states it yields.</p>
+
+  <h3>Several agents</h3>
+
+  <p>In the <a href="./examples/multi-agent/">multi-agent example</a>, a supervisor sends a brief to a researcher, passes the result to a writer, and asks a person for approval before publishing. The usual orchestration patterns turn out to be ordinary process code:</p>
+
+  <details class="diagram">
+    <summary>Diagram: a supervisor, two delegates, and one budget</summary>
+    <div class="diagram-body"><pre data-mermaid>flowchart TB
+  V["the page: bindings on the supervisor's state"] --- B
+  B["supervisor (durable)"] -- "d.call research" --> R["researcher (durable)"]
+  B -- "d.call write" --> W["writer (durable)"]
+  B -- "d.step approve" --> A["approvals: a reply parked until a person clicks"]
+  R -- "call" --> SR["search tool"]
+  R -- "call" --> M["budget: one limit for the whole system"]
+  W -- "call" --> M
+  W -- "call" --> MO["the model"]</pre></div>
+  </details>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Pattern</th><th>Here it is</th></tr></thead>
+    <tbody>
+      <tr><td>Delegating to another agent</td><td>A durable call to that agent's process. If the supervisor restarts mid-pipeline, finished research is reused, not redone.</td></tr>
+      <tr><td>Handing off</td><td>The supervisor passes one agent's output to the next as an argument. No shared history or blackboard.</td></tr>
+      <tr><td>A graph of stages</td><td>A <code>stage</code> field in the state records where the run is, and the code between yields is each transition. Because the graph is data, the page can draw it.</td></tr>
+      <tr><td>A shared budget</td><td>Every agent calls one budget process inside a <code>step</code>, so a replay can't spend the same allowance twice.</td></tr>
+      <tr><td>Streaming a run to a page</td><td>The run is process state. A view binds to it locally, and a connection sends it as patches.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="messaging">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Messaging and queues</h2></div>
+
+  <p>Backends often need publish/subscribe and work queues. The <a href="./examples/messaging/">messaging example</a> defines both behind interfaces, with in-memory versions.</p>
+
+  <p>A subscription can itself be a process: it subscribes when it starts, forwards each event to its own mailbox with <code>self.cast</code>, and unsubscribes when it's disposed. That turns an external stream into state a view can read, and looking it up by topic lets every reader of a topic share one subscription.</p>
+
+  <p>A queue worker is a process too: it takes a job with a time-limited lease, handles it, and acknowledges it, or releases it on failure. In the example, press <b>kill</b> while a worker holds a job. The job is never acknowledged, so its lease runs out and another worker picks it up, with its <code>attempts</code> count raised by one.</p>
+
+  <h3>Read more</h3>
+
+  <p><a href="./docs/server.html">Processes on the server</a> covers durability in full, including what happens to a message that keeps crashing its process and how to change the shape of saved state. <a href="./docs/hosting.html">Hosting safely</a> covers putting a host on the internet.</p>
+
+  <a class="next" href="./">
+    <span class="next-label">Back to the start</span>
+    <span class="next-title">Overview →</span>
+    <span class="next-blurb">Why Nonchalant exists, what's different about it, and how to get started.</span>
+  </a>
+</section>
+
+<footer>
+  Nonchalant is experimental alpha software: a TypeScript runtime for stateful async-generator processes.<br>
+  MIT © Tim Farland · <a href="https://github.com/twfarland/nonchalant">github.com/twfarland/nonchalant</a> · The demos on this page run in your browser.
+</footer>
+
+</div>
+
+<script type="module" src="./site/main.ts"></script>
+</body>
+</html>

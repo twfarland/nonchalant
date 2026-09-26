@@ -108,7 +108,7 @@ that could be measurably expensive, so it is pinned with an exact count: a
 yield is diffed once with no sink and twice with one (`instrument.test.ts`,
 "diffs a yield once with no sink installed"). The reconcile perf budget and
 the mario golden budgets are unchanged. The hook adds about 220 bytes gzipped
-to core (`test/size.test.ts`).
+to core.
 
 ## Time travel
 

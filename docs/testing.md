@@ -17,6 +17,11 @@ expect(visible({ todos, filter: 'active' })).toHaveLength(1)
 Seen in: `examples/mario/mario.golden.test.ts` (a whole jump arc),
 `examples/todomvc/todos.test.ts` (the pure helpers).
 
+A process written with the optional `reducer` sugar is a pure function at
+this level already: call it with a state and a message, and pass a spy as the
+`reply` of a `Call` (`examples/shared-cart/shared.test.ts`). The `Proc` it
+compiles to is driven like any other at the next level.
+
 ## Level 2: the generator, driven directly
 
 `Self` is an interface implemented by `channel()`, allowing tests to drive the

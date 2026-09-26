@@ -10,7 +10,8 @@ the model; `README.md` is the front page.
   `check:boundaries` (core/wire/durable compile with no DOM lib, host with
   Node only) and `check:docs` (every ```ts block in README.md and docs/
   type-checks; `<!-- ts-prelude -->` supplies context, ```ts nocheck opts out)
-- `pnpm test` — vitest (unit, property, leak, perf, size, and golden budgets)
+- `pnpm test` — vitest (unit, property, leak, perf, and golden budgets)
+- `pnpm size` — report each entry point's min+gzip size (a report, not a gate)
 - `pnpm coverage` — the unit project under v8 coverage, with floors (95%
   statements/lines/functions, 92% branches) that CI enforces
 - `pnpm build` — emit each package's `dist/` (.js + .d.ts; gitignored)
@@ -37,9 +38,12 @@ verify:pack, on every push and pull request.
   ≤ 100µs; the env override can only tighten), `examples/mario/mario.golden.test.ts`
   (1 view yield, exactly 2 DOM writes in the busiest frame, 0 structural ops),
   `examples/js-framework-benchmark/bench.test.ts` (exact move/write/listener
-  counts per keyed-list operation), `test/size.test.ts` (gzip bundle caps),
+  counts per keyed-list operation),
   `test/room-memory.test.ts` (heap per idle chat room),
   `process.leaks.test.ts` (nothing retained after dispose).
+- Bundle size is not capped. Features, elegance, and replacing a stack of
+  libraries matter more; keep size within reason and check it with
+  `pnpm size`, but don't bend a design to shave bytes.
 - `packages/wire/spec/` is a cross-language contract. Changing the protocol or
   patch semantics means updating the vectors and `spec/README.md` together —
   external hosts certify against those files.
@@ -79,6 +83,11 @@ State:
   change. That sharing is what makes diffs O(changed).
 - Keep computation out of the loop: pure helpers (`step`, `visible`) in their
   own exports, testable as plain functions.
+- A process that only folds messages (no await, at most one state per message,
+  nothing hidden from readers) may be written with `reducer` from
+  `@nonchalant/core`. It is optional sugar that compiles to a `Proc`;
+  docs and the site present the generator first and the sugar as a shorter
+  form of it, never as a second model.
 - Time and dependencies arrive from outside: ticks and clocks as messages,
   APIs as args, `self.signal` threaded into every fetch. This is what makes
   tests deterministic.
@@ -122,7 +131,7 @@ Structure:
   and the `instrument()` sink — one null check per event site when unused);
   the registry (`registry.ts` + `key.ts`). `graph.ts` also holds
   `binding`/`rebind`, an effect whose body swaps in place (how dom rebinds
-  without recreating).
+  without recreating). `reducer.ts` is optional sugar, like `cell`.
 - `packages/dom` — `h.ts`/`tags.ts` constructors, `attrs.ts` (type-only
   per-tag attribute and event typing), and the sink: `render.ts` (mount)
   over `element.ts`, `children.ts`, `region.ts`, `keyed.ts` (pure LIS move
@@ -150,23 +159,32 @@ Structure:
   full-stack claim in miniature: an agent loop, its tools, and a human-approval
   gate, all processes, all durable, rendered by the same bindings as the
   counter. `multi-agent/` adds delegation, hand-off, and a shared budget;
+  `delegation/` folds parallel sub-agent streams into one live call tree;
   `messaging/` puts a bus and a work queue behind ports with in-memory
   adapters.
 - `docs/internals/` — contributor notes on core's mechanisms and invariants
   (reconcile, track, graph, process, registry, the DOM sink), with an architecture overview
   in its README. Update these when you change how a mechanism works.
-- `index.html` + `site/` — the GitHub Pages doc site. Its demos in
-  `site/demos/` are imported twice, as code that runs and as text that is
-  displayed, so a listing can never drift from its demo; `site.test.ts` drives
-  every one of them. `vite.config.ts` builds it with the example gallery.
+- `index.html`, `guide.html`, `anywhere.html`, `server.html` + `site/` — the
+  GitHub Pages doc site, read in that order (overview → guide → run anywhere →
+  server and agents); `site/pages.ts` lists the pages. A page shows a demo by
+  naming it in a `data-demo` slot; `site/demos.ts` loads only the demos a page
+  names, each imported twice, as code that runs and as text that is displayed,
+  so a listing can never drift from its demo. `site.test.ts` drives every demo
+  and checks every page's links, anchors, demo slots, and diagrams.
+  `site/docs.ts` renders `docs/**/*.md` as site pages (`docs/**/*.html`,
+  gitignored, written by `vite.config.ts` for dev and build): anchors follow
+  GitHub's slugs so links work in both places, and a new top-level doc must be
+  added to its `docOrder`. `vite.config.ts` builds the pages with the example
+  gallery.
 
 ## Known sharp edges (leave signposts if you touch them)
 - Ownership is ambient only during the synchronous window of a process
   resumption: spawn before awaiting, or the child runs unowned. (A `finally`
   that disposal triggers is resumed inside the process's scope, so a spawn
   there before any other await is owned.)
-- `packages/durable` imports only types from core, which is what keeps its
-  bundle small; importing a runtime helper from core will blow its budget.
+- `packages/durable` imports only types from core, which keeps the core
+  runtime out of its bundle; importing a runtime helper from core pulls it in.
 - Leak tests need `gc({ execution: 'async' })` — plain `gc()` false-fails
   under V8 conservative stack scanning.
 - happy-dom's MutationObserver misses characterData; DOM-write tests spy on

@@ -19,7 +19,8 @@ The runtime. No dependencies, no DOM.
 |---|---|---|---|
 | `spawn` | `spawn(proc, args, opts?)` → `Process<T \| undefined, In>`; with `opts.initial`, `Process<T, In>` | Runs an async generator as a supervised process. Spawns made during a process's synchronous step belong to it. | [spawn](concepts.md#spawn) |
 | `derive` | `derive<T>(fn: () => T)` → `Process<T>` | A memoised computation over other processes. Recomputes when what it read changes; notifies only when its result changes. No mailbox. | [derive](concepts.md#derive) |
-| `cell` | `cell<T>(initial: T)` → `Process<T, T>` | Sugar for widget state: a process whose messages are its next values. | [Process](concepts.md#process-from-the-outside) |
+| `cell` | `cell<T>(initial: T)` → `Process<T, T>` | Sugar for widget state: a process whose messages are its next values. | [Layers](concepts.md#layers-the-primitive-and-its-sugar) |
+| `reducer` | `reducer<T, In, A = void>(init: (args: A) => T, reduce: Reducer<T, In>)` → `Proc<T, In, A>` | Sugar for the loop-switch-yield process: yields `init(args)`, then `reduce(state, msg)` for each message whose result is a different state (`!==`). `init` reruns on an `on-crash` restart; under `durable`, the restored snapshot replaces it. Named after `reduce`. | [Layers](concepts.md#reducer) |
 | `channel` | `channel<In>(signal?: AbortSignal)` → `Self<In> & Disposable` | A standalone mailbox implementing `Self`, for middleware and for driving a generator in tests. Iteration ends when `signal` aborts or the channel is disposed. | [Self](concepts.md#self-from-the-inside) |
 | `mount` | `mount<Out>(sink: Sink<Out>, view: ProcessBase<Out \| undefined> \| Out)` → `Disposable` | Attaches a view to any sink. `@nonchalant/dom` exports a DOM-specific `mount` that most code uses instead. | [Views and sinks](concepts.md#views-and-sinks) |
 | `onProcessError` | `onProcessError(handler: (error: unknown, name: string) => void)` → `() => void` | Observes every process crash, including ones a restart recovers from: the thrown value and the generator function's name, a microtask after the crash. One handler at a time; returns its remover. With none installed, a crash shows only on the handle and in rejected calls. | [Error handling](errors.md#processes) |
@@ -94,6 +95,7 @@ does not keep an entry alive.
 | `Process<T, In>` | The outside face: `ProcessBase<T>` plus `cast` and `call` where `In` allows them. |
 | `ProcessBase<T>` | Read, `pending`, `stale`, `error`, iteration, and disposal. |
 | `Self<In>` | The inside face: an `AsyncIterable<In>` mailbox, `signal`, `latest()`, `cast`. |
+| `Reducer<T, In>` | `(state: T, msg: In) => T`: what `reducer` folds with. Returns the next state, or the same state for no change; a `Call` member answers through `msg.reply` before returning. |
 | `Proc<T, In, Args>` | `(self: Self<In>, args: Args) => AsyncGenerator<T, unknown, undefined>`: what `spawn` runs. A return value is not a `T`, so driving one by hand needs a `done` check before reading `next().value`. |
 | `Definition<T, In, Args, Before = undefined>` | A phantom-typed schema entry. `Before` is what a read returns ahead of the first yield: `undefined`, or `never` when `define` got `initial`. |
 | `Schema` | `{ [name: string]: Definition<unknown, unknown, unknown> }`. |

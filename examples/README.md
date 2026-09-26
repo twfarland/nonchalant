@@ -20,10 +20,11 @@ local server, and durable-sqlite is Node-only and runs as a test.
 | `worker/` | ⏱ the wire over a Web Worker port, keeping expensive work off the UI thread |
 | `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable; `?inspect` docks the inspector |
 | `multi-agent/` | ⏱ delegation, hand-off, a state-machine supervisor, shared usage limits |
+| `delegation/` | ⏱ agents as tools, parallel tool calls, nested streams folded into one live call tree; stop cancels the tree |
 | `messaging/` | ⏱ pub/sub and a work queue as ports, with in-memory adapters |
 | `durable-sqlite/` | ⏱ a durable `Store` on `node:sqlite`, certified by the conformance suite (Node only, no page) |
 | `chat/` | a client-server chat room over the wire protocol (`pnpm chat-server`) |
-| `shared-cart/` | the same cart and view using either a local or remote registry |
+| `shared-cart/` | the same cart and view using either a local or remote registry; the cart uses the optional `reducer` sugar |
 | `mario/` | ⏱ the golden demo: 1 view yield, at most 2 DOM writes in any frame, CI-asserted |
 | `7guis/` | the classic seven; ⏱ cells last (it stresses derivations) |
 | `js-framework-benchmark/` | ⏱ the standard krausest benchmark app, keyed, with exact DOM-operation counts |
@@ -62,6 +63,10 @@ Notes:
   is writing: the brief replays and the researcher's run count does not move,
   because the delegated call is answered from its record. Drop the budget to
   watch the pipeline stop at *out of budget* instead of half-finishing.
+- **delegation:** Ask about several topics at once: the lead fans out one
+  researcher per topic, each researcher searches twice in parallel, and the
+  tree fills in as they stream. Press *stop* mid-run and every model call and
+  search under the root aborts.
 - **messaging:** Publish to a topic and watch the subscription processes
   update; push jobs and watch two workers share them. Press *kill* while a
   worker holds a job: its lease expires and the other one finishes it, to see
