@@ -9,8 +9,8 @@ invariants, and changes that can break them.
 | [reconcile.md](reconcile.md) | `reconcile.ts` | the structural diff, the op vocabulary, array splices |
 | [tracking.md](tracking.md) | `track.ts` | recording proxies, path trees, patch intersection |
 | [graph.md](graph.md) | `graph.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
-| [process.md](process.md) | `process.ts` | mailbox, drive loop, ownership, dispose ordering |
-| [registry.md](registry.md) | `registry.ts` | key encoding, sharing, refcounting, eviction |
+| [process.md](process.md) | `process.ts` + `mailbox.ts`, `scope.ts`, `calls.ts`, `instrument.ts` | mailbox, drive loop, ownership, dispose ordering |
+| [registry.md](registry.md) | `registry.ts` + `key.ts` | key encoding, sharing, refcounting, eviction |
 | [dom.md](dom.md) | `dom/src/render.ts` | regions, keyed LIS moves, rebinding, listeners, exit |
 
 ## One update path
@@ -51,8 +51,8 @@ flowchart TD
         TR["track.ts<br/>read recording"]
         SY["system.ts<br/>alien-signals port; do not layer here"]
         GR["graph.ts<br/>source / gate / effect / flush"]
-        PR["process.ts<br/>mailbox + drive loop + ownership"]
-        RG["registry.ts<br/>get-or-spawn by name"]
+        PR["process.ts + mailbox / scope / calls / instrument<br/>mailbox + drive loop + ownership"]
+        RG["registry.ts + key.ts<br/>get-or-spawn by name"]
         IX["index.ts<br/>spawn, derive, cell, mount"]
     end
     DOM["@nonchalant/dom<br/>VNode → DOM, keyed regions"]

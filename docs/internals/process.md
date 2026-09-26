@@ -1,8 +1,20 @@
 # process.ts: the runtime
 
-`packages/core/src/process.ts`. Imports `graph.ts` and `reconcile.ts`; imported
-by `registry.ts` and `index.ts`. This is where an async generator becomes a
-running thing with state, a mailbox, a lifetime, and children.
+`packages/core/src/process.ts` and four collaborators. Imports `graph.ts` and
+`reconcile.ts`; imported by `registry.ts` and `index.ts`. This is where an
+async generator becomes a running thing with state, a mailbox, a lifetime, and
+children.
+
+| file | holds |
+|---|---|
+| `process.ts` | `SpawnOpts`, `validateSpawnOpts`, `nextMeta`, and `spawnProcess`: the two sources, `transition`, the drive loop (`step` / `publish` / `crash`), disposal, and the handle |
+| `mailbox.ts` | `Fifo`, `Mailbox`, `selfFor` (the `Self` a generator iterates), and `channel` |
+| `scope.ts` | the ambient owner: `currentScope`, `withScope`, `unscoped`, `resumeWithin` |
+| `calls.ts` | reply bookkeeping: `rejectAll`, `rejectDropped`, `retainCasts` over the pending-call table |
+| `instrument.ts` | the two global slots: `onProcessError`'s handler and `instrument`'s sink, plus `ProcessEvent` |
+
+Every write to the scope pointer is in `scope.ts`, and every emit site is in
+`process.ts`; the other files hold no per-process state.
 
 `spawnProcess` builds five collaborating pieces:
 
@@ -41,8 +53,9 @@ fine-grained as local ones.
 Values and lifecycle are separate sources, so a reader that only watches
 `pending` doesn't wake on every value, and vice versa.
 
-`meta` holds `{ pending, stale, errored }`. `setMeta` compares all three fields
-and returns early if nothing changed, so no-op transitions publish nothing.
+`meta` holds `{ pending, stale, errored }`. `setMeta` merges through
+`nextMeta`, which hands back the current object when no field changed, and
+returns early on that identity, so no-op transitions publish nothing.
 
 The watcher count the registry refcounts is the **sum** of both sources'
 watchers (`valueWatchers + metaWatchers`); either kind of subscription keeps a
@@ -54,7 +67,7 @@ returns the raw error. Errors are arbitrary values, not `Json`.
 
 ## The mailbox
 
-A FIFO queue plus a FIFO of parked takers. Both are `Fifo`s: an array with a
+`mailbox.ts`. A FIFO queue plus a FIFO of parked takers. Both are `Fifo`s: an array with a
 moving head index that compacts once the consumed prefix reaches half the
 array, so a dequeue is O(1) amortized at any depth (`Array#shift` is O(n) and
 made a 100k-deep drain quadratic; `process.lifecycle.test.ts` drains 200k
@@ -77,7 +90,7 @@ drop-newest, ensuring that the latest input survives sustained overload.
 
 `onDrop` is also how a dropped `call` rejects rather than hanging forever: every
 in-flight call is registered in `pendingCalls` keyed by its message object, so
-dropping that object rejects its promise.
+dropping that object rejects its promise (`rejectDropped` in `calls.ts`).
 
 `close()` resolves parked takers as done and drops the queue, ending the
 generator's `for await` and rejecting every call still queued. It takes an
@@ -100,8 +113,9 @@ stateDiagram-v2
     disposed --> [*]
 ```
 
-Each iteration awaits `g.next()` inside `step()`, publishes the yielded value,
-and clears the metadata flags. `r.done` ends the loop. **A process that returns is
+Each iteration awaits `g.next()` inside `step()` and hands the value to
+`publish`, which reconciles it into the value source and clears the metadata
+flags. `r.done` ends the loop. **A process that returns is
 over**, and its children go with it. That is why a view process that owns state
 must idle on its mailbox instead of returning.
 
@@ -118,10 +132,12 @@ so it cannot flip `stale` back to false. Iterators end through the closer
 list rather than by watching metadata, so a process that returns while
 already idle (no metadata change at all) still ends its iterators.
 
-On a throw (and only while `running`): record the error, abort the signal,
-remove queued calls from the mailbox, reject every pending call, and dispose
-the crashed instance's children. Then either restart (`restarts < maxRestarts`,
-default 3) or settle as `crashed` with `stale: true, errored: true`. Readers
+On a throw (and only while `running`), `crash` records the error, aborts the
+signal, removes queued calls from the mailbox (`retainCasts`), rejects every
+pending call (`rejectAll`), and disposes the crashed instance's children. Then
+it either restarts (`restarts < maxRestarts`, default 3; `crash` returns true
+and the loop runs the generator again) or settles as `crashed` with
+`stale: true, errored: true`. Readers
 keep the last good value throughout because a crash makes the value stale
 rather than empty. The phase, not the error value, says whether the process
 crashed, so `throw undefined` is a crash like any other.
@@ -135,7 +151,7 @@ restarted instance (`process.lifecycle.test.ts`).
 
 ### Observing crashes
 
-`onProcessError(handler)` (exported from the package root) installs one global
+`onProcessError(handler)` (in `instrument.ts`, exported from the package root) installs one global
 handler that sees every crash, including those a restart recovers from, as
 `(error, name)`, where `name` is the proc's function name. It returns a remover.
 There is no default handler; without one, a crash is visible only on the handle
@@ -146,19 +162,21 @@ set keeps it cheap; fan out in userland if you need more.
 
 ## Ownership
 
-`currentScope` is an ambient module-level pointer, set by `step()` only around
-a resumption:
+`currentScope` is an ambient module-level pointer in `scope.ts`. `step()` sets
+it only around a resumption, through `withScope`:
 
 ```ts nocheck
-const step = <R>(fn: () => Promise<R>): Promise<R> => {
+export function withScope<T>(scope: ProcessCore | null, fn: () => T): T {
   const prev = currentScope
-  currentScope = core
+  currentScope = scope
   try {
-    return fn()          // returns at the generator's first await/yield
+    return fn()          // a resumption returns at the generator's first await/yield
   } finally {
     currentScope = prev
   }
 }
+
+const step = (g: AsyncGenerator<T>) => withScope(core, () => g.next())
 ```
 
 `fn()` returns as soon as the generator body hits its first `await` or `yield`,
@@ -167,7 +185,8 @@ so the scope covers exactly the **synchronous window** of that resumption. A
 
 This is the library's sharpest edge. It is documented in the module header, in
 [concepts.md](../concepts.md), and here, and the rule is one line: **spawn
-before awaiting.** `unscoped()` is the explicit escape hatch: the registry
+before awaiting.** `unscoped()`, which is `withScope(null, fn)`, is the
+explicit escape hatch: the registry
 wraps every spawn in it so shared state is never owned by whichever caller
 happened to look it up first.
 
@@ -175,7 +194,8 @@ happened to look it up first.
 to is the one disposal causes by closing the mailbox. A body parked on its
 mailbox (the usual place) resumes when `close()` resolves its taker, and that
 resumption is a promise reaction outside any `step()`. Disposal therefore
-brackets the resolution with two microtasks, scope on and scope off. Microtasks
+passes `resumeWithin(core, resolveTakers)` as the mailbox's close wrapper,
+which brackets the resolution with two microtasks, scope on and scope off. Microtasks
 run FIFO, so the body's resumption runs between them, and a `finally` that
 spawns before its own first `await` attaches the child to the dying process.
 `drive()` disposes it with the other children, and `asyncDispose` waits for it.
@@ -202,7 +222,7 @@ sequenceDiagram
     P->>G: 3. g.return() inside step()
     Note over G: finally blocks run
     G-->>P: generator settles
-    P->>P: rejectAsks, gen = null
+    P->>P: gen = null, rejectAll
     P->>C: 4. disposeChildren()
     C-->>P: settled
     P->>U: completion resolves (asyncDispose)
@@ -257,8 +277,9 @@ queue and settle in call order.
 
 ## Instrumentation
 
-`instrument(sink)` stores one module-level `sink` (a second call replaces the
-first; the remover only clears its own). Every event site is written
+`instrument(sink)` stores one module-level `sink` in `instrument.ts` (a second
+call replaces the first; the remover only clears its own); `process.ts` reads
+that live binding at each site. Every event site is written
 `sink?.({ ... })`. An optional call short-circuits its arguments, so with no
 sink the event object is never built and, for `yield`, the extra
 `reconcile(untracked(src), next)` never runs. That diff is the price of
@@ -278,9 +299,9 @@ Where the events come from:
 - `call` and `reply`: the handle's `call` numbers the request from `lastCall`
   (only while a sink is installed; `0` otherwise) and the reply closure
   reports under the same number.
-- `yield`: inside `drive`, before `publish`, only while `running`.
+- `yield`: inside `publish`, before the source publishes, only while `running`.
 - `status`: in `setMeta`, after the no-change check.
-- `crash` and `restart`: in the `catch`, the crash first.
+- `crash` and `restart`: in `crash`, the crash first.
 - `exit`: in `transition`, before the final `setMeta`, so the reason precedes
   the flags it causes.
 
@@ -290,7 +311,11 @@ handles that by skipping the processes it owns (see [inspect.md](../inspect.md))
 
 ## Tests
 
-`process.test.ts` (lifecycle, mailbox order, `latest()` conflation, crash and
+`mailbox.test.ts` (Fifo order and compaction boundaries, the delivery rules
+without a process), `scope.test.ts` (which scope is current, when, and for
+how long, including the `resumeWithin` bracket), `process.helpers.test.ts`
+(`validateSpawnOpts` accept/reject tables, `nextMeta`, and the reply
+bookkeeping in `calls.ts`), `process.test.ts` (lifecycle, mailbox order, `latest()` conflation, crash and
 restart, ownership, call rejection paths), `process.lifecycle.test.ts` (how a
 process ends: iterators after return and crash, queued calls across a restart,
 yields after dispose, teardown spawns, parameter-binding throws,
