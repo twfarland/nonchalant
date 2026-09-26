@@ -14,7 +14,7 @@ interface Entry {
   next: number
   log: Logged[]
   steps: Map<number, StepRecord[]>
-  results: Map<string, [answer: Json, at: number]>
+  results: Map<string, readonly [answer: Json, at: number]>
   dead: DeadLetter[]
   wake: number | undefined
 }
@@ -27,6 +27,21 @@ export interface MemoryStore extends Store {
   /** Forget answers committed before `before` (by this store's clock): the retention window a real adapter runs as a TTL. */
   prune(before: number): void
 }
+
+// ---------- pure helpers ----------
+
+/** Up to `limit` keys whose wake time is at or before `at`, earliest first; ties keep their given order. */
+export const dueKeys = (wakes: Iterable<readonly [key: string, wake: number | undefined]>, at: number, limit: number): string[] =>
+  [...wakes].filter((w): w is [string, number] => w[1] !== undefined && w[1] <= at)
+    .sort(([, a], [, b]) => a - b)
+    .slice(0, limit)
+    .map(([key]) => key)
+
+/** The answers committed at or after `before`: what the retention window keeps. */
+export const retained = <A>(results: ReadonlyMap<string, readonly [answer: A, at: number]>, before: number): Map<string, readonly [answer: A, at: number]> =>
+  new Map([...results].filter(([, [, at]]) => at >= before))
+
+// ---------- the store ----------
 
 export function memoryStore(now: () => number = Date.now): MemoryStore {
   const keys = new Map<string, Entry>()
@@ -74,17 +89,16 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
       for (const seq of [...e.steps.keys()]) if (seq <= c.cursor) e.steps.delete(seq)
     },
     result: async (key, callId) => entry(key).results.get(callId)?.[0],
+    // selection and lease in one synchronous turn: nothing can interleave between them
     due: async (at, until, limit) => {
-      const ready = [...keys].filter(([, e]) => e.wake !== undefined && e.wake <= at)
-        .sort(([, a], [, b]) => a.wake! - b.wake!)
-        .slice(0, limit)
-      for (const [, e] of ready) e.wake = until
-      return ready.map(([key]) => key)
+      const ready = dueKeys([...keys].map(([key, e]) => [key, e.wake] as const), at, limit)
+      for (const key of ready) entry(key).wake = until
+      return ready
     },
     keys: () => keys.size,
     dead: (key) => [...entry(key).dead],
     prune: (before) => {
-      for (const e of keys.values()) for (const [callId, [, at]] of e.results) if (at < before) e.results.delete(callId)
+      for (const e of keys.values()) e.results = retained(e.results, before)
     },
   }
 }
