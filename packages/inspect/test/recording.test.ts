@@ -2,7 +2,7 @@
 // the reducer, clear, time travel, the tree, and event summarization.
 
 import { describe, it, expect } from 'vitest'
-import type { ProcessEvent } from '@nonchalant/core'
+import type { Patch, ProcessEvent } from '@nonchalant/core'
 import { clear, empty, record, stateAt, type Draft, type Recording } from '../src/recording.ts'
 import { cut, fold, trim } from '../src/ring.ts'
 import { draft, summarizeOps } from '../src/summarize.ts'
@@ -146,8 +146,9 @@ describe('tree', () => {
 
 describe('summarizeOps', () => {
   it('summarizes the values a patch writes and passes paths and deletes through', () => {
-    const del = ['del', '/gone'] as const
-    const ops = summarizeOps([['set', '/f', () => 1], del, ['splice', '/xs', 0, 1, [undefined, 2]]])
+    const del: Patch[number] = ['del', '/gone']
+    // a live patch carries whatever the app yielded, not only JSON
+    const ops = summarizeOps([['set', '/f', () => 1], del, ['splice', '/xs', 0, 1, [undefined, 2]]] as unknown as Patch)
     expect(ops).toStrictEqual([['set', '/f', '[function anonymous]'], del, ['splice', '/xs', 0, 1, ['[undefined]', 2]]])
     expect(ops[1]).toBe(del)
   })
