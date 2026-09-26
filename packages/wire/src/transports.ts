@@ -17,6 +17,14 @@ export interface WebSocketTransportOpts {
 }
 
 /**
+ * The wait before redial `attempt` (0-based): `base` doubling up to 8x, scaled
+ * by `random` (in [0, 1)) into 50–100% of that step. The jitter keeps a fleet
+ * of clients from redialing in lockstep when a host restarts.
+ */
+export const redialDelay = (base: number, attempt: number, random: number): number =>
+  base * Math.min(8, 2 ** attempt) * (0.5 + random / 2)
+
+/**
  * A reconnecting WebSocket transport. Outbound messages while disconnected are
  * dropped (the protocol's reconnect story is re-lookup + full patch, not
  * replay); `open` fires on every (re)connection so connect() re-issues lookups.
@@ -45,12 +53,7 @@ export function webSocketTransport(url: string, opts?: WebSocketTransportOpts): 
       if (ws !== sock) return
       ws = null
       handlers?.close?.()
-      if (!closed) {
-        // jitter (50–100% of the backoff step) keeps a fleet of clients from
-        // redialing in lockstep when a host restarts
-        const delay = baseDelay * Math.min(8, 2 ** attempts++) * (0.5 + Math.random() / 2)
-        setTimeout(dial, delay)
-      }
+      if (!closed) setTimeout(dial, redialDelay(baseDelay, attempts++, Math.random()))
     })
   }
   dial()

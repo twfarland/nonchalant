@@ -138,20 +138,31 @@ under.
 
 ## Connection limits
 
-The host applies these per connection:
+The host applies these per connection, or per client where noted:
 
 - `maxWatchesPerConnection` caps the number of refs a connection may watch;
   lookups beyond the cap return an error. Omit it for no cap.
-- `lookupRate` caps how fast one connection may look processes up. Each
+- `lookupRate` caps how fast one client may look processes up. Each
   distinct lookup may spawn a process, so without a rate a client could fill
   the registry by looking up `cart` with a thousand different arguments.
   The rate is a token bucket: `max` tokens refill evenly over each `perMs`,
   and up to `burst` of them can be held at once. The default is 100 per 10
   seconds with a burst of 500. The burst exists for page loads: a page that
   looks up a few hundred remote refs when it opens gets them all at once,
-  and after that the connection is held to 10 lookups a second. Lookups with
+  and after that the client is held to 10 lookups a second. Lookups with
   no token left return an error. A scoped gateway that derives arguments from
   the session removes the problem for its names entirely.
+
+  The bucket belongs to the client, not the connection, so reconnecting does
+  not refill it: otherwise one client could drain `totalLookupRate` (below)
+  for everyone by reconnecting after every burst. A client is the `principal`
+  its `scope` returns, or else the connection's remote address, and all of a
+  client's connections (two tabs, say) draw on the one bucket. The host keeps
+  these buckets across connections in a table capped at 10 000 clients; a
+  bucket leaves the table once it has refilled, which loses nothing, since a
+  new bucket starts full. Behind a reverse proxy every connection shares the
+  proxy's address, so there `scope` should return a principal (the user's
+  id, or the forwarded client address) or the whole site shares one bucket.
 - `maxBufferedBytes` (default 8 MiB) bounds what the host queues for a client
   that is not reading. Past it the host terminates the socket rather than
   growing its memory. Nothing is lost by terminating: the client reconnects,
@@ -180,8 +191,11 @@ limit multiplies with the number of connections:
   and a sleeping one comes back when a `scheduler` wakes it (see
   [Processes on the server](server.md)). Pass `Infinity` for no cap.
 
-`packages/host/test/host.test.ts` checks the per-connection burst default, the
-shared bucket across several connections, and the registry cap.
+`packages/host/test/host.test.ts` checks the burst default, that reconnecting
+does not refill a client's bucket, that principals sharing an address keep
+separate buckets, the shared bucket across several connections, and the
+registry cap; `packages/host/test/units.test.ts` checks the bucket arithmetic
+and the client table on their own.
 
 For an internet-facing service, also terminate TLS (`wss://`), set request and
 connection limits at the reverse proxy, keep `maxPayloadBytes` appropriate for

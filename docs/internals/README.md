@@ -107,7 +107,7 @@ the full list.
 | a process outlives its parent, or dies early | [process.md](process.md) for the ambient ownership window |
 | shared state respawns or lingers | [registry.md](registry.md) for watcher counting and the idle timer |
 | effects run in the wrong order or too late | [graph.md](graph.md) for scheduling and `flush` |
-| a remote handle behaves unlike a local one | `wire/client.ts`; each remote ref is a local pump process |
+| a remote handle behaves unlike a local one | `wire/client.ts`; each remote ref is a local pump process (`wire/pump.ts`) |
 | the DOM writes, moves, or re-listens more than expected | [dom.md](dom.md) for no-op skipping, `keepers`, and `dispatch` |
 
 ## Budgets
@@ -119,7 +119,7 @@ enforces it:
 |---|---|
 | reconcile: 1 change in 10k ≤ 100 µs | `packages/core/test/reconcile.perf.test.ts` |
 | Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 structural ops | `examples/mario/mario.golden.test.ts` |
-| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.7 KB, wire ≤ 9.6 KB, durable ≤ 2.4 KB, react ≤ 7.1 KB (react excluded), inspect ≤ 15 KB | `test/size.test.ts` |
+| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.7 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB, react ≤ 7.1 KB (react excluded), inspect ≤ 15 KB | `test/size.test.ts` |
 | nothing retained after dispose | `packages/core/test/process.leaks.test.ts` |
 
 ## Test environment notes
