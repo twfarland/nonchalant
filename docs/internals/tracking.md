@@ -1,10 +1,16 @@
 # track.ts: path recording and patch intersection
 
-`packages/core/src/track.ts`. Imports only `reconcile.ts`. This is the "read
-tracked" half of the granularity mechanism; [reconcile.md](reconcile.md) is the
-"write plain" half.
+The "read tracked" half of the granularity mechanism;
+[reconcile.md](reconcile.md) is the "write plain" half. Three modules in
+`packages/core/src/`, none of which knows about the graph:
 
-The question this module answers: *given that these paths changed, does this
+| file | holds |
+|---|---|
+| `track.ts` | the recorder and its proxy traps |
+| `paths.ts` | `PathTree` and the patch matcher (`affects`, `opAffects`), pure |
+| `unwrap.ts` | swapping proxies out of a computed's result, and the proxy → target map |
+
+The question they answer: *given that these paths changed, does this
 particular reader need to run again?*
 
 ```ts nocheck
@@ -43,25 +49,35 @@ one. After `finalize()` the `get` trap short-circuits to `Reflect.get`, so a
 stale proxy remains a read-only view with correct values and no phantom
 dependencies recorded against a run that already ended.
 
-A computed's return value never carries proxies out. `unwrap()` runs on
-whatever a derive's getter returns, but only when that run was handed a proxy:
-`wrap` bumps a module counter (`handed`) each time it returns one, and the
-computed compares the counter before and after its getter. A derive over a
+A computed's return value never carries proxies out (`unwrap.ts`). `unwrap()`
+walks whatever a derive's getter returns, but only when that run was handed a
+proxy: `wrap` bumps a module counter (`handed`) each time it returns one, and
+the computed compares the counter before and after its getter. A derive over a
 primitive snapshot, or one that reads only primitives from a snapshot it never
-receives as a container, skips the walk.
-It replaces each proxy with the raw snapshot node behind it, using a
+receives as a container, skips the walk. It still checks, with one `WeakMap`
+lookup (`unproxy`), whether the result *is* a proxy: one captured in an
+earlier run and returned whole by a run that was handed nothing.
+The walk replaces each proxy with the raw snapshot node behind it, using a
 `WeakMap` from proxy to target that is filled as proxies are created. A proxy
 is swapped whole, because its target is raw data all the way down. The plain
-containers around it can only have been built by the getter during the run,
-so they are patched in place (a frozen one keeps its proxies). Every plain
-container the walk visits goes into a `clean` `WeakSet` and is never walked
-again, which also makes cyclic results terminate. A large static table in a
-derive's result, or the structurally shared part of a result built from the
-previous one, therefore costs one walk ever, not one per recompute. The
-constraint this takes on: a container already returned from a derive (or
-walked inside one) must not be mutated to hold a proxy later, which is the
-immutable-update rule anyway. So
-`derive(() => p().items.filter((x) => x.done))` holds the snapshot's own
+containers around it are patched in place (a frozen one keeps its proxies).
+A plain container the walk finds proxy-free goes into a `clean` `WeakSet`
+and is never walked again; one that held a proxy, directly or beneath, is
+left out, so a getter that refills a reused container is walked again on its
+next run. A large static table in a derive's result, or the structurally
+shared part of a result built from the previous one, therefore costs one walk
+ever, not one per recompute. Marking happens before descending, which also
+makes cyclic results terminate.
+
+The limit this leaves, deliberately: a container found proxy-free and *later*
+mutated in place to hold a proxy is not walked again, so that proxy escapes
+(it still reads correctly; it is only identity, `structuredClone` and
+mutation that differ). Telling that container apart from a static table
+would take a walk of every clean container on every recompute, which is the
+cost `clean` exists to avoid. It is the mutate-in-place anti-pattern either
+way; `unwrap.test.ts` pins the limit next to the cases that are covered.
+
+So `derive(() => p().items.filter((x) => x.done))` holds the snapshot's own
 items: identity matches untracked reads, `structuredClone` works, and a derive
 that returns an unchanged subtree gives downstream readers an equality cut. A
 proxy nested inside a non-plain object (a `Map`, a class instance) is not
@@ -124,9 +140,10 @@ yielding a new value instead of mutating the old one.
 
 ## Matching a patch against a tree
 
-`affects(tree, patch, segsList)` walks each op's path segments down the tree
-and answers on the first intersection. `segsList` carries pre-parsed paths so a
-publish parses each path once, not once per watching reader.
+`affects(tree, patch, segsList)` (`paths.ts`) walks each op's path segments
+down the tree with `opAffects` and answers on the first intersection.
+`segsList` carries pre-parsed paths so a publish parses each path once, not
+once per watching reader.
 
 ```mermaid
 flowchart TD
@@ -177,6 +194,9 @@ covers proxy read-only-ness and frozen snapshots, and "derive returns raw
 values" covers `unwrap`, and `graph.scale.test.ts` "settling a derive result
 walks only what could hold a proxy" counts walk visits on a 10,000-row static
 result (0 over a primitive source; one walk total over several recomputes
-through a proxy).
+through a proxy). Each module also has a test of its own: `track.test.ts`
+scripts reads through a recorder and asserts the exact tree `finalize()`
+produces; `paths.test.ts` tables `opAffects` over hand-built trees;
+`unwrap.test.ts` counts the walks behind the `clean` rule.
 
 Next: [graph.md](graph.md) explains how these trees become subscriptions.
