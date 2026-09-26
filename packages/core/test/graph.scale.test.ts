@@ -29,17 +29,16 @@ function diamond(depth: number, root: () => number): { top: ComputedHandle<numbe
 }
 
 describe('watched-ness queries are linear in the DAG, not in its paths', () => {
-  it('a 30-level diamond of unwatched computeds recomputes each node once per change, fast', () => {
+  it('a 30-level diamond of unwatched computeds recomputes each node exactly once per change', () => {
     const src = source<{ n: number }>({ n: 0 })
     const d = diamond(DEPTH, () => src().n)
-    const t0 = performance.now()
     d.top.read()
     expect(d.evals()).toBe(2 * DEPTH + 1)
     src.publish({ n: 1 })
     d.top.read()
     expect(d.evals()).toBe(4 * DEPTH + 2)
-    // 2^30 upward paths: an exponential walk would not finish at all
-    expect(performance.now() - t0).toBeLessThan(250)
+    // 2^30 upward paths: an exponential walk would not finish at all; watch.test.ts
+    // pins the walks themselves to one visit per node
     for (const c of d.all) c.dispose()
   })
 
@@ -48,7 +47,6 @@ describe('watched-ness queries are linear in the DAG, not in its paths', () => {
     const src = source<{ n: number }>({ n: 0 }, { onWatchers: (c) => void log.push(c) })
     const d = diamond(DEPTH, () => src().n)
     d.top.read()
-    const t0 = performance.now()
     const stop = effect(() => void d.top.read())
     expect(log).toEqual([1, 2])
     src.publish({ n: 1 })
@@ -56,7 +54,6 @@ describe('watched-ness queries are linear in the DAG, not in its paths', () => {
     expect(d.evals()).toBe(4 * DEPTH + 2)
     stop()
     expect(log).toEqual([1, 2, 1, 0])
-    expect(performance.now() - t0).toBeLessThan(250)
     for (const c of d.all) c.dispose()
   })
 })
