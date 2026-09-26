@@ -1,9 +1,24 @@
-# render.ts: the DOM sink
+# The DOM sink
 
-`packages/dom/src/render.ts`. Imports `binding`, `rebind`, `unbind`, and
-`untracked` from core and nothing else. It turns `VNode` trees (plain data) into DOM nodes with
-`createElement`, `createTextNode`, and `setAttribute`, and keeps them current.
-No string is ever parsed as markup.
+`packages/dom/src/`. Imports `binding`, `rebind`, `unbind`, and `untracked`
+from core and nothing else. It turns `VNode` trees (plain data) into DOM nodes
+with `createElement`, `createTextNode`, and `setAttribute`, and keeps them
+current. No string is ever parsed as markup.
+
+| module | owns |
+|---|---|
+| `render.ts` | `mount` and `domSink`: a root region under a marker |
+| `region.ts` | regions: `apply`, the bulk clear, placing items (the DOM half of the keyed diff), `flattenDynamic` |
+| `keyed.ts` | the keyed diff as plain data, no DOM: `match` (which old item each entry reuses) and `keepers` (the LIS) |
+| `element.ts` | `renderElement`, `patchElement`, dispose, and removal through `exit`; `elementNs` |
+| `children.ts` | an element's static children, patched by position, and holes (a region fed by a binding, promise, or iterable) |
+| `attribute.ts` | attribute values, properties, bindings, `isJavascriptUrl`, `attrText` |
+| `events.ts` | the shared listener, handler swap, `handlerProblem` |
+| `report.ts` | `onRenderError` and the once-per-message `lint` |
+
+Elements contain holes and regions contain elements, so `element.ts`,
+`children.ts`, and `region.ts` import each other. The cycle is safe because no
+module uses another's exports at load time, only inside functions.
 
 ## Static structure and regions
 
@@ -37,15 +52,21 @@ flowchart TD
 
 ## Reconciling a region
 
-`apply` flattens the new value to strings and vnodes, then matches each
-against the current items:
+`apply` flattens the new value to strings and vnodes (`flattenDynamic`), then
+`match` pairs each with a current item, without touching the DOM:
 
 - Keyed vnodes match by key (`key: 0` is a key: presence, not truthiness);
-  unkeyed ones and text match positionally among items of the same kind.
-- A match with the same tag is patched in place (`patchElement`). A
-  reference-equal vnode is skipped without looking inside. A tag change, or an
-  explicit `ns` change, builds a new element.
+  unkeyed ones and text match positionally, against the first item not yet
+  matched, and the cursor advances only past a match. An element match also
+  needs the same tag and the same keyedness.
+- Each matched element is then patched in place (`patchElement`), in order,
+  interleaved with building the unmatched ones. A reference-equal vnode is
+  skipped without looking inside. A tag change builds a new element; so does an
+  explicit `ns` change, which `patchElement` refuses, turning the match back
+  into a new item.
 - Items left unmatched are removed (see [Exit](#exit)).
+
+`packages/dom/test/keyed.test.ts` covers `match` and `keepers` as tables.
 
 **Moves.** Each surviving item records its old position. `keepers(from)` marks
 one longest strictly increasing subsequence of those positions; those nodes are
@@ -96,7 +117,8 @@ in the DOM costs a read.
 
 ## Listeners
 
-One module-level function, `dispatch`, is the only listener the sink ever adds.
+One module-level function in `events.ts`, `dispatch`, is the only listener the
+sink ever adds.
 The first `on<type>` handler on an element adds `dispatch` for that event type;
 the handler itself goes in a `WeakMap<Element, Record<type, handler>>`.
 `dispatch` looks up the current handler for `this` and `e.type` and calls it.
@@ -116,9 +138,11 @@ listens for `Click` (the sink warns once; the attribute types reject it).
 
 `setAttrValue` removes a `javascript:` URL from `href`, `src`, `action`,
 `formaction`, and `xlink:href`, testing the scheme after stripping
-U+0000–U+0020 as browsers do. `aria-*` booleans render as `"true"`/`"false"`.
-An object value warns once (it would stringify to `[object Object]`). Warnings
-go through `lint`, which prints each distinct message once, not once per row.
+U+0000–U+0020 as browsers do (`isJavascriptUrl`). `aria-*` booleans render as
+`"true"`/`"false"` (`attrText`). An object value warns once (it would stringify
+to `[object Object]`). Warnings go through `lint`, which prints each distinct
+message once, not once per row. `attribute.test.ts` holds the tables for both
+pure functions.
 
 ## Exit
 
@@ -146,6 +170,6 @@ unmounts.
   depend on everything its items read.
 - Moves only touch nodes outside the kept subsequence; inserting a kept node
   would still be correct but would break the move-count tests.
-- `handlers.delete(el)` on dispose is what makes a disposed element's listener
+- `dropHandlers(el)` on dispose is what makes a disposed element's listener
   do nothing. Without it, an element kept alive by an exit animation would
   still call the handlers of the view that removed it.
