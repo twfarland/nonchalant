@@ -17,66 +17,14 @@
 // sent right after the re-lookup, so they reach the fresh watch in order.
 // Isomorphic and DOM-free.
 
-import { applyPatch, spawn } from '@nonchalant/core'
-import type { Definition, Json, Proc, Process, Registry, Self } from '@nonchalant/core'
-import { encode, decodeHost, PROTOCOL, type ClientMsg, type HostMsg } from './protocol.ts'
+import { spawn } from '@nonchalant/core'
+import type { Definition, Json, Process, Registry } from '@nonchalant/core'
+import { entryKey, enqueue, lookupMsg, raisedCallId, type Entry } from './entry.ts'
+import { encode, decodeHost, type ClientMsg, type HostMsg } from './protocol.ts'
+import { pumpProc, WireError } from './pump.ts'
 import type { Transport } from './transport.ts'
 
-export class WireError extends Error {
-  readonly detail: Json
-  constructor(detail: Json) {
-    const message =
-      typeof detail === 'object' && detail !== null && !Array.isArray(detail) && typeof detail['message'] === 'string'
-        ? detail['message']
-        : String(detail)
-    super(message)
-    this.name = 'WireError'
-    this.detail = detail
-  }
-}
-
-const canon = (v: unknown): unknown => {
-  if (typeof v !== 'object' || v === null) return v
-  if (Array.isArray(v)) return v.map(canon)
-  const out: Record<string, unknown> = {}
-  for (const k of Object.keys(v).sort()) out[k] = canon((v as Record<string, unknown>)[k])
-  return out
-}
-
-const pumpProc: Proc<Json, HostMsg, void> = async function* (self: Self<HostMsg>) {
-  let snapshot: Json = null
-  for await (const m of self) {
-    if (m.op === 'yield') {
-      snapshot = applyPatch(snapshot, m.patch) // first patch is a full snapshot: ops against the root
-      yield snapshot
-    } else if (m.op === 'done') {
-      return
-    } else if (m.op === 'raise') {
-      throw new WireError(m.error)
-    }
-  }
-}
-
-/** Casts retained per ref while disconnected; past this the oldest is dropped. */
-const CAST_QUEUE = 64
-
-interface Call {
-  resolve(value: Json | undefined): void
-  reject(err: unknown): void
-}
-
-interface Entry {
-  ref: string
-  key: string
-  name: string
-  args: Json | undefined
-  facade: Process<unknown, unknown>
-  /** the pump's original mailbox cast, captured before the facade's cast is overridden */
-  deliver(msg: HostMsg): void
-  calls: Map<number, Call>
-  queued: Json[]
-  dead: boolean
-}
+export { WireError } from './pump.ts'
 
 export interface Connection<S extends { [K in keyof S]: Definition<unknown, unknown, unknown> }>
   extends Registry<S> {
@@ -114,12 +62,42 @@ export function connect<S extends { [K in keyof S]: Definition<unknown, unknown,
   }
 
   const sendLookup = (entry: Entry): void => {
-    out(
-      entry.args === undefined
-        ? { op: 'lookup', ref: entry.ref, name: entry.name, v: PROTOCOL }
-        : { op: 'lookup', ref: entry.ref, name: entry.name, v: PROTOCOL, args: entry.args },
-    )
+    out(lookupMsg(entry))
     for (const msg of entry.queued.splice(0)) out({ op: 'cast', ref: entry.ref, msg })
+  }
+
+  const receive = (entry: Entry, m: HostMsg): void => {
+    switch (m.op) {
+      case 'reply': {
+        const call = entry.calls.get(m.id)
+        if (call !== undefined) {
+          entry.calls.delete(m.id)
+          call.resolve(m.value)
+        }
+        return
+      }
+      case 'raise': {
+        const id = raisedCallId(m.error)
+        if (id !== undefined) {
+          const call = entry.calls.get(id)
+          if (call !== undefined) {
+            entry.calls.delete(id)
+            call.reject(new WireError(m.error))
+          }
+          return
+        }
+        rejectCalls(entry, new WireError(m.error)) // a crashed process rejects its pending calls
+        entry.deliver(m)
+        return
+      }
+      case 'done':
+        end(entry, 'process ended')
+        entry.deliver(m)
+        return
+      case 'yield':
+        entry.deliver(m)
+        return
+    }
   }
 
   const unsubscribe = transport.subscribe({
@@ -127,42 +105,7 @@ export function connect<S extends { [K in keyof S]: Definition<unknown, unknown,
       const m = decodeHost(data)
       if (m === null) return // not ours (bus chatter) or garbage
       const entry = byRef.get(m.ref)
-      if (entry === undefined) return
-      switch (m.op) {
-        case 'reply': {
-          const call = entry.calls.get(m.id)
-          if (call !== undefined) {
-            entry.calls.delete(m.id)
-            call.resolve(m.value)
-          }
-          return
-        }
-        case 'raise': {
-          const err = m.error
-          const id =
-            typeof err === 'object' && err !== null && !Array.isArray(err) && typeof err['id'] === 'number'
-              ? err['id']
-              : undefined
-          if (id !== undefined) {
-            const call = entry.calls.get(id)
-            if (call !== undefined) {
-              entry.calls.delete(id)
-              call.reject(new WireError(err))
-            }
-            return
-          }
-          rejectCalls(entry, new WireError(err)) // a crashed process rejects its pending calls
-          entry.deliver(m)
-          return
-        }
-        case 'done':
-          end(entry, 'process ended')
-          entry.deliver(m)
-          return
-        case 'yield':
-          entry.deliver(m)
-          return
-      }
+      if (entry !== undefined) receive(entry, m)
     },
     open: () => {
       connected = true
@@ -178,27 +121,14 @@ export function connect<S extends { [K in keyof S]: Definition<unknown, unknown,
     },
   })
 
-  const lookup = (name: string, ...rest: unknown[]): Process<unknown, unknown> => {
-    const args = rest[0] as Json | undefined
-    const key = name + '\0' + (args === undefined ? '' : JSON.stringify(canon(args)))
-    const existing = entries.get(key)
-    if (existing !== undefined) return existing.facade
-    const ref = `${session}:${++refN}`
-    // infinite, quiet restarts: each raise crashes the pump (stale reads, not an
-    // onProcessError report — a disconnect is not a bug), each
-    // reconnect re-lookup feeds the fresh instance a full snapshot
-    const facade = spawn(pumpProc, undefined, { restart: 'on-crash', maxRestarts: Number.POSITIVE_INFINITY, quiet: true })
-    const withMailbox = facade as unknown as { cast(m: HostMsg): void }
-    const deliver = withMailbox.cast.bind(facade)
-    const entry: Entry = { ref, key, name, args, facade: facade as Process<unknown, unknown>, deliver, calls: new Map(), queued: [], dead: false }
-    entries.set(key, entry)
-    byRef.set(ref, entry)
-
-    const face = facade as unknown as Record<PropertyKey, unknown>
+  // the facade's cast, call, and dispose become wire ops on this entry's ref
+  const wire = (entry: Entry): void => {
+    const { ref } = entry
+    const face = entry.facade as unknown as Record<PropertyKey, unknown>
     face['cast'] = (msg: Json): void => {
       if (entry.dead) return
       if (connected) out({ op: 'cast', ref, msg })
-      else if (entry.queued.push(msg) > CAST_QUEUE) entry.queued.shift()
+      else entry.queued = enqueue(entry.queued, msg)
     }
     face['call'] = (msg: Json): Promise<Json | undefined> =>
       new Promise((resolve, reject) => {
@@ -229,7 +159,24 @@ export function connect<S extends { [K in keyof S]: Definition<unknown, unknown,
       dispose()
       await innerAsyncDispose()
     }
+  }
 
+  const lookup = (name: string, ...rest: unknown[]): Process<unknown, unknown> => {
+    const args = rest[0] as Json | undefined
+    const key = entryKey(name, args)
+    const existing = entries.get(key)
+    if (existing !== undefined) return existing.facade
+    const ref = `${session}:${++refN}`
+    // infinite, quiet restarts: each raise crashes the pump (stale reads, not an
+    // onProcessError report — a disconnect is not a bug), each
+    // reconnect re-lookup feeds the fresh instance a full snapshot
+    const facade = spawn(pumpProc, undefined, { restart: 'on-crash', maxRestarts: Number.POSITIVE_INFINITY, quiet: true })
+    const withMailbox = facade as unknown as { cast(m: HostMsg): void }
+    const deliver = withMailbox.cast.bind(facade)
+    const entry: Entry = { ref, key, name, args, facade: facade as Process<unknown, unknown>, deliver, calls: new Map(), queued: [], dead: false }
+    entries.set(key, entry)
+    byRef.set(ref, entry)
+    wire(entry)
     if (connected) sendLookup(entry)
     return entry.facade
   }

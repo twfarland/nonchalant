@@ -107,7 +107,7 @@ the full list.
 | a process outlives its parent, or dies early | [process.md](process.md) for the ambient ownership window |
 | shared state respawns or lingers | [registry.md](registry.md) for watcher counting and the idle timer |
 | effects run in the wrong order or too late | [graph.md](graph.md) for scheduling and `flush` |
-| a remote handle behaves unlike a local one | `wire/client.ts`; each remote ref is a local pump process |
+| a remote handle behaves unlike a local one | `wire/client.ts`; each remote ref is a local pump process (`wire/pump.ts`) |
 | the DOM writes, moves, or re-listens more than expected | [dom.md](dom.md) for no-op skipping, `keepers`, and `dispatch` |
 
 ## Budgets

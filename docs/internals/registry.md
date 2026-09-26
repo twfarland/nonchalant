@@ -128,7 +128,7 @@ definition declares `evict`.
 interface, which is what "a name resolves identically at every distance" means
 in practice. `connect(transport)` substitutes the transport and keeps the
 interface. The remote side's cache is keyed the same way (canonicalised JSON
-args in `wire/client.ts`), so client-side get-or-spawn behaves like the local
+args, `entryKey` in `wire/entry.ts`), so client-side get-or-spawn behaves like the local
 one.
 
 `expose(reg, transport)` accepts anything with a `lookup` method, not a
