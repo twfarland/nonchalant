@@ -11,7 +11,7 @@ invariants, and changes that can break them.
 | [graph.md](graph.md) | `graph.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
 | [process.md](process.md) | `process.ts` | mailbox, drive loop, ownership, dispose ordering |
 | [registry.md](registry.md) | `registry.ts` | key encoding, sharing, refcounting, eviction |
-| [dom.md](dom.md) | `dom/src/render.ts` | regions, keyed LIS moves, rebinding, listeners, exit |
+| [dom.md](dom.md) | `dom/src/render.ts` and its siblings | regions, keyed LIS moves, rebinding, listeners, exit |
 
 ## One update path
 
