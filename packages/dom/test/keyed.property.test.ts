@@ -10,7 +10,7 @@ import fc from 'fast-check'
 import { cell } from '@nonchalant/core'
 import { mount } from '@nonchalant/dom'
 import { li, ul } from '@nonchalant/dom/tags'
-import { keepers } from '../src/render.ts'
+import { keepers } from '../src/keyed.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
