@@ -1,4 +1,4 @@
-// The reference adapter: everything in one Map. It loses its contents with the
+// The reference adapter: everything in two Maps. It loses its contents with the
 // process and keeps the semantics exactly, which is what makes it the test rig
 // — the crash-consistency property runs against this.
 
@@ -16,7 +16,6 @@ interface Entry {
   steps: Map<number, StepRecord[]>
   results: Map<string, readonly [answer: Json, at: number]>
   dead: DeadLetter[]
-  wake: number | undefined
 }
 
 export interface MemoryStore extends Store {
@@ -31,8 +30,8 @@ export interface MemoryStore extends Store {
 // ---------- pure helpers ----------
 
 /** Up to `limit` keys whose wake time is at or before `at`, earliest first; ties keep their given order. */
-export const dueKeys = (wakes: Iterable<readonly [key: string, wake: number | undefined]>, at: number, limit: number): string[] =>
-  [...wakes].filter((w): w is [string, number] => w[1] !== undefined && w[1] <= at)
+export const dueKeys = (wakes: Iterable<readonly [key: string, wake: number]>, at: number, limit: number): string[] =>
+  [...wakes].filter(([, wake]) => wake <= at)
     .sort(([, a], [, b]) => a - b)
     .slice(0, limit)
     .map(([key]) => key)
@@ -45,10 +44,12 @@ export const retained = <A>(results: ReadonlyMap<string, readonly [answer: A, at
 
 export function memoryStore(now: () => number = Date.now): MemoryStore {
   const keys = new Map<string, Entry>()
+  // a key with no wake time has no row here
+  const wakes = new Map<string, number>()
   const entry = (key: string): Entry => {
     let e = keys.get(key)
     if (e === undefined) {
-      e = { snapshot: undefined, version: 0, cursor: 0, epoch: 0, next: 1, log: [], steps: new Map(), results: new Map(), dead: [], wake: undefined }
+      e = { snapshot: undefined, version: 0, cursor: 0, epoch: 0, next: 1, log: [], steps: new Map(), results: new Map(), dead: [] }
       keys.set(key, e)
     }
     return e
@@ -74,7 +75,7 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
     putStep: async (key, epoch, seq, index, name, result, wakeAt) => {
       const e = owned(key, epoch)
       e.steps.set(seq, [...(e.steps.get(seq) ?? []), { index, name, result }])
-      if (wakeAt !== undefined) e.wake = wakeAt
+      if (wakeAt !== undefined) wakes.set(key, wakeAt)
     },
     steps: async (key, seq) => [...(entry(key).steps.get(seq) ?? [])],
     commit: async (key, epoch, c) => {
@@ -82,7 +83,7 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
       e.snapshot = c.snapshot
       e.version = c.version
       e.cursor = c.cursor
-      e.wake = undefined
+      wakes.delete(key)
       for (const [callId, answer] of c.results) e.results.set(callId, [answer, now()])
       if (c.dead !== undefined) e.dead.push(c.dead)
       e.log = e.log.filter((l) => l.seq > c.cursor)
@@ -91,8 +92,8 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
     result: async (key, callId) => entry(key).results.get(callId)?.[0],
     // selection and lease in one synchronous turn: nothing can interleave between them
     due: async (at, until, limit) => {
-      const ready = dueKeys([...keys].map(([key, e]) => [key, e.wake] as const), at, limit)
-      for (const key of ready) entry(key).wake = until
+      const ready = dueKeys(wakes, at, limit)
+      for (const key of ready) wakes.set(key, until)
       return ready
     },
     keys: () => keys.size,

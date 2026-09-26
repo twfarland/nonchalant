@@ -9,10 +9,6 @@ describe('dueKeys', () => {
     expect(dueKeys([['c', 300], ['a', 100], ['late', 301], ['b', 200]], 300, 10)).toStrictEqual(['a', 'b', 'c'])
   })
 
-  it('never picks a key with no wake time', () => {
-    expect(dueKeys([['none', undefined], ['k', 0]], Number.MAX_SAFE_INTEGER, 10)).toStrictEqual(['k'])
-  })
-
   it('stops at the limit, keeping the earliest', () => {
     expect(dueKeys([['c', 3], ['a', 1], ['b', 2]], 10, 2)).toStrictEqual(['a', 'b'])
     expect(dueKeys([['a', 1]], 10, 0)).toStrictEqual([])
