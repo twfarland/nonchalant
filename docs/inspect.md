@@ -91,7 +91,8 @@ Status flips update the tree but are not timeline rows. Everything else is a
 row with a sequence number, kept in a ring of `size` entries (1000 by
 default). When the ring is full the oldest quarter drops at once, so most
 appends reach the timeline's readers as a single splice
-(`record.test.ts`, "keeps at most `size` entries").
+(`record.test.ts`, "keeps at most `size` entries"; `recording.test.ts` pins
+the cut and the fold of a dropped yield into its process's base).
 
 The inspector's own processes, and everything they own, are left out:
 otherwise recording an event would itself be an event. `insp.adopt(fn)` marks
