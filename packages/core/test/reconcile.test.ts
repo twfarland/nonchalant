@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
-import { reconcile, applyPatch, type Json } from '../src/reconcile.ts'
+import { reconcile, applyPatch, isRecord, type Json } from '../src/reconcile.ts'
 
 // Every JSON object key is wire-safe; patch application defines own properties
 // without invoking Object.prototype setters.
@@ -291,5 +291,20 @@ describe('reconcile over structurally shared edits', () => {
       }),
       { numRuns: 500 },
     )
+  })
+})
+
+describe('isRecord', () => {
+  it.each([
+    [{}, true],
+    [Object.create(null), true],
+    [[], false],
+    [null, false],
+    ['s', false],
+    [new Date(0), false],
+    [new Map(), false],
+    [Object.create({}), false],
+  ])('%o is a record: %s', (v, expected) => {
+    expect(isRecord(v)).toBe(expected)
   })
 })

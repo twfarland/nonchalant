@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { source, effect, flush, untracked, binding, rebind, unbind, type Binding, type Source } from '../src/graph.ts'
 import { derive } from '../src/index.ts'
-import { affects, createRecorder, type PathTree } from '../src/track.ts'
+import { createRecorder } from '../src/track.ts'
+import { affects, type PathTree } from '../src/paths.ts'
 import type { Json, Patch } from '../src/reconcile.ts'
 
 type Item = { done: boolean; n: number }
