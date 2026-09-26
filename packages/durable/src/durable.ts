@@ -22,6 +22,7 @@
 import type { Json, Proc, Self } from '@nonchalant/core'
 import { Fenced } from './store.ts'
 import type { DeadLetter, Logged, Store, StepRecord } from './store.ts'
+import { nextAttempt, plainly, recall, restore } from './replay.ts'
 
 export interface Durable<T> {
   /** The last committed state (migrated to the current version), or undefined on a first activation. Start from it. */
@@ -75,15 +76,8 @@ export type DurableCall = { readonly callId: string; readonly reply: (res: never
 
 type Reply = (res: Json | Promise<never>) => void
 
-/** The request without its reply: what gets written down. */
-const plainly = (msg: object): Json => {
-  const copy: Record<string, unknown> = { ...(msg as Record<string, unknown>) }
-  delete copy['reply']
-  return copy as Json
-}
-
 // rejects on abort: a disposed process must not wake up and run the effects after its sleep
-const delay = (ms: number, signal: AbortSignal): Promise<void> =>
+export const delay = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
     signal.throwIfAborted()
     // drop the listener when the timer wins: one sleep per message would
@@ -111,12 +105,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     const { epoch } = loaded
 
     let cursor = loaded.cursor
-    let latest = loaded.snapshot as T | undefined
-    if (latest !== undefined && loaded.version !== version) {
-      if (migrate === undefined)
-        throw new Error(`nonchalant/durable: no migrate for '${key}' from version ${loaded.version} to ${version}`)
-      latest = migrate(latest, loaded.version)
-    }
+    let latest = restore(loaded, version, migrate, key)
 
     let current: Logged | undefined // the message in flight
     let handling = 0 // its seq; 0 before the first one
@@ -253,13 +242,8 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     const step = async <R extends Json>(name: string, fn: (idempotencyKey: string) => R | Promise<R>, wakes?: true): Promise<R> => {
       const seq = handling
       const index = stepIndex++
-      const done = recorded.find((s) => s.index === index)
-      if (done !== undefined) {
-        // the order of steps within one message must not depend on anything unrecorded
-        if (done.name !== name)
-          throw new Error(`nonchalant/durable: step order drifted in '${key}' #${seq}: step ${index} was '${done.name}', now '${name}'`)
-        return done.result as R
-      }
+      const done = recall(recorded, index, name, key, seq)
+      if (done !== undefined) return done.result as R
       self.signal.throwIfAborted() // disposed: the next activation runs it, not this one
       const result = await fn(`${key}#${seq}#${index}`)
       await write(store.putStep(key, epoch, seq, index, name, result, wakes && (result as number)))
@@ -285,13 +269,12 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     } catch (e) {
       // superseded by a later activation: stop, and leave the key to it
       if (e instanceof Fenced) return
-      // attempts live in the step journal at negative indices, so they survive
-      // the crash they record; a host dying outright, or disposal, is not counted
+      // a host dying outright, or disposal, is not counted as an attempt
       if (inside && maxAttempts !== Infinity && !self.signal.aborted) {
-        const attempts = recorded.filter((s) => s.index < 0).length + 1
+        const attempt = nextAttempt(recorded, maxAttempts)
         const error = String(e)
         // due at once: a scheduler redelivers it where no supervisor restarts it
-        if (attempts < maxAttempts) await write(store.putStep(key, epoch, handling, -attempts, 'attempt', error, now()))
+        if (attempt !== undefined) await write(store.putStep(key, epoch, handling, -attempt, 'attempt', error, now()))
         else {
           const dead = { ...(current as Logged), error }
           await commit(dead)

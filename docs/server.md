@@ -336,7 +336,8 @@ Three rules an adapter must honour. `commit` is one transaction: snapshot,
 version, cursor, answers, and dead letter land together or not at all, and the
 key's wake time is cleared. Every write carries the epoch `load` handed out
 and is refused with `Fenced` when it is stale. `due` reads due keys and leases
-them in one operation. The one retention rule is that answers outlive the message
+them in one operation, and `load` leaves the wake time alone, so an activation
+that dies before committing is woken again. The one retention rule is that answers outlive the message
 that produced them, so a real adapter keeps them for a window and then forgets
 them — `memoryStore().prune(before)` is that window by hand; a real adapter runs
 it as a TTL (`DELETE … WHERE committed_at < $1` on a schedule, or `EXPIRE`).
@@ -365,8 +366,11 @@ storeConformance((now) => myStore(now), { describe, it, expect })
 
 It covers every method: epochs and fencing (a stale write changes nothing),
 commit atomicity, answers, dead letters, versions, `prune`, wake times and
-`due`, and ordering. `memoryStore` runs it in
-`packages/durable/test/conformance.test.ts`.
+`due` (two callers overlapping at staggered points get a due key once), and
+ordering. `memoryStore` runs it in
+`packages/durable/test/conformance.test.ts`, which also runs it against
+adapters broken on purpose (a `due` that reads, awaits, then leases; a `load`
+that clears the wake time) and asserts each fails exactly the test aimed at it.
 [`examples/durable-sqlite`](../examples/durable-sqlite) runs it against a
 SQLite adapter built on Node's own `node:sqlite`, using the `BEGIN IMMEDIATE`
 mapping described above. The same example also crashes a process partway

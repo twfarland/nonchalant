@@ -22,7 +22,8 @@
 // - A key's wake time is set by `putStep` (when given one), cleared by
 //   `commit`, and pushed forward by `due` for every key it hands out, in the
 //   same operation that reads it: that is what stops two schedulers sharing a
-//   store from both waking a key on the same pass.
+//   store from both waking a key on the same pass. `load` leaves it alone, so
+//   an activation that dies before it commits is woken again.
 
 import type { Json } from '@nonchalant/core'
 
@@ -75,7 +76,7 @@ export class Fenced extends Error {
 }
 
 export interface Store {
-  /** Claim the key: raise its epoch and return it with the acknowledged state. */
+  /** Claim the key: raise its epoch and return it with the acknowledged state. Its wake time is left as it was. */
   load(key: string): Promise<Loaded>
   /** Journal an inbound message before it is handled; returns its sequence number. */
   append(key: string, epoch: number, msg: Json, callId?: string): Promise<number>

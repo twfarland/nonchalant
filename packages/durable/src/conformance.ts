@@ -27,6 +27,35 @@ export interface ConformanceTest {
   expect(actual: unknown): { toBe(expected: unknown): void; toStrictEqual(expected: unknown): void }
 }
 
+// ---------- shared moves ----------
+
+const fenced = async (write: Promise<unknown>): Promise<boolean> => {
+  try {
+    await write
+    return false
+  } catch (e) {
+    return e instanceof Fenced
+  }
+}
+
+const commit = (store: Store, key: string, epoch: number, cursor: number, snapshot: Json | undefined): Promise<void> =>
+  store.commit(key, epoch, { snapshot, version: 0, cursor, results: [] })
+
+// where the second of two callers starts: with the first, or that many
+// microtask turns into it, so a read-modify-write with an await in the middle
+// is caught wherever its gap falls
+const GAPS = [0, 1, 2, 3, 4]
+
+/** Run `op` twice, the second call starting `gap` microtask turns after the first. */
+const overlapping = async <R>(op: () => Promise<R>, gap: number): Promise<[R, R]> => {
+  const first = op()
+  first.catch(() => {}) // awaited below; not unhandled while the second waits
+  for (let i = 0; i < gap; i++) await undefined
+  return Promise.all([first, op()])
+}
+
+// ---------- the contract ----------
+
 /**
  * Register the Store conformance tests. `make` is called once per test with
  * the clock the store must stamp committed answers with; each call must
@@ -41,18 +70,10 @@ export function storeConformance(
     clock = 0
     return make(() => clock)
   }
-  const fenced = async (write: Promise<unknown>): Promise<boolean> => {
-    try {
-      await write
-      return false
-    } catch (e) {
-      return e instanceof Fenced
-    }
-  }
-  const commit = (store: Store, key: string, epoch: number, cursor: number, snapshot: Json | undefined): Promise<void> =>
-    store.commit(key, epoch, { snapshot, version: 0, cursor, results: [] })
 
   describe('Store conformance', () => {
+    // ---------- load ----------
+
     describe('load', () => {
       it('an unknown key loads empty', async () => {
         const store = await fresh()
@@ -89,7 +110,19 @@ export function storeConformance(
         expect((await store.load('a')).snapshot).toBe(null)
         expect((await store.load('b')).snapshot).toBe(undefined)
       })
+
+      // a woken activation that dies before it commits must be woken again
+      it('leaves the wake time alone: a key loaded and never committed is still due', async () => {
+        const store = await fresh()
+        const { epoch } = await store.load('k')
+        const seq = await store.append('k', epoch, 'm')
+        await store.putStep('k', epoch, seq, 0, 'nap:deadline', 100, 100)
+        await store.load('k')
+        expect(await store.due(100, 100, 10)).toStrictEqual(['k'])
+      })
     })
+
+    // ---------- append and pending ----------
 
     describe('append and pending', () => {
       it('hands out increasing sequence numbers above 0 and replays in that order', async () => {
@@ -138,6 +171,8 @@ export function storeConformance(
       })
     })
 
+    // ---------- steps ----------
+
     describe('steps', () => {
       it('records effects and failed attempts per message, in the order written', async () => {
         const store = await fresh()
@@ -157,6 +192,8 @@ export function storeConformance(
         expect(await store.steps('k', two + 1)).toStrictEqual([])
       })
     })
+
+    // ---------- commit ----------
 
     describe('commit', () => {
       it('acknowledges the message: the cursor moves and pending starts after it', async () => {
@@ -206,6 +243,8 @@ export function storeConformance(
       })
     })
 
+    // ---------- epoch fencing ----------
+
     describe('epoch fencing', () => {
       it('refuses every write under a superseded epoch with Fenced, and changes nothing', async () => {
         const store = await fresh()
@@ -245,6 +284,8 @@ export function storeConformance(
       })
     })
 
+    // ---------- wake times and due ----------
+
     describe('wake times and due', () => {
       it('a step with a wake time makes its key due at that time, not before', async () => {
         const store = await fresh()
@@ -265,13 +306,15 @@ export function storeConformance(
         expect(await store.due(600, 1000, 10)).toStrictEqual(['k'])
       })
 
-      it('hands a due key to only one of two concurrent callers', async () => {
+      it('hands a due key to only one of two overlapping callers, wherever the second starts', async () => {
         const store = await fresh()
         const { epoch } = await store.load('k')
         const seq = await store.append('k', epoch, 'm')
-        await store.putStep('k', epoch, seq, 0, 'nap:deadline', 100, 100)
-        const [a, b] = await Promise.all([store.due(100, 1000, 10), store.due(100, 1000, 10)])
-        expect([...(a ?? []), ...(b ?? [])]).toStrictEqual(['k'])
+        for (const gap of GAPS) {
+          await store.putStep('k', epoch, seq, gap, 'nap:deadline', 100, 100)
+          const [a, b] = await overlapping(() => store.due(100, 1000, 10), gap)
+          expect([...a, ...b]).toStrictEqual(['k'])
+        }
       })
 
       it('lists earliest first, at most `limit`', async () => {
@@ -316,6 +359,8 @@ export function storeConformance(
         expect(await store.due(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, 10)).toStrictEqual([])
       })
     })
+
+    // ---------- answer retention ----------
 
     describe('answer retention', () => {
       it('prune forgets answers committed before the cutoff and keeps the rest', async () => {
