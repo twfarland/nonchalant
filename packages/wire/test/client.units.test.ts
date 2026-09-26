@@ -1,12 +1,13 @@
 // The client half's pure pieces as plain functions: entry keys, the lookup a
-// row sends, the call id a raise rejects, the disconnected cast queue, and
-// WireError's message. connect() over a transport is covered end to end in
-// wire.test.ts and wire.edges.test.ts.
+// row sends, the call id a raise rejects, the disconnected cast queue,
+// WireError's message, and the redial backoff. connect() over a transport is
+// covered end to end in wire.test.ts and wire.edges.test.ts.
 
 import { describe, it, expect } from 'vitest'
 import type { Json } from '@nonchalant/core'
 import { CAST_QUEUE, entryKey, enqueue, lookupMsg, raisedCallId } from '../src/entry.ts'
 import { WireError } from '../src/pump.ts'
+import { redialDelay } from '../src/transports.ts'
 
 describe('entryKey', () => {
   it('ignores object key order at every depth', () => {
@@ -85,5 +86,17 @@ describe('WireError', () => {
     expect(new WireError('plain').message).toBe('plain')
     expect(new WireError({ message: 5 }).message).toBe('[object Object]')
     expect(new WireError(null).message).toBe('null')
+  })
+})
+
+describe('redialDelay', () => {
+  it('doubles per attempt from the base and stops growing at 8x', () => {
+    expect([0, 1, 2, 3, 4, 10].map((n) => redialDelay(100, n, 1))).toStrictEqual([100, 200, 400, 800, 800, 800])
+  })
+
+  it('jitters into 50–100% of the step', () => {
+    expect(redialDelay(100, 0, 0)).toBe(50)
+    expect(redialDelay(100, 0, 0.5)).toBe(75)
+    expect(redialDelay(100, 3, 0)).toBe(400)
   })
 })
