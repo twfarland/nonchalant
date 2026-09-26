@@ -16,7 +16,8 @@
 // watched may sit above the cap until watchers leave. Registry processes spawn `unscoped` —
 // shared state must not be owned by whichever process looked it up first.
 
-import { spawnProcess, unscoped, type SpawnOpts } from './process.ts'
+import { spawnProcess, type SpawnOpts } from './process.ts'
+import { unscoped } from './scope.ts'
 import type { ArgsOf, Definition, Proc, Process, Registry } from './types.ts'
 
 const SEP = '\u0000' // separates name from serialized args in cache keys

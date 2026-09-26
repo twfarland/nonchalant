@@ -1,7 +1,7 @@
 // instrument(sink): the runtime's event stream, as an inspector sees it.
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { spawn, define, registry, instrument } from '../src/index.ts'
+import { spawn, define, registry, instrument, onProcessError } from '../src/index.ts'
 import type { Call, Cast, Proc, ProcessEvent } from '../src/index.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -170,5 +170,19 @@ describe('instrument', () => {
     removeFirst()
     spawn(counter, undefined)[Symbol.dispose]()
     expect(second.map((e) => e.type)).toEqual(['spawn', 'status', 'exit', 'status'])
+  })
+
+  it('a stale crash-handler remover does not unhook a newer handler', async () => {
+    const first: unknown[] = []
+    const second: unknown[] = []
+    const removeFirst = onProcessError((e) => first.push(e))
+    const removeSecond = onProcessError((e) => second.push(e))
+    removeFirst()
+    const p = spawn(counter, undefined)
+    p.cast({ type: 'boom' })
+    await tick()
+    removeSecond()
+    expect(first).toEqual([])
+    expect(second.map((e) => (e as Error).message)).toEqual(['boom'])
   })
 })

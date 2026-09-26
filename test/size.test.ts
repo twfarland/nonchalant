@@ -27,16 +27,18 @@ const gzipSize = (entryPoints: string[], external: string[] = []): number => {
   return gzipSync(total).length
 }
 
-// measured 2026-09-26: core 8225, core+dom+tags 13578, wire 9500, durable 2297
-// (with the scheduler), durable/conformance 2556, inspect 14580, react 7005 (its
+// measured 2026-09-26: core 8289, core+dom+tags 13504, wire 9639, durable 2297
+// (with the scheduler), durable/conformance 2556, inspect 14618, react 7055 (its
 // hooks plus the core they reach, react external) (bytes, gzip). Of core's growth
-// since 7829, ~220 is the instrument() hook and ~170 in-place rebinding. Durable
+// since 7829, ~220 is the instrument() hook, ~170 in-place rebinding, and ~60
+// the process runtime's split into separately testable helpers (wire, which
+// reaches the runtime through spawn, pays ~50 of it). Durable
 // bundles small because it imports only types from core. The conformance subpath
 // is a published entry point, so it carries its own line.
 const BUDGETS: [name: string, entries: string[], limit: number, external?: string[]][] = [
   ['@nonchalant/core', ['packages/core/src/index.ts'], 8_300],
   ['core + dom + tags (a full app)', ['packages/core/src/index.ts', 'packages/dom/src/index.ts', 'packages/dom/src/tags.ts'], 13_700],
-  ['@nonchalant/wire (incl. core)', ['packages/wire/src/index.ts'], 9_600],
+  ['@nonchalant/wire (incl. core)', ['packages/wire/src/index.ts'], 9_650],
   ['@nonchalant/durable (incl. core)', ['packages/durable/src/index.ts'], 2_400],
   ['@nonchalant/durable/conformance', ['packages/durable/src/conformance.ts'], 2_700],
   ['@nonchalant/inspect (incl. core + dom)', ['packages/inspect/src/index.ts'], 15_000],
