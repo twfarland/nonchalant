@@ -16,7 +16,9 @@
 // watched may sit above the cap until watchers leave. Registry processes spawn `unscoped` —
 // shared state must not be owned by whichever process looked it up first.
 
-import { spawnProcess, unscoped, type SpawnOpts } from './process.ts'
+import { spawnProcess, type SpawnHooks, type SpawnOpts } from './process.ts'
+import { unscoped } from './scope.ts'
+import { keyEncoder } from './key.ts'
 import type { ArgsOf, Definition, Proc, Process, Registry } from './types.ts'
 
 const SEP = '\u0000' // separates name from serialized args in cache keys
@@ -49,7 +51,20 @@ interface Entry {
   process: Process<unknown, unknown>
   timer: ReturnType<typeof setTimeout> | undefined
   watchers: number
-  hooks: { busy?: () => boolean }
+  hooks: SpawnHooks
+}
+
+/**
+ * The capacity policy: keys of entries that may be disposed to make room,
+ * least recently looked up first (Map order is recency order). Watched
+ * entries, entries holding unanswered calls, and `keep` are never offered.
+ * Lazy, so the caller stops as soon as the cache fits.
+ */
+export function* evictionOrder<E extends Pick<Entry, 'watchers' | 'hooks'>>(entries: Map<string, E>, keep: E): Generator<string> {
+  for (const [key, entry] of entries) {
+    // evicting an entry holding unanswered calls would reject them under their callers
+    if (!entry.watchers && entry !== keep && !entry.hooks.busy?.()) yield key
+  }
 }
 
 export interface RegistryOpts {
@@ -72,64 +87,7 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
   if (!(max > 0)) throw new Error('nonchalant: maxEntries must be positive')
   // Map order is recency order: a hit re-inserts its key at the end
   const entries = new Map<string, Entry>()
-  const objectIds = new WeakMap<object, number>()
-  const symbolIds = new Map<symbol, number>()
-  let nextIdentity = 0
-
-  const objectIdentity = (value: object): number => {
-    let id = objectIds.get(value)
-    if (id === undefined) {
-      id = ++nextIdentity
-      objectIds.set(value, id)
-    }
-    return id
-  }
-
-  const encodeArg = (value: unknown, ancestors: Set<object>): string => {
-    if (value === null) return 'null'
-    switch (typeof value) {
-      case 'undefined':
-      case 'boolean': return String(value)
-      case 'string': return `string:${JSON.stringify(value)}`
-      // String() spells NaN and ±Infinity; only -0 needs its own token
-      case 'number': return Object.is(value, -0) ? 'number:-0' : `number:${value}`
-      case 'bigint': return `bigint:${value}`
-      case 'symbol': {
-        let id = symbolIds.get(value)
-        if (id === undefined) {
-          id = ++nextIdentity
-          symbolIds.set(value, id)
-        }
-        return `symbol:${id}`
-      }
-      case 'function': return `function:${objectIdentity(value)}`
-      case 'object': break
-    }
-
-    const object = value as object
-    if (ancestors.has(object)) return `cycle:${objectIdentity(object)}`
-    const proto = Object.getPrototypeOf(object)
-    const plain = proto === Object.prototype || proto === null
-    if (!Array.isArray(object) && (!plain || Object.getOwnPropertySymbols(object).length > 0))
-      return `object:${objectIdentity(object)}`
-
-    ancestors.add(object)
-    try {
-      if (Array.isArray(object)) {
-        const values: string[] = []
-        for (let i = 0; i < object.length; i++)
-          values.push(Object.hasOwn(object, i) ? encodeArg(object[i], ancestors) : 'hole')
-        return `array:[${values.join(',')}]`
-      }
-      const record = object as Record<string, unknown>
-      return `record:{${Object.keys(record).sort().map((key) =>
-        `${JSON.stringify(key)}:${encodeArg(record[key], ancestors)}`).join(',')}}`
-    } finally {
-      ancestors.delete(object)
-    }
-  }
-
-  const argsKey = (args: unknown): string => encodeArg(args, new Set())
+  const argsKey = keyEncoder()
 
   const drop = (key: string): void => {
     const entry = entries.get(key)
@@ -137,6 +95,43 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
     if (entry.timer !== undefined) clearTimeout(entry.timer)
     entries.delete(key)
     entry.process[Symbol.dispose]()
+  }
+
+  // a miss: spawn unscoped, count watchers, run the idle timer if the
+  // definition declares one, and forget the entry when its process settles.
+  // Callbacks from a superseded entry must not touch its replacement, hence
+  // every `entries.get(key) === created` check.
+  const open = (name: string, key: string, args: unknown): Entry => {
+    const def = defs[name as keyof S] as unknown as RuntimeDef | undefined
+    if (def === undefined) throw new Error(`nonchalant: no definition named ${JSON.stringify(name)} in this registry`)
+    const evictMs = def.opts?.evict
+    const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined, watchers: 0, hooks: {} }
+    const onWatchers = (count: number): void => {
+      created.watchers = count
+      if (evictMs === undefined) return
+      if (count > 0) {
+        if (created.timer !== undefined) {
+          clearTimeout(created.timer)
+          created.timer = undefined
+        }
+      } else if (entries.get(key) === created && created.timer === undefined) {
+        created.timer = setTimeout(() => drop(key), evictMs)
+      }
+    }
+    created.process = unscoped(() =>
+      spawnProcess(def.proc, args, def.opts, Object.assign(created.hooks, {
+        key: name,
+        onWatchers,
+        onSettled: () => {
+          if (entries.get(key) !== created) return
+          if (created.timer !== undefined) clearTimeout(created.timer)
+          entries.delete(key)
+        },
+      })),
+    ) as Process<unknown, unknown>
+    entries.set(key, created)
+    onWatchers(0)
+    return created
   }
 
   const lookup = (name: string, ...rest: unknown[]): Process<unknown, unknown> => {
@@ -147,41 +142,11 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
       entries.delete(key)
       entries.set(key, entry)
     } else {
-      const def = defs[name as keyof S] as unknown as RuntimeDef | undefined
-      if (def === undefined) throw new Error(`nonchalant: no definition named ${JSON.stringify(name)} in this registry`)
-      const evictMs = def.opts?.evict
-      const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined, watchers: 0, hooks: {} }
-      const onWatchers = (count: number): void => {
-        created.watchers = count
-        if (evictMs === undefined) return
-        if (count > 0) {
-          if (created.timer !== undefined) {
-            clearTimeout(created.timer)
-            created.timer = undefined
-          }
-        } else if (entries.get(key) === created && created.timer === undefined) {
-          created.timer = setTimeout(() => drop(key), evictMs)
-        }
-      }
-      created.process = unscoped(() =>
-        spawnProcess(def.proc, args, def.opts, Object.assign(created.hooks, {
-          key: name,
-          onWatchers,
-          onSettled: () => {
-            if (entries.get(key) !== created) return
-            if (created.timer !== undefined) clearTimeout(created.timer)
-            entries.delete(key)
-          },
-        })),
-      ) as Process<unknown, unknown>
-      entry = created
-      entries.set(key, entry)
-      onWatchers(0)
+      entry = open(name, key, args)
       if (entries.size > max) {
-        for (const [k, e] of entries) {
+        for (const victim of evictionOrder(entries, entry)) {
           if (entries.size <= max) break
-          // evicting an entry holding unanswered calls would reject them under their callers
-          if (!e.watchers && e !== created && !e.hooks.busy?.()) drop(k)
+          drop(victim)
         }
       }
     }

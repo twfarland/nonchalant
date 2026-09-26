@@ -1,6 +1,7 @@
 # registry.ts: naming, sharing, and eviction
 
-`packages/core/src/registry.ts`. Imports `process.ts`. The smallest module with
+`packages/core/src/registry.ts`, with key encoding in `key.ts`. Imports
+`process.ts` and `scope.ts`. The smallest module with
 the largest design claim: `lookup(name, args)` is get-or-spawn, and that one
 operation provides dependency injection, process caching, and remote addressing
 when a transport is involved.
@@ -41,7 +42,8 @@ suspended (see [process.md](process.md)).
 
 ## Key encoding
 
-`encodeArg` is a structural serialiser, not `JSON.stringify`. The differences
+`key.ts`. `keyEncoder()` returns the registry's `argsKey`, with its own
+identity table (ids are stable for the life of one registry). Its `encodeArg` is a structural serialiser, not `JSON.stringify`. The differences
 all matter:
 
 | input | encoded as | why |
@@ -117,7 +119,10 @@ memory DoS if the arguments come from a remote peer. With a cap, the `entries`
 map doubles as the recency list: a hit deletes and re-inserts its key, so
 iteration order runs from least to most recently looked up. After a spawn
 takes the map past the cap, the oldest *unwatched* entries are disposed until
-it fits. A watched entry is never evicted to make room, so a registry whose
+it fits. The policy is `evictionOrder(entries, keep)`, a lazy scan that yields
+the keys it may evict (unwatched, not `busy`, not the entry just spawned) so
+`lookup` stops pulling as soon as the map fits. An entry holding unanswered calls is skipped too: evicting it would reject
+them under their callers. A watched entry is never evicted to make room, so a registry whose
 entries are all watched can sit above the cap until watchers leave. Every
 entry keeps its own watcher count from `onWatchers`, whether or not its
 definition declares `evict`.
@@ -138,6 +143,8 @@ uses to give each connection its own gateway; see
 
 Tests: `packages/core/test/registry.test.ts` (key equivalence, the encoding
 table above value by value, sharing, refcounting, snapshot derives not
-pinning, eviction timing, respawn after eviction, the `maxEntries` cap).
+pinning, eviction timing, respawn after eviction, the `maxEntries` cap), and
+`registry.helpers.test.ts` (the exact key strings `keyEncoder` produces, and
+`evictionOrder` over synthetic entry lists).
 
 Back to the [overview](README.md).

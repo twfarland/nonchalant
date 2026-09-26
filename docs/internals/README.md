@@ -9,8 +9,8 @@ invariants, and changes that can break them.
 | [reconcile.md](reconcile.md) | `reconcile.ts` | the structural diff, the op vocabulary, array splices |
 | [tracking.md](tracking.md) | `track.ts` | recording proxies, path trees, patch intersection |
 | [graph.md](graph.md) | `graph.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
-| [process.md](process.md) | `process.ts` | mailbox, drive loop, ownership, dispose ordering |
-| [registry.md](registry.md) | `registry.ts` | key encoding, sharing, refcounting, eviction |
+| [process.md](process.md) | `process.ts` + `mailbox.ts`, `scope.ts`, `calls.ts`, `instrument.ts` | mailbox, drive loop, ownership, dispose ordering |
+| [registry.md](registry.md) | `registry.ts` + `key.ts` | key encoding, sharing, refcounting, eviction |
 | [dom.md](dom.md) | `dom/src/render.ts` and its siblings | regions, keyed LIS moves, rebinding, listeners, exit |
 
 ## One update path
@@ -51,8 +51,8 @@ flowchart TD
         TR["track.ts<br/>read recording"]
         SY["system.ts<br/>alien-signals port; do not layer here"]
         GR["graph.ts<br/>source / gate / effect / flush"]
-        PR["process.ts<br/>mailbox + drive loop + ownership"]
-        RG["registry.ts<br/>get-or-spawn by name"]
+        PR["process.ts + mailbox / scope / calls / instrument<br/>mailbox + drive loop + ownership"]
+        RG["registry.ts + key.ts<br/>get-or-spawn by name"]
         IX["index.ts<br/>spawn, derive, cell, mount"]
     end
     DOM["@nonchalant/dom<br/>VNode → DOM, keyed regions"]
@@ -119,7 +119,7 @@ enforces it:
 |---|---|
 | reconcile: 1 change in 10k ≤ 100 µs | `packages/core/test/reconcile.perf.test.ts` |
 | Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 structural ops | `examples/mario/mario.golden.test.ts` |
-| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.7 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB, react ≤ 7.1 KB (react excluded), inspect ≤ 15 KB | `test/size.test.ts` |
+| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.7 KB, wire ≤ 9.8 KB, durable ≤ 2.4 KB, inspect ≤ 15 KB | `test/size.test.ts` |
 | nothing retained after dispose | `packages/core/test/process.leaks.test.ts` |
 
 ## Test environment notes
