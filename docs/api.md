@@ -315,7 +315,7 @@ The Node WebSocket host. [Hosting safely](hosting.md) is the guide.
 | `scope` | the shared registry | `(request, reg) => Exposable \| Promise<Exposable>`: builds the gateway each connection's lookups and messages go through, once per connection, after `authorize`. Throwing rejects the upgrade (500). |
 | `maxPayloadBytes` | 1 MiB | Larger client messages close the connection (code 1009). |
 | `maxWatchesPerConnection` | no cap | Lookups past it raise to that client. |
-| `lookupRate` | `{ max: 100, perMs: 10_000, burst: 500 }` | Token bucket for one connection's lookups; one with no token left raises to that client. |
+| `lookupRate` | `{ max: 100, perMs: 10_000, burst: 500 }` | Token bucket for one client's lookups (its scope's `principal`, else its remote address), kept across its reconnects; one with no token left raises to that client. |
 | `totalLookupRate` | `{ max: 1_000, perMs: 1_000, burst: 10_000 }` | The same bucket shared by every connection; one past it raises `host lookup rate exceeded`. |
 | `maxEntries` | 10 000 | Registry cap: past it the least recently looked-up unwatched entries are disposed. `Infinity` for no cap. |
 | `heartbeatMs` | 30 000 (0 disables) | Pings each socket; a missed pong terminates it and releases its watches. |

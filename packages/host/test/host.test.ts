@@ -407,6 +407,46 @@ describe('node host hardening', () => {
     await host.close()
   }, 15000)
 
+  it('reconnecting does not refill the per-client lookup burst', async () => {
+    const host = await serve({ receipts: define(receipts) }, { lookupRate: { max: 1, perMs: 600_000, burst: 3 } })
+    const first = await rawSocket(host.url)
+    for (const ref of ['r1', 'r2', 'r3', 'r4']) first.send({ op: 'lookup', ref, name: 'receipts', v: 3 })
+    await until(() => first.received.length === 4)
+    expect(first.received.filter((m) => m['op'] === 'raise').map((m) => m['ref'])).toStrictEqual(['r4'])
+    first.ws.close()
+    await until(() => host.sessions() === 0)
+
+    const again = await rawSocket(host.url)
+    again.send({ op: 'lookup', ref: 'r1', name: 'receipts', v: 3 })
+    await until(() => again.received.length === 1)
+    expect(again.received).toStrictEqual([{ op: 'raise', ref: 'r1', error: { message: 'lookup rate exceeded' } }])
+    again.ws.close()
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
+  it('a scope principal keys the per-client lookup bucket, so principals sharing an address stay apart', async () => {
+    const host = await serve({ receipts: define(receipts) }, {
+      lookupRate: { max: 1, perMs: 600_000, burst: 1 },
+      scope: (request, reg) => ({
+        lookup: () => reg.lookup('receipts'),
+        principal: new URL(request.url ?? '/', 'http://localhost').searchParams.get('user') ?? 'anonymous',
+      }),
+    })
+    const lookupOnce = async (user: string): Promise<unknown> => {
+      const c = await rawSocket(`${host.url}?user=${user}`)
+      c.send({ op: 'lookup', ref: 'r1', name: 'receipts', v: 3 })
+      await until(() => c.received.length === 1)
+      c.ws.close()
+      return c.received[0]!['op']
+    }
+    expect(await lookupOnce('alice')).toBe('yield')
+    expect(await lookupOnce('alice')).toBe('raise')
+    expect(await lookupOnce('bob')).toBe('yield')
+    await until(() => host.sessions() === 0)
+    await host.close()
+  })
+
   it('maxEntries evicts the least recently looked-up unwatched entry', async () => {
     const { counted, spawned } = spawnCounter()
     const host = await serve({ counted: define(counted) }, { maxEntries: 2 })
