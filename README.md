@@ -172,15 +172,6 @@ These libraries make different tradeoffs. The [migration guide](docs/migration.m
 describes Nonchalant's costs, including the lack of built-in JSX ergonomics,
 explicit thunks for reactive expressions, and no BEAM-style preemption.
 
-## Using it from React
-
-Keep React as the renderer and use processes for the state underneath:
-`@nonchalant/react` is five hooks (`useProcess`, `useDerive`, `useProcessMeta`,
-`useSpawn`, `useLookup`) over the same path tracking the DOM sink uses, so a
-component re-renders only when what it read changed. [Using nonchalant from
-React](docs/react.md) is the guide; the [agent console](examples/react-agent/)
-renders the agent demo's processes with it.
-
 ## Try it
 
 ```sh
@@ -217,7 +208,6 @@ pnpm build:site  # the static site, as GitHub Pages publishes it
 | `@nonchalant/dom` | tag constructors, `h()`, the DOM sink, keyed reconciliation, `mount`. |
 | `@nonchalant/wire` | the protocol, codec, transports (WebSocket, worker port, BroadcastChannel, in-memory), `connect`. Isomorphic. |
 | `@nonchalant/durable` | `durable(proc)`: the message journal, the effect journal, durable calls, and the `Store` port. Isomorphic; ships the in-memory adapter. |
-| `@nonchalant/react` | React hooks over processes: `useProcess`, `useDerive`, `useProcessMeta`, `useSpawn`, `useLookup`. |
 | `@nonchalant/host` | the Node WebSocket host: handshake authorization, origin policy, per-connection registry scoping, and connection limits. |
 
 ## Credits and prior art

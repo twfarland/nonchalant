@@ -14,8 +14,7 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "jsx": "react-jsx"
+    "noEmit": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "examples/**/*.ts", "examples/**/*.tsx", "packages/*/test/**/*.tsx", "site/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "examples/**/*.ts", "site/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

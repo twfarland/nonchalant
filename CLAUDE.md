@@ -132,14 +132,11 @@ Structure:
   one (built-in `node:sqlite`) certified against the suite.
   Backend-facing but isomorphic; `docs/server.md` is its front page.
 - `packages/host` — the Node WebSocket host.
-- `packages/react` — hooks (`useProcess`, `useDerive`, `useSpawn`,
-  `useLookup`, `useProcessMeta`) for using processes under a React renderer;
-  `docs/react.md` is its front page.
 - `packages/inspect` — the inspector (process tree, timeline, time travel),
   built on `instrument()` and rendered with nonchalant itself; `?inspect` on
   the todomvc and agent examples; `docs/inspect.md`.
 - `examples/` — the demo ladder (see its README); `mario/`, `7guis/cells`,
-  `worker/`, `agent/`, `react-agent/`, `durable-sqlite/` (Node-only), and
+  `worker/`, `agent/`, `durable-sqlite/` (Node-only), and
   `js-framework-benchmark/` (count budgets) carry their own test files. `agent/` is the
   full-stack claim in miniature: an agent loop, its tools, and a human-approval
   gate, all processes, all durable, rendered by the same bindings as the

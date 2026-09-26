@@ -24,7 +24,7 @@
   <a href="#updates">Updates</a>
   <a href="#wire">The wire</a>
   <a href="#backend">On the server</a>
-  <a href="#tools">React &amp; inspector</a>
+  <a href="#tools">Inspector</a>
   <a href="#more">Read more</a>
   <span class="spacer"></span>
   <a href="https://github.com/twfarland/nonchalant">GitHub</a>
@@ -114,10 +114,6 @@ pnpm check   # strict TypeScript across packages, examples, and this site</code>
     <div class="card">
       <h4>@nonchalant/host</h4>
       <p>A Node WebSocket host with origin checks, handshake authorization, per-connection scope, message screening, and rate, watch, and buffer limits.</p>
-    </div>
-    <div class="card">
-      <h4>@nonchalant/react</h4>
-      <p>Five hooks for rendering processes with React. A component re-renders only when the part it read changes.</p>
     </div>
     <div class="card">
       <h4>@nonchalant/inspect</h4>
@@ -554,20 +550,7 @@ for await (const msg of self) {
 </section>
 
 <section id="tools">
-  <div class="sec-head"><span class="sec-num">08</span><h2>From React, and from the inside</h2></div>
-
-  <h3>Keeping React as the renderer</h3>
-
-  <p><code>@nonchalant/react</code> lets a React application use processes for the state underneath its components: a store addressed by name, a process in a worker or on a server, a durable agent. The processes do not change. Five hooks cover it: <code>useProcess</code> reads a whole value, <code>useDerive</code> reads part of one, <code>useProcessMeta</code> reads <code>pending</code>, <code>stale</code>, and <code>error</code>, <code>useSpawn</code> ties a process to a component's lifetime, and <code>useLookup</code> keeps a registry entry alive while mounted.</p>
-
-<pre><code data-ts>
-const Row = memo(function Row({ at }: { at: number }): ReactNode {
-  const label = useDerive(() =&gt; list().rows[at]?.label, [at])   // records the one path it read
-  return &lt;li&gt;{label}&lt;/li&gt;
-})
-</code></pre>
-
-  <p><code>useDerive</code> uses the same path tracking as the DOM bindings, so changing one label in a thousand rows re-renders one <code>Row</code> and not the list. <code>packages/react/test/hooks.test.tsx</code> asserts that with render counts, and counts exact starts and <code>finally</code> runs for <code>useSpawn</code> under StrictMode. The package, with the core it reaches and React excluded, stays under 7.1 KB gzipped (<code>size.test.ts</code>). The <a href="./examples/react-agent/">React agent console</a> renders the agent demo's processes, imported unchanged.</p>
+  <div class="sec-head"><span class="sec-num">08</span><h2>Seeing inside</h2></div>
 
   <h3>Seeing inside a process</h3>
 
@@ -598,7 +581,6 @@ const panel = mountInspector(document.getElementById('inspector')!)   // before 
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/recipes.md">Recipes</a></td><td>Typeahead, forms, query cache, routing, undo/redo, drag, durable processes.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/testing.md">Testing</a></td><td>How to drive generators directly and test sequences of messages and yields.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/migration.md">Migration</a></td><td>Guidance for React, Solid, and LiveView users, including the tradeoffs.</td></tr>
-      <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/react.md">Using it from React</a></td><td>The five hooks, StrictMode and ownership, and render-count guarantees.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/inspect.md">The inspector</a></td><td>The instrumentation hook, the recorder, time travel, and the panel.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/server.md">Processes on the server</a></td><td>Virtual actors, durable execution, timers and the scheduler, the storage port, agent loops, and their current limits.</td></tr>
       <tr><td><a href="https://github.com/twfarland/nonchalant/blob/master/docs/hosting.md">Hosting safely</a></td><td>Origins, authorization, connection scoping, message screening, principals, and connection limits.</td></tr>
