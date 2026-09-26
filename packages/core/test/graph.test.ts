@@ -887,6 +887,41 @@ describe('derive returns raw values, never read proxies', () => {
     expect(v.meta).toBe(snap.meta)
     cyclic[Symbol.dispose]()
   })
+
+  it('a container reused across recomputes and refilled with a proxy each time comes back raw every time', () => {
+    const src = source<{ item: { n: number } }>({ item: { n: 0 } })
+    const box: { cur?: { n: number } } = {}
+    const d = derive(() => {
+      box.cur = src().item
+      return box
+    })
+    const stop = effect(() => void d())
+    expect(d().cur).toBe(src().item)
+    src.publish({ item: { n: 1 } })
+    flush()
+    expect(d().cur).toBe(src().item)
+    expect(structuredClone(d())).toStrictEqual({ cur: { n: 1 } })
+    stop()
+    d[Symbol.dispose]()
+  })
+
+  it('a proxy captured in an earlier run and returned by a run that read no container comes back raw', () => {
+    const src = source<{ item: { n: number } }>({ item: { n: 0 } })
+    const n = source<number>(0)
+    let saved: { n: number } | undefined
+    const d = derive(() => {
+      if (saved === undefined) saved = src().item
+      return n() >= 0 ? saved : undefined
+    })
+    const stop = effect(() => void d())
+    const first = src().item
+    expect(d()).toBe(first)
+    n.publish(1)
+    flush()
+    expect(d()).toBe(first)
+    stop()
+    d[Symbol.dispose]()
+  })
 })
 
 // ---------- watchers are watched readers ----------

@@ -37,7 +37,7 @@ import { reconcile, type Json, type Op } from './reconcile.ts'
 import { parsePath } from './pointer.ts'
 import { affects, type PathTree } from './paths.ts'
 import { createRecorder, handed, type Recorder } from './track.ts'
-import { unwrap } from './unwrap.ts'
+import { unproxy, unwrap } from './unwrap.ts'
 import { count, isWatched, rewatch, type Counted, type Stamped } from './watch.ts'
 import { drain, enqueue, schedule } from './queue.ts'
 
@@ -275,8 +275,12 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   }
 }
 
-/** A getter's result, free of read proxies if the run was handed any. */
-const settle = <T>(v: T, h: number): T => (handed !== h ? unwrap(v) : v)
+/**
+ * A getter's result, free of read proxies: walked if the run was handed any;
+ * otherwise only checked for being a proxy itself (one captured in an earlier
+ * run and returned whole), which costs a lookup, not a walk.
+ */
+const settle = <T>(v: T, h: number): T => (handed !== h ? unwrap(v) : unproxy(v))
 
 function computedOper<T>(c: ComputedNode<T>): T {
   const flags = c.flags

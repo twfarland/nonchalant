@@ -10,8 +10,12 @@ export const isTrackable = (value: object): boolean => Array.isArray(value) || i
 // proxy → raw snapshot node; weak, so a proxy that escaped nowhere costs nothing
 export const targets = new WeakMap<object, object>()
 
-// plain containers an unwrap walked and left proxy-free: a static table or a
-// structurally shared previous result is walked once, not on every recompute
+// plain containers an unwrap walked and found proxy-free: a static table or a
+// structurally shared previous result is walked once, not on every recompute.
+// One that held a proxy is left unmarked, so a getter that refills a reused
+// container is walked again next run. The limit: a container found proxy-free
+// and later mutated in place to hold one is not walked again (the
+// immutable-update rule; tracking.md).
 const clean = new WeakSet<object>()
 
 /** The raw snapshot node behind a read proxy, or the value itself. WeakMap#get answers undefined for primitives. */
@@ -30,16 +34,21 @@ export function unwrap<T>(value: T): T {
   return raw
 }
 
-/** Swap the proxies held beneath `value` in place. */
-function patch(value: unknown): void {
-  if (typeof value !== 'object' || value === null || !isTrackable(value) || clean.has(value)) return
+/** Swap the proxies held beneath `value` in place; true when it held none. */
+function patch(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || !isTrackable(value) || clean.has(value)) return true
   // marked before descending: a cycle back to it stops here
   clean.add(value)
+  let free = true
   const box = value as { [key: string]: unknown }
   for (const k of Object.keys(box)) {
     const v = box[k]
     const raw = unproxy(v)
-    if (raw === v) patch(v)
-    else if (!Reflect.set(box, k, raw)) clean.delete(value)
+    if (raw !== v) {
+      free = false
+      Reflect.set(box, k, raw)
+    } else if (!patch(v)) free = false
   }
+  if (!free) clean.delete(value)
+  return free
 }

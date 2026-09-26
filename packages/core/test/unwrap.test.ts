@@ -102,4 +102,43 @@ describe('unwrap', () => {
     unwrap(table.value)
     expect(table.walks()).toBe(1)
   })
+
+  it('walks a container that held a proxy again on every unwrap, so a refill is swapped too', () => {
+    const box = counted<{ cur?: unknown }>({})
+    const a = proxied()
+    box.value.cur = a.s.meta
+    unwrap(box.value)
+    expect(box.value.cur).toBe(a.raw.meta)
+    a.done()
+    const b = proxied()
+    box.value.cur = b.s.meta
+    unwrap(box.value)
+    expect(box.value.cur).toBe(b.raw.meta)
+    b.done()
+    expect(box.walks()).toBe(2)
+  })
+
+  it('walks the ancestors of a container that held a proxy again too', () => {
+    const outer = counted<{ inner: { cur?: unknown } }>({ inner: {} })
+    const a = proxied()
+    outer.value.inner.cur = a.s.meta
+    unwrap(outer.value)
+    const b = proxied()
+    outer.value.inner.cur = b.s.meta
+    unwrap(outer.value)
+    expect(outer.value.inner.cur).toBe(b.raw.meta)
+    expect(outer.walks()).toBe(2)
+    a.done()
+    b.done()
+  })
+
+  it('the documented limit: a container found proxy-free, then mutated to hold one, is not walked again', () => {
+    const box: { cur?: unknown } = {}
+    unwrap(box)
+    const { s, done } = proxied()
+    box.cur = s.meta
+    unwrap(box)
+    expect(box.cur).toBe(s.meta)
+    done()
+  })
 })
