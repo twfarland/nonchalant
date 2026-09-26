@@ -107,8 +107,18 @@ handing out a finished process. Both `onSettled` and the eviction timer check
 `entries.get(key) === created` before acting, so a stale callback from a
 superseded entry cannot delete its replacement.
 
+When the timer fires on a **busy** entry (unanswered calls, or an open
+`self.busy()` hold) it re-arms for another window instead of dropping it, so
+work in flight finishes and the entry goes in the first idle window after.
+`busy` is a hook `spawnProcess` writes onto the entry's hooks
+(`pendingCalls.size > 0 || holds > 0`), polled rather than pushed: the
+registry asks only when a timer fires or the cap is exceeded. `durable()`
+holds one while a message is unacknowledged, so a durable job is never
+evicted mid-message.
+
 `evict(name)` drops every entry under a name; `evict(name, args)` drops one.
-Both dispose immediately rather than waiting for the timer.
+Both dispose immediately rather than waiting for the timer, busy or not: an
+explicit evict is how work in flight is stopped.
 
 ## Capacity
 

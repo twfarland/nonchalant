@@ -352,6 +352,40 @@ export function storeConformance(
         expect(await store.due(10_000, 10_000, 10)).toStrictEqual([])
       })
 
+      it('an append makes a key with no wake time due at its wakeAt, and never moves one already set', async () => {
+        const store = await fresh()
+        const { epoch } = await store.load('k')
+        await store.append('k', epoch, 'm1', undefined, 500)
+        await store.append('k', epoch, 'm2', undefined, 900) // later: leaves 500
+        expect(await store.due(499, 499, 10)).toStrictEqual([])
+        expect(await store.due(500, 2000, 10)).toStrictEqual(['k'])
+        await store.append('k', epoch, 'm3', undefined, 100) // earlier: leaves the lease at 2000
+        expect(await store.due(1999, 1999, 10)).toStrictEqual([])
+        expect(await store.due(2000, 2000, 10)).toStrictEqual(['k'])
+      })
+
+      it('an append leaves a wake time set by a step', async () => {
+        const store = await fresh()
+        const { epoch } = await store.load('k')
+        const seq = await store.append('k', epoch, 'm', undefined, 500)
+        await store.putStep('k', epoch, seq, 0, 'nap:deadline', 3000, 3000)
+        await store.append('k', epoch, 'call', 'c1', 600)
+        expect(await store.due(2999, 2999, 10)).toStrictEqual([])
+        expect(await store.due(3000, 3000, 10)).toStrictEqual(['k'])
+      })
+
+      it('a commit with messages left moves the wake time to its wakeAt; with none left it clears it', async () => {
+        const store = await fresh()
+        const { epoch } = await store.load('k')
+        const one = await store.append('k', epoch, 'm1', undefined, 100)
+        const two = await store.append('k', epoch, 'm2', undefined, 100)
+        await store.commit('k', epoch, { snapshot: 1, version: 0, cursor: one, results: [], wakeAt: 700 })
+        expect(await store.due(699, 699, 10)).toStrictEqual([])
+        expect(await store.due(700, 700, 10)).toStrictEqual(['k'])
+        await store.commit('k', epoch, { snapshot: 2, version: 0, cursor: two, results: [], wakeAt: 800 })
+        expect(await store.due(10_000, 10_000, 10)).toStrictEqual([])
+      })
+
       it('a key with no wake time is never due', async () => {
         const store = await fresh()
         const { epoch } = await store.load('k')

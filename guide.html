@@ -141,23 +141,52 @@ const receipt = await shop.call({ type: 'checkout' })   // typed: { ok: boolean;
 <section id="input">
   <div class="sec-head"><span class="sec-num">03</span><h2>Input, in order</h2></div>
 
-  <p>Messages wait in the mailbox and are handled one at a time. While a process is busy, awaiting a request for example, new messages queue behind it instead of interleaving with it. That removes a whole class of race: a double-clicked submit is handled twice, in order, never both at once.</p>
+  <p>Messages wait in the mailbox and are handled one at a time. While a process is busy, awaiting a request for example, new messages queue behind it instead of interleaving with it. So a process's own state never sees two updates at once. That is the whole guarantee. It doesn't decide what should happen to input that arrives while the process is busy, it doesn't coordinate two processes, and it doesn't stop your server from receiving the same request twice.</p>
 
-  <p>When only the newest input matters, loop over <code>self.latest()</code> instead of <code>self</code>. Each time the loop asks for the next message, it gets the most recent one, and anything older is dropped. That is a typeahead with no debounce timer:</p>
+  <p>What to do with input that arrives mid-work is a policy, and there are four common ones. Each is a few lines, and you pick per process:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Policy</th><th>What it does</th><th>How it's written</th></tr></thead>
+    <tbody>
+      <tr><td><b>In order</b></td><td>Every message is handled, one after another. A double-clicked submit is handled twice, in order. If the second one should do nothing, the handler says so.</td><td><code>for await (const msg of self)</code>, with <code>if (s.submitting) continue</code> where a repeat must be ignored</td></tr>
+      <tr><td><b>Newest only</b></td><td>When the loop asks for its next message, older queued ones are dropped. Work already running is not touched: it finishes, and what it yields is published before the loop looks at the queue.</td><td><code>for await (const msg of self.latest())</code></td></tr>
+      <tr><td><b>Cancel in flight</b></td><td>A new message aborts the work started for the previous one.</td><td>Run the work beside the loop with its own <code>AbortController</code>, and abort it on the next message</td></tr>
+      <tr><td><b>Drop late answers</b></td><td>A result that comes back after a newer request was made is ignored, not shown.</td><td>Number each request, and have the result carry its number back</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>The <a href="./#demos">typeahead on the overview</a> uses the last two together. The search runs beside the loop and reports back with <code>self.cast</code>, so the mailbox keeps listening while it waits:</p>
 
 <pre><code data-ts>
-for await (const { q } of self.latest()) {             // skip to the newest query
-  yield { q, results, pending: true }
-  try {
-    results = await search(q, { signal: self.signal })  // aborted if the process is disposed
-    yield { q, results, pending: false }
-  } catch {
-    /* aborted or failed: keep listening */
+for await (const msg of self) {
+  switch (msg.type) {
+    case 'query': {
+      inflight.abort()                   // cancel the search in flight
+      inflight = new AbortController()
+      const mine = ++seq
+      search(msg.q, { signal: AbortSignal.any([self.signal, inflight.signal]) }).then(
+        (results) =&gt; self.cast({ type: 'found', seq: mine, results }),
+        () =&gt; {},                        // aborted: a newer query or disposal
+      )
+      s = { ...s, q: msg.q, pending: true }
+      break
+    }
+    case 'found':
+      if (msg.seq !== seq) continue      // answered after a newer query: drop it
+      s = { ...s, results: msg.results, pending: false }
+      break
   }
+  yield s
 }
 </code></pre>
 
-  <p><code>self.signal</code> is an <code>AbortSignal</code> that fires when the process is disposed or crashes. Pass it to every fetch, and work that belongs to a process that no longer exists is cancelled. The <a href="./#demos">typeahead demo</a> on the overview runs this loop.</p>
+  <p>With <code>self.latest()</code> instead, the loop is shorter and has no timer, but the search for a stale query runs to the end and its results appear briefly before the newest query is picked up. That is fine for some inputs and wrong for others, which is why it's a choice. The <a href="./examples/typeahead/">gallery typeahead</a> shows that version.</p>
+
+  <p><code>self.signal</code> is an <code>AbortSignal</code> that fires when the process is disposed or crashes. Pass it to every fetch, and work that belongs to a process that no longer exists is cancelled. It is not a per-message signal: cancelling one request in favour of the next is the "cancel in flight" policy above.</p>
+
+  <p>Ordering stops at the process boundary. Two processes, or two tabs, or two servers, can still act on the same record, and a request can still reach your API twice after a retry. Those need the usual tools: one process that owns the record, a database constraint, or an idempotency key.</p>
 </section>
 
 <section id="lifetime">
@@ -172,7 +201,18 @@ await c[Symbol.asyncDispose]()    // or: start it, and wait until every finally 
 
   <p>Disposal closes the mailbox, aborts <code>self.signal</code>, and runs the generator's <code>finally</code> blocks. Anything a process spawns belongs to it and is disposed with it, so cleanup follows structure: dispose a page and everything the page started goes too.</p>
 
-  <div class="note"><b>One rule to remember.</b> A process owns what it spawns during the synchronous part of each step. Spawn children before your first <code>await</code>; a spawn after it runs unowned.</div>
+  <p>Inside a process, start children with <code>self.spawn</code>. It takes the same arguments as <code>spawn</code>, and the child belongs to the process wherever the call is, before or after an <code>await</code>:</p>
+
+<pre><code data-ts>
+const page: Proc&lt;VNode, never, void&gt; = async function* (self) {
+  const { Chart } = await import('./chart.ts')    // an await first
+  const chart = self.spawn(Chart, undefined)      // still owned: disposed with the page
+  yield div({}, chart)
+  for await (const _ of self) void _              // stay alive until disposed
+}
+</code></pre>
+
+  <div class="note"><b>Why not plain <code>spawn</code>?</b> A bare <code>spawn</code> inside a process also attaches to it, but only in the synchronous part of a step. After an <code>await</code> it runs unowned, so moving it below an <code>await</code> would quietly change how long it lives. Use plain <code>spawn</code> inside a body only for a child that should outlive the process.</div>
 
   <p>Processes are cheap enough to be short-lived. This demo starts one per drag: it begins on pointer-down, yields a position for each move, and is disposed on pointer-up, taking its subscriptions with it.</p>
 
@@ -278,6 +318,8 @@ yield s                                     // the diff: total changed
     </tbody>
   </table>
   </div>
+
+  <p>These budgets assert update precision: which bindings re-run and exactly which DOM writes an update makes. Those counts don't depend on the machine. Precise is not the same as cheap, though. Finding the one row to write in a 10,000-row list still walks the list, and a list binding that maps over every row rebuilds every row's description. How long the whole path takes, from message to settled DOM and over the wire, is measured separately and not gated. <a href="./docs/performance.html">Performance</a> has the numbers and what to do about them.</p>
 </section>
 
 <section id="registry">

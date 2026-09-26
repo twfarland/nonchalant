@@ -22,6 +22,8 @@ import { run as shared } from './demos/shared.ts'
 import { run as worker } from './demos/worker.ts'
 import { run as mario } from './demos/mario.ts'
 import { run as agent } from './demos/agent.ts'
+import { run as job } from './demos/job.ts'
+import { realClock } from '../examples/job/job.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -95,6 +97,30 @@ describe('site demos', () => {
     await new Promise((resolve) => setTimeout(resolve, 500)) // the fake API's latency
     flush()
     expect(el.querySelectorAll('li').length).toBeGreaterThan(0)
+  })
+
+  it('typeahead cancels a search that a newer query overtakes, and never shows its answer', async () => {
+    const el = host()
+    typeahead(el)
+    await settle()
+    const field = el.querySelector('input') as HTMLInputElement
+    const type = (q: string): void => {
+      field.value = q
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+    type('l')
+    await wait(200)
+    type('lem')
+    await wait(300) // past the first search's 400ms: it would have answered by now
+    flush()
+    expect(el.querySelector('.muted')?.textContent).toBe('searching…')
+    expect(el.querySelectorAll('li').length).toBe(0)
+
+    await wait(200)
+    flush()
+    expect([...el.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['clementine', 'lemon'])
   })
 
   it('form replies to call() with the outcome, both ways', async () => {
@@ -215,6 +241,57 @@ describe('site demos', () => {
 
     demo[Symbol.dispose]()
   }, 20_000) // a stubbed model still takes its time, on purpose
+
+  // the page's own clock, twenty times faster: the demo takes its time as an argument
+  it('job: streams progress, goes stale while partitioned, survives a worker kill at the gate, and writes each record once', async () => {
+    const el = host()
+    const demo = job(el, realClock(0.05))
+    const text = (sel: string): string => el.querySelector(sel)?.textContent ?? ''
+    const rows = (status: string): number => el.querySelectorAll(`.job-rec.${status}`).length
+    const press = (label: string): void => {
+      const b = [...el.querySelectorAll('button')].find((x) => x.textContent === label)
+      if (b === undefined) throw new Error(`no button "${label}"`)
+      b.click()
+    }
+    const waitFor = async (ready: () => boolean, what: string): Promise<void> => {
+      for (let i = 0; i < 1000 && !ready(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 4))
+        flush()
+      }
+      if (!ready()) throw new Error(`never reached: ${what}`)
+    }
+
+    await waitFor(() => text('.job-state') === 'idle · 0 of 12', 'the first snapshot over the wire')
+    press('start import')
+    await waitFor(() => rows('written') >= 1, 'the first record')
+
+    press('disconnect client')
+    await waitFor(() => text('.job-flag').startsWith('stale'), 'the stale flag')
+    // the statuses come over the wire; the tallies beside them are the
+    // destination's own, read directly, so they keep moving
+    const statuses = (): string => [...el.querySelectorAll('.job-status')].map((s) => s.textContent).join(' ')
+    const frozen = statuses()
+    await new Promise((resolve) => setTimeout(resolve, 120)) // the worker writes on; nothing crosses
+    flush()
+    expect(statuses()).toBe(frozen)
+    expect(el.querySelector('.job-tally')?.textContent).toContain('wrote 1×')
+    press('reconnect client')
+    await waitFor(() => text('.job-flag') === 'live' && statuses() !== frozen, 'the catch-up')
+
+    await waitFor(() => el.querySelector('.gate') !== null, 'the approval gate')
+    press('kill worker')
+    await waitFor(() => text('.job-flag').startsWith('stale'), 'the worker gone')
+    press('restart worker')
+    await waitFor(() => text('.job-flag') === 'live' && el.querySelector('.gate') !== null, 'the gate, restored from the journal')
+    press('approve')
+    await waitFor(() => text('.job-state') === 'done · 12 of 12', 'the end')
+
+    const tallies = [...el.querySelectorAll('.job-tally')].map((t) => t.textContent ?? '')
+    expect(tallies).toHaveLength(12)
+    expect(tallies.every((t) => t.includes('wrote 1×'))).toBe(true) // never twice, whatever ran twice
+    expect(el.querySelectorAll('.job-tape li').length).toBeGreaterThan(0)
+    demo[Symbol.dispose]()
+  }, 20_000)
 
   it('mario: the stage owns its keyboard and the sprite tracks the walk', async () => {
     const el = host()

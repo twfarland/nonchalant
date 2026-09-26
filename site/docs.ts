@@ -21,6 +21,7 @@ export const docOrder: readonly (readonly [file: string, label: string, blurb: s
   ['migration.md', 'Migration', 'How ideas from React, Solid, and LiveView map over, and what you give up.'],
   ['errors.md', 'Errors', 'Crashes, stale values, rejected calls, and render and connection failures.'],
   ['testing.md', 'Testing', 'Driving generators directly and checking their messages and yields.'],
+  ['performance.md', 'Performance', 'Update precision versus throughput: the whole update path, measured, and what it costs.'],
   ['inspect.md', 'Inspector', 'The instrumentation hook, the recorder, time travel, and the panel.'],
   ['server.md', 'Server', 'Durable execution, timers, the storage interface, agents, and their limits.'],
   ['hosting.md', 'Hosting', 'Origins, authorization, per-connection scope, message screening, and limits.'],

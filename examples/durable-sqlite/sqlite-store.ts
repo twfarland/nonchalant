@@ -73,8 +73,10 @@ export function sqliteStore(db: DatabaseSync, now: () => number = Date.now): Sql
     pending: db.prepare('SELECT seq, msg, call_id FROM log WHERE key = ? AND seq > ? ORDER BY seq'),
     putStep: db.prepare('INSERT INTO steps (key, seq, idx, name, result) VALUES (?, ?, ?, ?, ?)'),
     wake: db.prepare('UPDATE instances SET wake_at = ? WHERE key = ?'),
+    wakeIfNone: db.prepare('UPDATE instances SET wake_at = ? WHERE key = ? AND wake_at IS NULL'),
+    remaining: db.prepare('SELECT EXISTS (SELECT 1 FROM log WHERE key = ? AND seq > ?) AS any'),
     steps: db.prepare('SELECT idx, name, result FROM steps WHERE key = ? AND seq = ? ORDER BY id'),
-    commit: db.prepare('UPDATE instances SET snapshot = ?, version = ?, cursor = ?, wake_at = NULL WHERE key = ?'),
+    commit: db.prepare('UPDATE instances SET snapshot = ?, version = ?, cursor = ?, wake_at = ? WHERE key = ?'),
     answer: db.prepare('INSERT OR REPLACE INTO results (key, call_id, answer, at) VALUES (?, ?, ?, ?)'),
     bury: db.prepare('INSERT INTO dead (key, seq, msg, call_id, error) VALUES (?, ?, ?, ?, ?)'),
     trimLog: db.prepare('DELETE FROM log WHERE key = ? AND seq <= ?'),
@@ -118,9 +120,10 @@ export function sqliteStore(db: DatabaseSync, now: () => number = Date.now): Sql
       }
     })),
 
-    append: (key, epoch, msg, callId) => owned(key, epoch, () => {
+    append: (key, epoch, msg, callId, wakeAt) => owned(key, epoch, () => {
       const seq = Number((q.bump.get(key) as Row)['seq'])
       q.append.run(key, seq, JSON.stringify(msg), callId ?? null)
+      if (wakeAt !== undefined) q.wakeIfNone.run(wakeAt, key)
       return seq
     }),
 
@@ -138,7 +141,9 @@ export function sqliteStore(db: DatabaseSync, now: () => number = Date.now): Sql
     }))),
 
     commit: (key, epoch, c) => owned(key, epoch, () => {
-      q.commit.run(c.snapshot === undefined ? null : JSON.stringify(c.snapshot), c.version, c.cursor, key)
+      const remaining = Number((q.remaining.get(key, c.cursor) as Row)['any']) === 1
+      const wake = remaining && c.wakeAt !== undefined ? c.wakeAt : null
+      q.commit.run(c.snapshot === undefined ? null : JSON.stringify(c.snapshot), c.version, c.cursor, wake, key)
       const at = now()
       for (const [callId, answer] of c.results) q.answer.run(key, callId, JSON.stringify(answer), at)
       if (c.dead !== undefined) q.bury.run(key, c.dead.seq, JSON.stringify(c.dead.msg), c.dead.callId ?? null, c.dead.error)

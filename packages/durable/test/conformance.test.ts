@@ -51,13 +51,20 @@ const flawed = (flaw: Flaw) => (now: () => number): ConformanceStore => {
       if (flaw === 'load clears the wake time') wakes.delete(key)
       return loaded
     },
+    append: async (key, epoch, msg, callId, wakeAt) => {
+      const seq = await inner.append(key, epoch, msg, callId, wakeAt)
+      if (wakeAt !== undefined && !wakes.has(key)) wakes.set(key, wakeAt)
+      return seq
+    },
     putStep: async (key, epoch, seq, index, name, result, wakeAt) => {
       await inner.putStep(key, epoch, seq, index, name, result, wakeAt)
       if (wakeAt !== undefined) wakes.set(key, wakeAt)
     },
     commit: async (key, epoch, c) => {
       await inner.commit(key, epoch, c)
-      wakes.delete(key)
+      const left = (await inner.pending(key, c.cursor)).length > 0
+      if (left && c.wakeAt !== undefined) wakes.set(key, c.wakeAt)
+      else wakes.delete(key)
     },
     due: async (at, until, limit) => {
       const keys = dueKeys(wakes, at, limit)

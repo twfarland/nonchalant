@@ -49,7 +49,7 @@
 
   <p>Losing a chat room when the server restarts may be fine. Losing an order halfway through checkout is not. <code>@nonchalant/durable</code> wraps a process so it can recover. <code>durable(proc, options)</code> returns an ordinary process, so it can be registered, reached over a connection, and bound to a view like any other.</p>
 
-  <p>The process inside is written the usual way, with two additions: it starts from <code>d.restored</code>, the last saved state, if there is one, and it runs side effects through <code>d.step</code>:</p>
+  <p>The process inside keeps the usual shape, but recovery doesn't resume a paused generator: it starts the generator again from the last saved state and redelivers the message that was in progress. So the body starts from <code>d.restored</code>, runs its side effects through <code>d.step</code>, and keeps the steps of each message in the same order so they can be matched up on replay. Anything it keeps in a local variable and doesn't yield is gone after a restart.</p>
 
 <pre><code data-ts>
 const order: DurableProc&lt;Order, OrderMsg, { id: string }&gt; = async function* (self, _args, d) {
@@ -83,6 +83,8 @@ const orders = registry({
     <li>Each <code>d.step</code> result is saved as soon as the step completes.</li>
     <li>When the process asks for its next message, its new state and its position in the message log are saved together, in one transaction.</li>
   </ol>
+
+  <p><b>Published is not saved.</b> A <code>yield</code> reaches the page as soon as it happens, but it is saved only at step 3. If the server dies in between, the page may briefly show a state that recovery then rolls back and rebuilds. A caller that needs to know something was saved should use <code>call</code>: an answer is sent only after it is saved. The same rule means an answer waits for the end of its handler, so reply and finish rather than reply and then wait.</p>
 
   <p>If the server dies partway through a message, recovery loads the last saved state and delivers that message again. The handler runs again, but a step that already completed returns its saved result instead of running, so the card isn't charged twice. A step that was interrupted mid-flight does run again. For that case each step gets a stable <code>key</code> to pass to the outside service, as <code>payments.charge</code> does above, so the service can recognize the retry.</p>
 

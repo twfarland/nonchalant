@@ -11,8 +11,8 @@
 // (SWR semantics: an evicted entry simply respawns on the next lookup).
 // `maxEntries` bounds the cache: past it, the least recently looked-up
 // unwatched entries are disposed, so distinct args cannot grow memory without
-// bound. Watched entries, and entries holding unanswered calls,
-// are never evicted, so a registry whose every entry is
+// bound. Watched entries, and busy ones (holding unanswered calls, or a
+// `self.busy()` hold), are never evicted, so a registry whose every entry is
 // watched may sit above the cap until watchers leave. Registry processes spawn `unscoped` —
 // shared state must not be owned by whichever process looked it up first.
 
@@ -57,12 +57,13 @@ interface Entry {
 /**
  * The capacity policy: keys of entries that may be disposed to make room,
  * least recently looked up first (Map order is recency order). Watched
- * entries, entries holding unanswered calls, and `keep` are never offered.
+ * entries, busy entries, and `keep` are never offered.
  * Lazy, so the caller stops as soon as the cache fits.
  */
 export function* evictionOrder<E extends Pick<Entry, 'watchers' | 'hooks'>>(entries: Map<string, E>, keep: E): Generator<string> {
   for (const [key, entry] of entries) {
-    // evicting an entry holding unanswered calls would reject them under their callers
+    // evicting a busy entry would reject its calls under their callers, or
+    // abort work in flight that nothing may resume
     if (!entry.watchers && entry !== keep && !entry.hooks.busy?.()) yield key
   }
 }
@@ -106,6 +107,14 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
     if (def === undefined) throw new Error(`nonchalant: no definition named ${JSON.stringify(name)} in this registry`)
     const evictMs = def.opts?.evict
     const created: Entry = { process: undefined as unknown as Process<unknown, unknown>, timer: undefined, watchers: 0, hooks: {} }
+    // idle for a whole window: dropped, unless busy — then it gets another window
+    const arm = (): void => {
+      created.timer = setTimeout(() => {
+        created.timer = undefined
+        if (created.hooks.busy?.()) arm()
+        else if (entries.get(key) === created) drop(key)
+      }, evictMs)
+    }
     const onWatchers = (count: number): void => {
       created.watchers = count
       if (evictMs === undefined) return
@@ -115,7 +124,7 @@ export function registry<S extends { [K in keyof S]: Definition<unknown, unknown
           created.timer = undefined
         }
       } else if (entries.get(key) === created && created.timer === undefined) {
-        created.timer = setTimeout(() => drop(key), evictMs)
+        arm()
       }
     }
     created.process = unscoped(() =>

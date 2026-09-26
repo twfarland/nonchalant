@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A long-running job — nonchalant</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+  .job { max-width: 46rem; }
+  .stack { display: flex; flex-direction: column; gap: 0.75rem; }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .job-state { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .job-bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .job-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+  .job-recs { list-style: none; margin: 0; padding: 0; columns: 2 18rem; column-gap: 1.5rem; }
+  .job-rec { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.15rem 0; break-inside: avoid; font-size: 0.9rem; }
+  .job-name { width: 5.5rem; font-weight: 500; }
+  .job-status { width: 4.2rem; color: var(--muted); font-size: 0.8rem; }
+  .job-rec.writing .job-status { color: var(--accent); font-weight: 600; }
+  .job-rec.written .job-status { color: var(--ok); }
+  .job-rec.skipped .job-name { color: var(--muted); text-decoration: line-through; }
+  .job-tally { color: var(--muted); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+  .job-flag { font-size: 0.85rem; color: var(--ok); }
+  .job-flag.stale { color: var(--danger); font-weight: 600; }
+  .job-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: -0.5rem; }
+  .job-tape { list-style: none; margin: 0; padding: 0.4rem 0.6rem; background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 0.72rem; min-height: 2rem; }
+  .job-tape li { display: flex; gap: 0.6rem; white-space: nowrap; overflow: hidden; }
+  .job-dir { flex: none; width: 7.5rem; color: var(--muted); }
+  .job-tape li.down .job-dir { color: var(--accent); }
+  .gate { border: 1px solid var(--accent); border-radius: 8px; padding: 0.75rem 1rem; }
+</style>
+</head>
+<body>
+<div class="split">
+<main class="demo">
+<h1>A long-running job <span class="muted">— progress, cancel, approval, a partition, and a crash</span></h1>
+<div id="app"></div>
+</main>
+<aside class="explain">
+<h2>How it works</h2>
+<p>Press <em>start import</em>. A job writes twelve records into a destination, about one a second. Three of them already exist there, so the job stops and asks before it overwrites them. While it runs, pull the client off the network, kill the worker, or both, and watch what each side does.</p>
+<p>Everything here runs in this tab. The <em>worker</em> is a registry holding one <code>durable()</code> process, served with <code>expose</code>. The page reads it with <code>connect</code>, like a job on a server. The cable between them is an in-memory transport that can be cut. The journal (a <code>memoryStore</code>) and the destination live outside the worker, so they survive a kill, the way a database outlives the machine that talks to it.</p>
+
+<h2>One record is one message</h2>
+<p>The durable wrapper commits once per message: when the process asks for its next message, the state it produced, the cursor past the message it handled, and any call answers are written together. So the job handles each record as its own <code>next</code> message and casts the next one to itself. A crash then costs only the record in flight.</p>
+<pre><code><span class="k">case</span> <span class="s">'next'</span>: {
+  <span class="k">if</span> (s.status !== <span class="s">'running'</span> || msg.run !== s.run || msg.at !== s.at) <span class="k">continue</span> <span class="c">// a repeated token</span>
+  <span class="k">const</span> item = s.items[s.at]
+  <span class="k">if</span> (item.overwrites &amp;&amp; s.approved === <span class="k">null</span>) {
+    s = { ...s, status: <span class="s">'waiting'</span> }      <span class="c">// nothing is cast: the decision resumes the job</span>
+    <span class="k">break</span>
+  }
+  s = mark(s, s.at, <span class="s">'writing'</span>)
+  <span class="k">yield</span> s                                <span class="c">// published now; committed only with this message</span>
+  <span class="k">const</span> receipt = <span class="k">await</span> d.step(<span class="s">`write ${item.id}`</span>, (key) =&gt; upload(site, ref, key, self.signal))
+  s = advance(mark(s, s.at, <span class="s">'written'</span>, receipt.key))
+  <span class="k">if</span> (s.status === <span class="s">'running'</span>) self.cast({ <span class="k">type</span>: <span class="s">'next'</span>, run: s.run, at: s.at })
+  <span class="k">break</span>
+}</code></pre>
+
+<h2>Kill the worker</h2>
+<p>A restart does not resume a suspended generator. The new activation starts from the last <em>committed</em> snapshot and replays the messages the journal holds past the cursor. The write is a <code>d.step</code>, so its result is journaled when it lands, and a replay returns that result without calling the destination. Each row shows two counts kept by the destination: how often the write was <em>attempted</em>, and how often a row was <em>written</em>.</p>
+<ul>
+  <li>Killed while a record is at work: its write never reached the destination. The replay runs it again, so that row shows <em>ran 2× · wrote 1×</em>.</li>
+  <li>Killed after the write landed but before its answer was journaled: the step runs again under the <strong>same idempotency key</strong> (<code>import#&lt;seq&gt;#0</code>: the job's key, the message's sequence number, the step's position, all stable across replays). The destination has already applied that key and answers with the first receipt: <em>ran 2× · wrote 1× · deduped 1×</em>.</li>
+  <li>Records that finished before the kill are not attempted again.</li>
+</ul>
+<p>Nothing on the worker holds the job open. A restarted worker starts a <code>scheduler</code> on the same store, and the store marks a key due once a message has gone unacknowledged for <code>redeliverAfter</code> (three seconds here, about three records). The interrupted message is overdue, so the scheduler wakes the job whether or not anybody looks it up: kill, disconnect, and restart, and it carries on unwatched. A finished job has nothing overdue and stays asleep in the store.</p>
+<p>A step runs <em>at least once</em> and is recorded exactly once. The effect runs exactly once only because the destination refuses a key it has already applied. The key is what makes that refusal possible.</p>
+<p>A yield is published before it is committed. The "writing" and "written" states you watch are yields from inside a message. If the worker dies before the process asks for its next message, the record can go back to <em>queued</em> when the worker restarts, then forward again as the message replays. <code>job.test.ts</code> pins this with a store that holds a commit back.</p>
+
+<h2>Approval is a call</h2>
+<p>At the gate the job yields <code>waiting</code> and finishes its message, so waiting is committed state. Kill the worker there and it restarts still waiting, with nothing running. <em>Approve</em> is a <code>call()</code> with a <code>callId</code> that names the decision. Its answer is committed with the message and released only after that commit lands. A retry with the same id gets the recorded answer, even if it asks for the opposite.</p>
+<pre><code><span class="k">case</span> <span class="s">'decide'</span>:
+  <span class="k">if</span> (s.status !== <span class="s">'waiting'</span>) {
+    msg.reply({ ok: msg.ok, accepted: <span class="k">false</span> })
+    <span class="k">continue</span>
+  }
+  s = { ...s, status: <span class="s">'running'</span>, approved: msg.ok }
+  msg.reply({ ok: msg.ok, accepted: <span class="k">true</span> })   <span class="c">// released once this message commits</span>
+  self.cast({ <span class="k">type</span>: <span class="s">'next'</span>, run: s.run, at: s.at })
+  <span class="k">break</span></code></pre>
+
+<h2>Cancel</h2>
+<p>Cancel is a message, so it waits in the mailbox behind the record in flight. That record finishes and is recorded, and no record after it starts. A cancel never interrupts a write halfway. Pressed while the client is disconnected, it is queued by the client and sent after the reconnect.</p>
+
+<h2>Disconnect the client</h2>
+<p>The job keeps running, because nothing about it depends on the page: the worker's registry keeps it while the worker lives, and its scheduler resumes it after a restart. The page's view goes <code>stale</code> and keeps the last state it received (the attempt counts beside the rows still move, because the page reads the destination directly). On reconnect the client looks the job up again. The host answers with a full snapshot, which is diffed against the retained value, so only the rows that changed are touched. The approve buttons are disabled while stale: a <code>call</code> made while disconnected rejects at once rather than disappear.</p>
+<pre><code><span class="c">// the worker: a registry, the durable job in it, served over the cable</span>
+<span class="k">const</span> run = durable(job, { store, key: (a: { id: string }) =&gt; a.id, redeliverAfter: <span class="s">3000</span> })
+<span class="k">const</span> reg = registry({ job: define&lt;JobState, JobMsg, { id: string }&gt;((self, args) =&gt; run(self, { ...args, site })) })
+scheduler({ store, wake: (id) =&gt; reg.lookup(<span class="s">'job'</span>, { id }) })   <span class="c">// resumes overdue work at boot</span>
+expose({ lookup: reg.lookup, principal: <span class="s">'reader'</span> }, cable.host)
+
+<span class="c">// the page: a lookup like any other, from the other end</span>
+<span class="k">const</span> remote = connect&lt;JobSchema&gt;(cable.client).lookup(<span class="s">'job'</span>, { id: <span class="s">'import'</span> })
+remote.call({ <span class="k">type</span>: <span class="s">'decide'</span>, ok: <span class="k">true</span>, callId: <span class="s">`gate-${run}`</span> })</code></pre>
+<p>The host moves every <code>callId</code> into its session's principal namespace. The stable <code>principal</code> above means a decision retried after a reconnect lands on the same record.</p>
+
+<p>The log under the demo is the cable itself: every lookup, cast, call, patch, and reply, decoded with the wire's own codec. A record changing state crosses as a patch of a few ops, never the whole list; only a lookup gets a full snapshot.</p>
+<p><code>job.test.ts</code> drives all of this with a clock the test moves by hand. It asserts exact counts: effects once across a kill mid-job, a pending approval surviving a kill, cancel stopping after the record in flight, a partition going stale and converging, and a published state being taken back by a crash.</p>
+</aside>
+</div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

@@ -9,8 +9,9 @@ export interface ProcessCore {
 }
 
 // Valid during the synchronous window of a process resumption (body code
-// between a resume and its next await/yield). Spawns after an intervening
-// await inside one step run unowned — spawn before awaiting. One extension:
+// between a resume and its next await/yield). A bare spawn after an
+// intervening await inside one step runs unowned; `self.spawn` doesn't read
+// this pointer and is owned anywhere in the body. One extension:
 // the resumption that disposal causes by closing the mailbox (see
 // `resumeWithin`), so a `finally` it triggers owns what it spawns.
 export let currentScope: ProcessCore | null = null

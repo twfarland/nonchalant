@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "coverage": "vitest run --project unit --coverage",
     "size": "node --experimental-strip-types --no-warnings scripts/size.ts",
+    "bench": "node --experimental-strip-types --no-warnings --expose-gc --conditions=source bench/run.ts",
     "dev": "vite --open /",
     "build:site": "vite build",
     "preview:site": "vite preview",

@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import fc from 'fast-check'
-import { reconcile, applyPatch, isRecord, type Json } from '../src/reconcile.ts'
+import { reconcile, applyPatch, isRecord, type Json, type Patch } from '../src/reconcile.ts'
 
 // Every JSON object key is wire-safe; patch application defines own properties
 // without invoking Object.prototype setters.
@@ -203,6 +203,40 @@ describe('reconcile / applyPatch', () => {
     expect(() => applyPatch({ a: 1 }, [['set', '/x/y', 2]])).toThrow(/missing path segment/)
     expect(() => applyPatch({ a: 1 }, [['del', '/x']])).toThrow(/missing path segment/)
     expect(() => applyPatch([[1]], [['set', '/0/5', 2]])).toThrow(/bad array index/)
+  })
+
+  it('applies several patches as one: the result matches, and neither the input nor the patch is written', () => {
+    fc.assert(
+      fc.property(json, json, json, (prev, mid, next) => {
+        const patch = [...reconcile(prev, mid), ...reconcile(mid, next)]
+        deepFreeze(prev)
+        deepFreeze(patch as unknown as Json)
+        expect(applyPatch(prev, patch)).toStrictEqual(next)
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('an op that descends into a value an earlier op set copies it rather than writing the patch', () => {
+    const inserted = deepFreeze({ n: 1 }) as Json
+    const patch: Patch = [['set', '/a', inserted], ['set', '/a/n', 2]]
+    expect(applyPatch({ a: null }, patch)).toStrictEqual({ a: { n: 2 } })
+    expect(inserted).toStrictEqual({ n: 1 })
+  })
+
+  it('copies each container once per patch: reversing 1,000 rows copies the array once', () => {
+    const prev = Array.from({ length: 1000 }, (_, i) => ({ id: i }))
+    const patch = reconcile(prev, prev.toReversed())
+    expect(patch.length).toBe(1000)
+    const slice = vi.spyOn(Array.prototype, 'slice')
+    try {
+      const next = applyPatch(prev, patch) as { id: number }[]
+      expect(slice).toHaveBeenCalledTimes(1)
+      expect(next.map((r) => r.id)).toStrictEqual(prev.map((r) => r.id).reverse())
+      expect(prev[0]).toStrictEqual({ id: 0 })
+    } finally {
+      slice.mockRestore()
+    }
   })
 
   it('a rejected patch leaves the input untouched', () => {

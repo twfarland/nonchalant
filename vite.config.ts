@@ -42,6 +42,7 @@ const pages = [
   'examples/multi-tab/index.html',
   'examples/worker/index.html',
   'examples/agent/index.html',
+  'examples/job/index.html',
   'examples/multi-agent/index.html',
   'examples/delegation/index.html',
   'examples/messaging/index.html',

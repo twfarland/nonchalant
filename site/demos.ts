@@ -46,4 +46,10 @@ export const demos: Record<string, () => Promise<Demo>> = {
       ['tools.ts — tools as processes', import('../examples/agent/tools.ts?raw')],
       ['demo.ts — the page', import('./demos/agent.ts?raw')],
     ]),
+  job: () =>
+    load(import('./demos/job.ts'), [
+      ['job.ts — the durable job', import('../examples/job/job.ts?raw')],
+      ['rig.ts — worker, wire, and cable', import('../examples/job/rig.ts?raw')],
+      ['view.ts — the page', import('../examples/job/view.ts?raw')],
+    ]),
 }

@@ -49,6 +49,19 @@ export type Process<T, In = never> = ProcessBase<T> &
         ): Promise<ReplyFor<In, Req>>
       })
 
+export interface SpawnOpts<T> {
+  /** First readable value; decides `Process<T>` vs `Process<T | undefined>`. */
+  initial?: T
+  /** 'on-crash' re-runs the generator from its args after a throw. Default 'never'. */
+  restart?: 'never' | 'on-crash'
+  /** Restart budget for 'on-crash' (default 3); exceeded → terminal crash. */
+  maxRestarts?: number
+  /** Mailbox bound; overflow drops the oldest message (drop-oldest, dev warning). */
+  mailbox?: number
+  /** Crashes are expected and surfaced elsewhere (as `stale` and rejected calls); `onProcessError` skips them. */
+  quiet?: boolean
+}
+
 /** The inside face: what the generator receives. FIFO mailbox, handled sequentially. */
 export interface Self<In> extends AsyncIterable<In> {
   /** Aborts on dispose — thread it into every fetch. */
@@ -57,6 +70,14 @@ export interface Self<In> extends AsyncIterable<In> {
   latest(): AsyncIterable<In>
   /** Post to own inbox — the actor self-cast, for tasks reporting back. */
   cast(msg: In): void
+  /** Spawn a child this process owns, from anywhere in its body — before or
+   * after an `await`. The child dies with this instance: on dispose, return,
+   * or crash. Once the instance has ended, the child is disposed at once. */
+  spawn<T, I, A>(proc: Proc<T, I, A>, args: A, opts: SpawnOpts<T> & { initial: T }): Process<T, I>
+  spawn<T, I, A>(proc: Proc<T, I, A>, args: A, opts?: SpawnOpts<T>): Process<T | undefined, I>
+  /** Mark this process busy until the returned handle is disposed: a registry
+   * does not evict a busy process, idle or over its cap. Holds nest. */
+  busy(): Disposable
 }
 
 /** The generator shape `spawn` runs. Yield JSON-shaped plain data: non-plain

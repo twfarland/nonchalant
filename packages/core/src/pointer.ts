@@ -6,6 +6,7 @@ export const escapeSegment = (k: string): string =>
   k.includes('~') || k.includes('/') ? k.replaceAll('~', '~0').replaceAll('/', '~1') : k
 
 export function unescapeSegment(s: string): string {
+  if (!s.includes('~')) return s
   if (/~(?![01])/.test(s)) throw new Error(`applyPatch: invalid escape in path segment ${JSON.stringify(s)}`)
   // ~1 before ~0, so '~01' decodes to the literal '~1' (RFC 6901 §4)
   return s.replaceAll('~1', '/').replaceAll('~0', '~')

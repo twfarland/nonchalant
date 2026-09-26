@@ -21,9 +21,9 @@ signals for component state, a store for shared state, a query cache for server
 data, a socket layer to keep live data in sync, and a workflow engine for
 long-running backend jobs. Each has its own API, lifecycle, and failure modes,
 and moving state from one to another means rewriting it. The same bugs recur in
-all of them: clicks racing each other, stale closures, missing dependencies,
-responses that land after the user has moved on, and re-renders caused by
-changes a component doesn't display.
+all of them: clicks interleaving with half-finished work, handlers holding an
+old render's props, missing dependencies, responses that land after the user
+has moved on, and re-renders caused by changes a component doesn't display.
 
 Nonchalant tries one primitive for all of it, and it is one JavaScript already
 has. An async generator keeps state in local variables, takes input in order
@@ -55,7 +55,9 @@ mount(document.getElementById('app')!, div({},
 The view runs once. A process or a function placed in the tree is a binding
 that updates only its own spot on the page when the state it read changes. The
 same process can be shared by name through a registry, moved to a worker or a
-server by changing one line, or made durable so it survives a restart. It is not
+server by changing one line, or made durable so it survives a restart (a
+durable body restores from its last saved snapshot and runs side effects
+through recorded steps; [docs/server.md](docs/server.md) has the rules). It is not
 a React component model, an Erlang runtime, or a full query client.
 
 ## What it offers
@@ -79,9 +81,12 @@ yield s                                     // diffed → only /total readers wa
                                             // a binding on items[3].done sleeps through it
 ```
 
-- **The mailbox handles messages sequentially.** Repeated submissions queue
-  instead of racing. `latest()` discards older queued input when only the newest
-  value matters, and the abort signal cancels work when the process ends.
+- **The mailbox handles messages sequentially.** A process's state never sees
+  two updates interleave; repeated submissions queue and are handled in turn.
+  What to do with input that arrives mid-work is a policy you choose: handle it
+  next, keep only the newest (`latest()`), cancel the work in flight, or drop
+  late answers. `latest()` does not cancel the request already running, and
+  ordering does not extend across processes or to your server.
 
 ```ts nocheck
 for await (const { q } of self.latest()) {          // queued keystrokes conflate to the newest

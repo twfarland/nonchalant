@@ -86,6 +86,26 @@ const orders = registry({
 })
 ```
 
+### What a durable body does differently
+
+Recovery does not resume a suspended generator. It starts the generator again
+from the last committed snapshot and redelivers the message that was in
+progress. So the body is the same shape as any process, but it has to keep
+five rules that an ordinary process can ignore:
+
+- **Start from `d.restored`.** Only what the process yields survives. A local
+  variable that isn't part of the yielded state starts over after a restart.
+- **Put every side effect in a `step`,** and hand its idempotency key to the
+  service it calls. Code outside a step runs again on replay.
+- **Keep the steps of one message in the same order.** Replay pairs results
+  with steps by position, and refuses to start if the names drift.
+- **Expect a self-cast to arrive twice.** A replayed message runs its
+  `self.cast` again, so a message a body sends itself should carry enough to
+  spot a repeat (`examples/job` tags each `next` with its run and position,
+  and ignores one that doesn't match its state).
+- **Version the snapshot when its shape changes.** Stored snapshots and queued
+  messages outlive the code that wrote them ([Changing the state's shape](#changing-the-states-shape)).
+
 ### The transaction boundary is one message
 
 1. A message is journaled **before** it is handled.
@@ -96,6 +116,18 @@ const orders = registry({
 
 If the process crashes before the commit, the message is delivered again.
 Completed effects are read from the journal instead of running again.
+
+**Published is not committed.** A `yield` reaches readers (a bound view, a wire
+client) as soon as it happens, but it is committed only when the process asks
+for its next message. A crash in between rolls it back: recovery restores the
+previous snapshot and handles the message again, so a reader can see a state
+that disappears and then comes back, usually identical because completed steps
+return their saved results. Two consequences follow. Don't treat a state you
+observed as saved; a caller that needs to know should `call`, because an
+answer is released only after its commit. And don't answer a call and then
+wait inside the same handler: the answer is held until the handler reaches its
+next take, so a `reply` followed by a long `sleep` delays the caller by that
+long. End the handler and continue from the next message.
 
 This works because `Self` is an interface. The durable wrapper supplies a
 mailbox with acknowledgement behavior without changing the process code.
@@ -252,10 +284,14 @@ ships an hour later with nothing holding it in memory in between. A failed
 attempt under `maxAttempts` is also due immediately, so a message that crashed
 is redelivered even where no supervisor restarts it.
 
-The store keeps one wake time per key. `putStep` sets it, `commit` clears it,
-and `due(now, until, limit)` returns the due keys, earliest first. In the same
-operation, `due` moves each returned key's wake time to `until`. That is a
-lease. The scheduler's default lease is 30 seconds.
+The store keeps one wake time per key, and a key with unacknowledged messages
+always has one. `append` sets it when the key has none, to `redeliverAfter`
+(default 30 seconds) from the append: a message still unacknowledged by then
+is presumed abandoned. `putStep` replaces it with a deadline. `commit` moves it
+to `redeliverAfter` from the commit when messages remain behind the one it
+acknowledged, and clears it when none do. `due(now, until, limit)` returns the
+due keys, earliest first, and in the same operation moves each one's wake time
+to `until`. That is a lease. The scheduler's default lease is 30 seconds.
 
 - **A wake is at-least-once.** If the woken activation dies before it commits,
   the lease runs out and the key comes due again. A scheduler that was down
@@ -269,14 +305,27 @@ lease. The scheduler's default lease is 30 seconds.
   runs again under the same idempotency key, which is the usual at-least-once
   rule. Set the lease above your slowest message.
 
+So work in flight is never stranded. If a host stops partway through a
+message, its key comes due `redeliverAfter` after that message was journaled,
+and a scheduler anywhere on the store resumes it, whether or not anything
+looks it up. A key whose messages are all acknowledged has no wake time unless
+it is asleep, so idle state costs the scheduler nothing and stays lazy: it
+activates on its next lookup. Set `redeliverAfter` above your slowest message;
+a live activation that is merely slow gets woken again on its own node (a
+no-op lookup), or fenced by another node's.
+
 `packages/durable/test/scheduler.test.ts` covers each case with fake timers:
 a sleeping process resuming with no other lookup, a restarted scheduler
-catching up, two schedulers waking a key once, and a lease that runs out
-mid-message being fenced.
+catching up, two schedulers waking a key once, a lease that runs out
+mid-message being fenced, and a message interrupted with no deadline resumed
+once it is overdue.
 
-Only a deadline or a failed attempt sets a wake. If a host stops partway
-through a message that has neither, the message is redelivered on the key's
-next activation, from a lookup or a retried call.
+**Eviction waits for work in flight.** A durable process holds `self.busy()`
+while a message is unacknowledged, and a registry does not evict a busy entry,
+idle or over its cap. It lets go while parked on a `sleep`, because the
+journaled deadline will wake it wherever it is: the order above is evicted
+during its hour-long sleep, not kept in memory for it. An explicit `evict()`
+still disposes at once; that is how work in flight is stopped.
 
 ### Durable calls
 
@@ -333,8 +382,9 @@ and the scheduler know nothing about storage beyond them. An adapter is a plain
 object with no required base class or registration step.
 
 Three rules an adapter must honour. `commit` is one transaction: snapshot,
-version, cursor, answers, and dead letter land together or not at all, and the
-key's wake time is cleared. Every write carries the epoch `load` handed out
+version, cursor, answers, dead letter, and the new wake time (moved to
+`wakeAt` if messages remain past the cursor, cleared if none do) land together
+or not at all. `append` sets a wake time only on a key that has none. Every write carries the epoch `load` handed out
 and is refused with `Fenced` when it is stale. `due` reads due keys and leases
 them in one operation, and `load` leaves the wake time alone, so an activation
 that dies before committing is woken again. The one retention rule is that answers outlive the message

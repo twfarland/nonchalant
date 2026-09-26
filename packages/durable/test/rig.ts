@@ -23,7 +23,7 @@ export const failAfter = (store: Store, budget: number, slow = false): Store => 
   }
   return {
     load: async (k) => (await guard(), store.load(k)),
-    append: async (k, e, m, c) => (await guard(), store.append(k, e, m, c)),
+    append: async (k, e, m, c, w) => (await guard(), store.append(k, e, m, c, w)),
     pending: async (k, c) => (await guard(), store.pending(k, c)),
     putStep: async (k, e, s, i, n, r, w) => (await guard(), store.putStep(k, e, s, i, n, r, w)),
     steps: async (k, s) => (await guard(), store.steps(k, s)),

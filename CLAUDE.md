@@ -12,6 +12,9 @@ the model; `README.md` is the front page.
   type-checks; `<!-- ts-prelude -->` supplies context, ```ts nocheck opts out)
 - `pnpm test` — vitest (unit, property, leak, perf, and golden budgets)
 - `pnpm size` — report each entry point's min+gzip size (a report, not a gate)
+- `pnpm bench` — time the whole update path (reducer, reconcile, readers, DOM
+  under happy-dom, wire) and retained heap; the tables in docs/performance.md
+  (a report, not a gate)
 - `pnpm coverage` — the unit project under v8 coverage, with floors (95%
   statements/lines/functions, 92% branches) that CI enforces
 - `pnpm build` — emit each package's `dist/` (.js + .d.ts; gitignored)
@@ -91,8 +94,10 @@ State:
 - Time and dependencies arrive from outside: ticks and clocks as messages,
   APIs as args, `self.signal` threaded into every fetch. This is what makes
   tests deterministic.
-- Spawn before awaiting (ambient ownership only covers the synchronous window)
-  and remember a process that returns is over — a view process that owns state
+- Inside a process body, spawn children with `self.spawn` — owned across
+  `await`. A bare `spawn` there attaches only in the synchronous window, so it
+  is for children meant to outlive the process. Remember a process that
+  returns is over — a view process that owns state
   idles on its mailbox until disposed.
 
 Views:
@@ -142,7 +147,10 @@ Structure:
 - `packages/durable` — `durable(proc)`: a message journal, an effect journal
   (`step`), durable calls (`call`), timers with a `scheduler`, and the
   eight-method `Store` port (epoch-fenced; answers commit atomically with the
-  cursor). `@nonchalant/durable/conformance` is the suite every adapter must
+  cursor; a key with unacknowledged messages always has a wake time, so a
+  `scheduler` resumes interrupted work with nothing looking it up). A durable
+  process holds `self.busy()` while a message is unacknowledged, so a registry
+  never evicts it mid-message. `@nonchalant/durable/conformance` is the suite every adapter must
   pass. The in-memory adapter is the only one in packages/, deliberately — a
   real store belongs wherever its driver does; `examples/durable-sqlite` shows
   one (built-in `node:sqlite`) certified against the suite.
@@ -161,7 +169,12 @@ Structure:
   counter. `multi-agent/` adds delegation, hand-off, and a shared budget;
   `delegation/` folds parallel sub-agent streams into one live call tree;
   `messaging/` puts a bus and a work queue behind ports with in-memory
-  adapters.
+  adapters. `job/` is the overview's lead demo: a durable import job on an
+  in-tab worker, read over a wire cable that can be cut (`rig.ts`), with
+  progress, cancel, a `call()` approval gate, a client partition, and a worker
+  kill; `job.test.ts` pins each failure case with exact counts.
+- `bench/` — the `pnpm bench` harness (state, views, run); its output is the
+  measured tables in `docs/performance.md`.
 - `docs/internals/` — contributor notes on core's mechanisms and invariants
   (reconcile, track, graph, process, registry, the DOM sink), with an architecture overview
   in its README. Update these when you change how a mechanism works.
@@ -179,10 +192,12 @@ Structure:
   gallery.
 
 ## Known sharp edges (leave signposts if you touch them)
-- Ownership is ambient only during the synchronous window of a process
-  resumption: spawn before awaiting, or the child runs unowned. (A `finally`
-  that disposal triggers is resumed inside the process's scope, so a spawn
-  there before any other await is owned.)
+- Ambient ownership (a bare `spawn` inside a body) covers only the synchronous
+  window of a process resumption; after an await the child runs unowned.
+  `self.spawn` is the explicit form and is owned anywhere in the body; a
+  spawn from an ended instance (crashed-and-restarted, or reaped) is disposed
+  at once. (A `finally` that disposal triggers is resumed inside the
+  process's scope, so a bare spawn there before any other await is owned.)
 - `packages/durable` imports only types from core, which keeps the core
   runtime out of its bundle; importing a runtime helper from core pulls it in.
 - Leak tests need `gc({ execution: 'async' })` — plain `gc()` false-fails

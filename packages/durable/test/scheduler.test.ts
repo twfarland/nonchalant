@@ -206,3 +206,123 @@ describe('two schedulers on one store', () => {
     hostB.evict('nap')
   })
 })
+
+// ---------- work in flight ----------
+
+type Job = { done: number }
+let ran: string[] = []
+let gate: Promise<number> | undefined
+
+/** One journaled effect per message, which waits on `gate` while it is set. */
+const worker: DurableProc<Job, Cast<{ type: 'work' }>, { id: string }> = async function* (self, _args, d) {
+  let s = d.restored ?? { done: 0 }
+  yield s
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'work':
+        await d.step('effect', (key) => (ran.push(key), gate ?? 0))
+        s = { done: s.done + 1 }
+        break
+    }
+    yield s
+  }
+}
+
+const workers = (store: Store, evict?: number) =>
+  registry({
+    work: define(durable(worker, { store, key: (a: { id: string }) => a.id, now: () => clock, redeliverAfter: 5000 }), evict === undefined ? undefined : { evict }),
+  })
+
+const never = (): Promise<number> => new Promise(() => {}) // a host that died mid-effect
+
+describe('work in flight', () => {
+  beforeEach(() => {
+    ran = []
+    gate = undefined
+  })
+
+  it('resumes a message interrupted with no deadline once redeliverAfter has passed, with no lookup', async () => {
+    const store = memoryStore(() => clock)
+    const reg = workers(store)
+    gate = never()
+    reg.lookup('work', { id: 'w1' }).cast({ type: 'work' })
+    await settle()
+    reg.evict('work') // nothing holds the key and nothing looks it up
+    gate = undefined
+
+    const woken: string[] = []
+    const sch = scheduler({ store, wake: (id) => (woken.push(id), reg.lookup('work', { id })), interval: 100, now: () => clock })
+    await advance(4900)
+    expect(woken).toStrictEqual([])
+    await advance(100)
+    expect(woken).toStrictEqual(['w1'])
+    expect(ran).toStrictEqual(['w1#1#0', 'w1#1#0']) // the step in flight runs again, under the same key
+    expect(await store.load('w1')).toMatchObject({ snapshot: { done: 1 }, cursor: 1 })
+
+    await advance(60_000) // acknowledged with nothing behind it: never due again
+    expect(woken).toStrictEqual(['w1'])
+    sch[Symbol.dispose]()
+    reg.evict('work')
+  })
+
+  it('messages journaled behind one that was interrupted are redelivered with it', async () => {
+    const store = memoryStore(() => clock)
+    const reg = workers(store)
+    const w = reg.lookup('work', { id: 'w1' })
+    gate = never()
+    w.cast({ type: 'work' })
+    w.cast({ type: 'work' })
+    await settle()
+    await advance(4000)
+    gate = undefined
+    reg.evict('work') // died on the first; the second never started
+    const woken: string[] = []
+    const sch = scheduler({ store, wake: (id) => (woken.push(id), reg.lookup('work', { id })), interval: 100, now: () => clock })
+    await settle() // the first pass, at 4000: nothing due yet
+    expect(woken).toStrictEqual([])
+    await advance(1000) // the first append's wake: redelivered, and both commit
+    expect(woken).toStrictEqual(['w1'])
+    expect(await store.load('w1')).toMatchObject({ snapshot: { done: 2 }, cursor: 2 })
+    sch[Symbol.dispose]()
+    reg.evict('work')
+  })
+
+  it('an unwatched entry is not idle-evicted mid-message, and is in the first idle window after it commits', async () => {
+    const store = memoryStore(() => clock)
+    const reg = workers(store, 1000)
+    let release!: () => void
+    gate = new Promise<number>((resolve) => (release = () => resolve(0)))
+    const first = reg.lookup('work', { id: 'w1' })
+    first.cast({ type: 'work' })
+    await settle()
+    await advance(3500) // three idle windows, all while the effect is open
+    expect(reg.lookup('work', { id: 'w1' })).toBe(first)
+
+    release()
+    await settle()
+    expect(first()).toStrictEqual({ done: 1 })
+    await advance(1000)
+    expect(first.stale).toBe(true) // evicted
+    expect(ran).toStrictEqual(['w1#1#0'])
+    reg.evict('work')
+  })
+
+  it('a sleeping entry is still idle-evicted, and its deadline wakes it', async () => {
+    const store = memoryStore(() => clock)
+    const reg = registry({
+      nap: define(durable(napper, { store, key: (a: { id: string }) => a.id, now: () => clock }), { evict: 300 }),
+    })
+    const first = reg.lookup('nap', { id: 'n1' })
+    first.cast({ type: 'nap' })
+    await settle()
+    await advance(300)
+    expect(first.stale).toBe(true) // asleep on a journaled deadline: nothing to hold it in memory for
+
+    const sch = scheduler({ store, wake: (id) => reg.lookup('nap', { id }), interval: 100, now: () => clock })
+    await settle()
+    await advance(700)
+    expect(rung).toStrictEqual(['n1'])
+    sch[Symbol.dispose]()
+    reg.evict('nap')
+  })
+})

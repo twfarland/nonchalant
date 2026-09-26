@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { define, registry, effect, derive } from '../src/index.ts'
-import type { Call, Cast, Proc } from '../src/index.ts'
+import type { Call, Cast, Proc, Self } from '../src/index.ts'
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -362,6 +362,93 @@ describe('registry: maxEntries bounds the cache', () => {
     first.cast({ type: 'go' })
     expect(await Promise.all(answers)).toEqual([1, 1])
     reg.evict('h')
+  })
+})
+
+describe('registry: a busy process is not evicted', () => {
+  // holds self.busy() between 'hold' and 'let-go'; each hold nests
+  type Msg = Cast<{ type: 'hold' }> | Cast<{ type: 'let-go' }>
+  const holder = (log: string[]): Proc<number, Msg, number> =>
+    async function* (self, id) {
+      const holds: Disposable[] = []
+      try {
+        yield id
+        for await (const msg of self) {
+          switch (msg.type) {
+            case 'hold':
+              holds.push(self.busy())
+              continue
+            case 'let-go':
+              holds.pop()?.[Symbol.dispose]()
+              continue
+          }
+        }
+      } finally {
+        log.push(`dispose ${id}`)
+      }
+    }
+
+  it('idle eviction waits out a hold, window by window, and drops it in the first window after release', async () => {
+    const log: string[] = []
+    const reg = registry({ h: define(holder(log), { evict: 20 }) })
+    const p = reg.lookup('h', 1)
+    p.cast({ type: 'hold' })
+    p.cast({ type: 'hold' })
+    await tick(70) // three windows
+    expect(log).toEqual([])
+    p.cast({ type: 'let-go' })
+    await tick(30)
+    expect(log).toEqual([]) // one hold left
+    p.cast({ type: 'let-go' })
+    await tick(50)
+    expect(log).toEqual(['dispose 1'])
+  })
+
+  it('a hold keeps an entry from being evicted to make room', async () => {
+    const log: string[] = []
+    const reg = registry({ h: define(holder(log)) }, { maxEntries: 1 })
+    const first = reg.lookup('h', 1)
+    first.cast({ type: 'hold' })
+    await tick()
+    reg.lookup('h', 2)
+    await tick()
+    expect(reg.lookup('h', 1)).toBe(first)
+    expect(log).toEqual([]) // over the cap until the hold is let go, as with a watched entry
+    reg.evict('h')
+  })
+
+  it('disposing one hold twice releases it once', async () => {
+    const log: string[] = []
+    const reg = registry({
+      h: define(async function* (self: Self<'go'>, id: number) {
+        const a = self.busy()
+        const b = self.busy()
+        a[Symbol.dispose]()
+        a[Symbol.dispose]() // must not release b
+        try {
+          yield id
+          for await (const _ of self) b[Symbol.dispose]()
+        } finally {
+          log.push(`dispose ${id}`)
+        }
+      }, { evict: 20 }),
+    })
+    const p = reg.lookup('h', 1)
+    await tick(50)
+    expect(log).toEqual([])
+    p.cast('go')
+    await tick(50)
+    expect(log).toEqual(['dispose 1'])
+  })
+
+  it('explicit evict disposes a busy entry: it is how work in flight is stopped', async () => {
+    const log: string[] = []
+    const reg = registry({ h: define(holder(log), { evict: 20 }) })
+    reg.lookup('h', 1).cast({ type: 'hold' })
+    await tick()
+    reg.evict('h')
+    await tick()
+    expect(log).toEqual(['dispose 1'])
   })
 })
 

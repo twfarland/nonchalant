@@ -8,7 +8,7 @@ children.
 | file | holds |
 |---|---|
 | `process.ts` | `SpawnOpts`, `validateSpawnOpts`, `nextMeta`, and `spawnProcess`: the two sources, `transition`, the drive loop (`step` / `publish` / `crash`), disposal, and the handle |
-| `mailbox.ts` | `Fifo`, `Mailbox`, `selfFor` (the `Self` a generator iterates), and `channel` |
+| `mailbox.ts` | `Fifo`, `Mailbox`, and `selfFor` (the `Self` a generator iterates) |
 | `scope.ts` | the ambient owner: `currentScope`, `withScope`, `unscoped`, `resumeWithin` |
 | `calls.ts` | reply bookkeeping: `rejectAll`, `rejectDropped`, `retainCasts` over the pending-call table |
 | `instrument.ts` | the two global slots: `onProcessError`'s handler and `instrument`'s sink, plus `ProcessEvent` |
@@ -181,11 +181,22 @@ const step = (g: AsyncGenerator<T>) => withScope(core, () => g.next())
 
 `fn()` returns as soon as the generator body hits its first `await` or `yield`,
 so the scope covers exactly the **synchronous window** of that resumption. A
-`spawn` after an intervening `await` in the same step runs unowned.
+bare `spawn` after an intervening `await` in the same step runs unowned.
 
-This is the library's sharpest edge. It is documented in the module header, in
-[concepts.md](../concepts.md), and here, and the rule is one line: **spawn
-before awaiting.** `unscoped()`, which is `withScope(null, fn)`, is the
+That window is why `self.spawn` exists. It does not consult the ambient
+scope: each instance's `Self` carries a spawn that runs
+`withScope(core, () => spawnProcess(...))`, so the child attaches to this
+process from anywhere in the body. The instance is identified by the restart
+count it started with; a spawn from an instance that has crashed (and been
+replaced), or from any instance after `drive()` has reaped its children
+(`reaped`), disposes the child at once rather than adopting it into a
+lifetime that is already over. `channel()`'s spawn is the same idea with the
+channel as owner: children are tracked in a set, removed as they settle, and
+disposed when the channel ends. `durable()` forwards its outer `self.spawn`
+unchanged, so a durable body's children belong to the hosting process.
+
+The ambient window remains for a bare `spawn`, and its rule is one line:
+**spawn before awaiting**, or use `self.spawn`. `unscoped()`, which is `withScope(null, fn)`, is the
 explicit escape hatch: the registry
 wraps every spawn in it so shared state is never owned by whichever caller
 happened to look it up first.
@@ -199,8 +210,9 @@ which brackets the resolution with two microtasks, scope on and scope off. Micro
 run FIFO, so the body's resumption runs between them, and a `finally` that
 spawns before its own first `await` attaches the child to the dying process.
 `drive()` disposes it with the other children, and `asyncDispose` waits for it.
-A `finally` reached after a foreign `await` (a fetch, a timer) is not covered;
-its spawns run unowned, as with any spawn after an await.
+A `finally` reached after a foreign `await` (a fetch, a timer) is not covered
+for a bare `spawn`; `self.spawn` there is owned, because `reaped` is set only
+after the generator has settled.
 
 ## Dispose ordering
 

@@ -22,7 +22,6 @@ export function run(host: Element): Disposable {
     const maxX = field.clientWidth - box.offsetWidth
     const maxY = field.clientHeight - box.offsetHeight
 
-    // spawn before awaiting: ownership is ambient only in this synchronous window
     const gesture = spawn(async function* (self: Self<PointerEvent>) {
       for await (const move of self)
         yield {

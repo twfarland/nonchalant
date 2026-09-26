@@ -49,6 +49,10 @@ The generator receives `Self`. `for await (msg of self)` reads queued messages
 in order. `self.latest()` drops older queued messages and returns the newest,
 which is useful for typeahead input. `self.signal` is an AbortSignal triggered
 by disposal or a crash, and `self.cast` posts to the process's own mailbox.
+`self.spawn` starts a child the process owns (see [spawn](#spawn)), and
+`self.busy()` returns a hold that keeps a registry from evicting the process
+until it is disposed (`using _ = self.busy()` around work that must not be
+cut off).
 `channel(signal?)` gives you a disposable standalone mailbox for middleware
 and tests.
 
@@ -66,14 +70,21 @@ and tests.
 [Error handling](errors.md) lists what a crash, a restart, and each kind of
 call rejection look like from the outside.
 
-Ownership: whatever a process spawns belongs to it and dies with it. The
-attachment happens during the synchronous part of each step. Spawn before
-you `await`, or the child ends up unowned. One resumption outside a normal step
-also owns its spawns: the one disposal causes by closing the mailbox, so a
-`finally` that disposal runs can spawn cleanup work (a flush, a goodbye
-message) that is disposed with the process, provided it spawns before its
-first `await`. Registry processes are unowned
-because shared state should not end with the caller that happened to start it.
+Ownership: inside a process body, start children with
+`self.spawn(proc, args, opts?)`. It takes the same arguments as `spawn` and
+returns the same handle, and the child belongs to this process wherever the
+call happens, before or after an `await`. It dies when the process is
+disposed, returns, or crashes; a restarted instance starts with no children,
+and a child spawned by an instance that has already ended (from a stray
+callback, say) is disposed at once. A `finally` that disposal runs can use
+`self.spawn` for cleanup work (a flush, a goodbye message), and async
+disposal waits for it.
+
+A bare `spawn` inside a body also attaches to the process, but only during
+the synchronous part of a step: after an `await` it runs unowned, so moving
+it below an `await` changes its lifetime. Use `self.spawn` unless you mean
+the child to outlive the process. Registry processes are unowned because
+shared state should not end with the caller that happened to start it.
 
 Disposal is cooperative. The synchronous symbol establishes the teardown
 point but cannot make an awaited promise settle. Use the async symbol when a
@@ -394,6 +405,9 @@ knowing (measured on Node v22.12, a 10k-item list of small objects; the
 The practical guidance is to reuse unchanged objects and keep frame-rate
 snapshots small. These figures describe one benchmark environment, so measure
 your own data shapes when the write path is performance-sensitive.
+[Performance](performance.md) times the whole update path (diff, readers,
+bindings, DOM, and wire) for edits, reorders, fresh snapshots, and streams,
+and separates what the budgets below assert from what they don't.
 
 ## The budgets, in one place
 

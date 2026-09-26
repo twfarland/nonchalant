@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { spawn, channel, cell, derive } from '../src/index.ts'
 import { effect } from '../src/graph.ts'
-import type { Call, Cast, Proc, Self } from '../src/index.ts'
+import type { Call, Cast, Proc, Process, Self } from '../src/index.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -307,6 +307,118 @@ describe('channel', () => {
     ch[Symbol.dispose]()
     expect(ch.signal.aborted).toBe(true)
     expect(await next).toEqual({ value: undefined, done: true })
+  })
+})
+
+describe('self.spawn', () => {
+  // a child that records whether its finally ran
+  const child = (log: string[], name: string): Proc<string, never, void> =>
+    async function* (self) {
+      try {
+        yield name
+        for await (const _ of self) void _
+      } finally {
+        log.push(name)
+      }
+    }
+
+  it('owns a child spawned after an await, where a bare spawn there runs unowned', async () => {
+    const log: string[] = []
+    let owned: Process<string | undefined> | undefined
+    let bare: Process<string | undefined> | undefined
+    const parent = spawn(async function* (self: Self<never>) {
+      await Promise.resolve()
+      owned = self.spawn(child(log, 'owned'), undefined)
+      bare = spawn(child(log, 'bare'), undefined)
+      yield 'up'
+      for await (const _ of self) void _
+    }, undefined)
+    await tick()
+    await parent[Symbol.asyncDispose]()
+    expect(log).toEqual(['owned'])
+    expect(owned?.stale).toBe(true)
+    expect(bare?.stale).toBe(false)
+    bare?.[Symbol.dispose]()
+  })
+
+  it('reads the initial value through the same overloads as spawn', async () => {
+    const parent = spawn(async function* (self: Self<never>) {
+      const c: Process<number, number> = self.spawn(async function* (s: Self<number>) {
+        for await (const n of s) yield n
+      }, undefined, { initial: 0 })
+      yield c()
+    }, undefined)
+    await tick()
+    expect(parent()).toBe(0)
+  })
+
+  it('disposes the children of an instance that crashes, and a restarted instance owns its own', async () => {
+    const log: string[] = []
+    let instance = 0
+    const parent = spawn(async function* (self: Self<'boom'>) {
+      const n = ++instance
+      await Promise.resolve()
+      self.spawn(child(log, `child ${n}`), undefined)
+      yield n
+      for await (const msg of self) throw new Error(msg)
+    }, undefined, { restart: 'on-crash', quiet: true })
+    await tick()
+    parent.cast('boom')
+    await tick()
+    expect(log).toEqual(['child 1'])
+    expect(parent()).toBe(2)
+    await parent[Symbol.asyncDispose]()
+    expect(log).toEqual(['child 1', 'child 2'])
+  })
+
+  it('disposes at once a child spawned from an instance that has already ended', async () => {
+    const log: string[] = []
+    let late!: Self<'boom'>['spawn']
+    let instance = 0
+    const parent = spawn(async function* (self: Self<'boom'>) {
+      if (++instance === 1) late = self.spawn
+      yield instance
+      for await (const msg of self) throw new Error(msg)
+    }, undefined, { restart: 'on-crash', quiet: true })
+    await tick()
+    parent.cast('boom')
+    await tick()
+    const stray = late(child(log, 'stray'), undefined)
+    await tick()
+    expect(stray.stale).toBe(true)
+    expect(log).toEqual(['stray'])
+    parent[Symbol.dispose]()
+  })
+
+  it('disposes at once a child spawned after the process returned', async () => {
+    const log: string[] = []
+    let late!: Self<never>['spawn']
+    const parent = spawn(async function* (self: Self<never>) {
+      late = self.spawn
+      yield 'done'
+    }, undefined)
+    await tick()
+    const stray = late(child(log, 'stray'), undefined)
+    await tick()
+    expect(stray.stale).toBe(true)
+    expect(log).toEqual(['stray'])
+    parent[Symbol.dispose]()
+  })
+
+  it('ends the children of a channel with the channel', async () => {
+    const log: string[] = []
+    const ch = channel<never>()
+    await Promise.resolve()
+    const kept = ch.spawn(child(log, 'kept'), undefined)
+    await tick()
+    expect(kept()).toBe('kept')
+    ch[Symbol.dispose]()
+    await tick()
+    expect(log).toEqual(['kept'])
+    const late = ch.spawn(child(log, 'late'), undefined)
+    await tick()
+    expect(late.stale).toBe(true)
+    expect(log).toEqual(['kept', 'late'])
   })
 })
 

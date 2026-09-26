@@ -242,15 +242,16 @@ test iterates.
 ```ts nocheck
 n = { ...n, status: 'calling', children: [...n.children, ...queued] }
 yield n
-const runs = calls.map((c) => spawn(c.use.run, c.run, { initial: c.node }))
+const runs = calls.map((c) => self.spawn(c.use.run, c.run, { initial: c.node }))
 for await (const [i, child] of merge(runs, self.signal)) {
   n = { ...n, children: n.children.with(at + i, child) }
   yield n
 }
 ```
 
-Two details carry the lifecycle. The runs are spawned straight after a yield,
-not after the `await` on the model, so they are owned and die with the agent.
+Two details carry the lifecycle. The runs are spawned with `self.spawn`, so
+they are owned and die with the agent even though the loop has already awaited
+the model.
 And `merge` takes `self.signal`: a disposed process unwinds only once its
 pending await settles, and its children are disposed after that, so a merge
 still waiting on them must give up on abort. `examples/delegation`

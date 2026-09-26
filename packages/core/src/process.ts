@@ -6,8 +6,9 @@
 // Lifecycle:
 //   - Self: FIFO sequential mailbox; `latest()` drops the queue and skips to
 //     the newest message; `signal` aborts per instance; `cast` is the self-cast.
-//   - Ownership: spawns during the synchronous window of a process resumption
-//     attach to that process and die with it. Dispose order: mailbox closes,
+//   - Ownership: `self.spawn` attaches to this instance from anywhere in the
+//     body; a bare `spawn` attaches only during the synchronous window of a
+//     process resumption. Owned children die with the instance. Dispose order: mailbox closes,
 //     `finally` blocks run, owned children die — in that order.
 //   - Crash: readers keep the last value with `stale: true`; pending calls,
 //     queued ones included, REJECT and leave the mailbox; queued casts
@@ -29,20 +30,9 @@ import { Mailbox, selfFor } from './mailbox.ts'
 import { currentScope, resumeWithin, withScope, type ProcessCore } from './scope.ts'
 import { crashHandler, sink } from './instrument.ts'
 import { rejectAll, rejectDropped, retainCasts, type PendingCalls } from './calls.ts'
-import type { Proc, Process } from './types.ts'
+import type { Proc, Process, Self, SpawnOpts } from './types.ts'
 
-export interface SpawnOpts<T> {
-  /** First readable value; decides `Process<T>` vs `Process<T | undefined>`. */
-  initial?: T
-  /** 'on-crash' re-runs the generator from its args after a throw. Default 'never'. */
-  restart?: 'never' | 'on-crash'
-  /** Restart budget for 'on-crash' (default 3); exceeded → terminal crash. */
-  maxRestarts?: number
-  /** Mailbox bound; overflow drops the oldest message (drop-oldest, dev warning). */
-  mailbox?: number
-  /** Crashes are expected and surfaced elsewhere (as `stale` and rejected calls); `onProcessError` skips them. */
-  quiet?: boolean
-}
+export type { SpawnOpts }
 
 /** What the registry hands spawnProcess; `busy` is written back for it to poll. */
 export interface SpawnHooks {
@@ -131,7 +121,18 @@ export function spawnProcess<T, In, A>(
   }
 
   const pendingCalls: PendingCalls = new Map()
-  if (internal) internal.busy = () => pendingCalls.size > 0
+  let holds = 0
+  if (internal) internal.busy = () => pendingCalls.size > 0 || holds > 0
+  const busy = (): Disposable => {
+    holds++
+    let held = true
+    return {
+      [Symbol.dispose]: () => {
+        if (held) holds--
+        held = false
+      },
+    }
+  }
 
   const mailbox = new Mailbox<In>({
     bound: opts?.mailbox,
@@ -167,6 +168,17 @@ export function spawnProcess<T, In, A>(
     }
     core.children.clear()
   }
+
+  // self.spawn: ownership that doesn't depend on the ambient window. Spawns
+  // from an instance that has ended — a crashed instance's stray callback,
+  // or anything after end of life — are disposed at once, never adopted
+  let reaped = false
+  const spawnFor = (generation: number): Self<In>['spawn'] =>
+    ((p: Proc<unknown, unknown, unknown>, a: unknown, o?: SpawnOpts<unknown>) => {
+      const child = withScope(core, () => spawnProcess(p, a, o))
+      if (reaped || generation !== restarts) child[Symbol.dispose]()
+      return child
+    }) as Self<In>['spawn']
 
   // ---------- the drive loop ----------
 
@@ -213,7 +225,7 @@ export function spawnProcess<T, In, A>(
       controller = new AbortController()
       try {
         // inside the try: a throw while binding the parameters is a crash
-        const g = (gen = proc(selfFor(mailbox, controller.signal, post), args))
+        const g = (gen = proc(selfFor(mailbox, { signal: controller.signal, cast: post, spawn: spawnFor(restarts), busy }), args))
         for (let r = await step(g); !r.done; r = await step(g)) publish(r.value)
         if (phase === 'running') transition('done', { pending: false })
       } catch (err) {
@@ -225,6 +237,7 @@ export function spawnProcess<T, In, A>(
     mailbox.close()
     // left: calls a body received and never answered (none after a crash)
     rejectAll(pendingCalls, new Error(`nonchalant: process ${phase === 'disposed' ? 'disposed' : 'ended'}`))
+    reaped = true
     disposeChildren() // owned children die last: mailbox, then finally blocks, then children
     await Promise.all([...childSettlements])
     if (parent !== null) parent.children.delete(core)
@@ -306,4 +319,38 @@ export function spawnProcess<T, In, A>(
     await completion
   }
   return read as unknown as Process<T | undefined, In>
+}
+
+// ---------- channel ----------
+
+/**
+ * A standalone Self — a private mailbox for wrapping or testing processes
+ * (middleware hands one to an inner proc). Iteration ends when `signal` aborts
+ * or the channel is disposed, and what was spawned through it is disposed then.
+ */
+export function channel<In>(signal?: AbortSignal): Self<In> & Disposable {
+  const mailbox = new Mailbox<In>({})
+  const controller = signal === undefined ? new AbortController() : undefined
+  const sig = signal ?? controller!.signal
+  const children = new Set<Disposable>()
+  const end = (): void => {
+    mailbox.close()
+    for (const child of [...children]) child[Symbol.dispose]()
+  }
+  if (sig.aborted) end()
+  else sig.addEventListener('abort', end, { once: true })
+  const spawn = ((p: Proc<unknown, unknown, unknown>, a: unknown, o?: SpawnOpts<unknown>) => {
+    const child: Process<unknown> = withScope(null, () =>
+      spawnProcess(p, a, o, { onSettled: () => children.delete(child) }))
+    if (mailbox.closed) child[Symbol.dispose]()
+    else children.add(child)
+    return child
+  }) as Self<In>['spawn']
+  const idle = (): Disposable => ({ [Symbol.dispose]: () => {} })
+  return Object.assign(selfFor(mailbox, { signal: sig, cast: (msg) => mailbox.push(msg), spawn, busy: idle }), {
+    [Symbol.dispose]: (): void => {
+      controller?.abort()
+      end()
+    },
+  })
 }

@@ -19,6 +19,7 @@ local server, and durable-sqlite is Node-only and runs as a test.
 | `multi-tab/` | one tab auto-elected host (Web Locks) over BroadcastChannel |
 | `worker/` | ⏱ the wire over a Web Worker port, keeping expensive work off the UI thread |
 | `agent/` | ⏱ an agent loop as a process: tools as processes, human approval, durable; `?inspect` docks the inspector |
+| `job/` | ⏱ a durable job served over the wire: streamed progress, cancel, a `call()` approval gate, a client partition, and a worker kill, all in one tab |
 | `multi-agent/` | ⏱ delegation, hand-off, a state-machine supervisor, shared usage limits |
 | `delegation/` | ⏱ agents as tools, parallel tool calls, nested streams folded into one live call tree; stop cancels the tree |
 | `messaging/` | ⏱ pub/sub and a work queue as ports, with in-memory adapters |
@@ -59,6 +60,17 @@ Notes:
   processes in the tab. The page binds to their state like any other demo.
   Press *kill the machine* during a question to see `durable()` recover the
   process from its journal.
+- **job:** Press *start import*, then break things while it runs. *Disconnect
+  client* leaves the job running on the worker and marks the page's view
+  stale until *reconnect*. *Kill worker* disposes the process mid-record;
+  *restart worker* starts a scheduler that wakes the job once its interrupted
+  message is overdue, and the job replays the journal from the last committed
+  snapshot, with or without the client connected. Each
+  row shows the destination's own counts: a record in flight at a kill is
+  attempted twice and written once, because its write carries an idempotency
+  key. The job stops before three records that would overwrite and waits for
+  a `call()`; that wait survives a kill too. `job/job.test.ts` asserts each
+  case with exact counts and a hand-turned clock.
 - **multi-agent:** Brief the team, then press *kill the supervisor* while it
   is writing: the brief replays and the researcher's run count does not move,
   because the delegated call is answered from its record. Drop the budget to

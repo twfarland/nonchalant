@@ -65,6 +65,13 @@ export interface DurableOpts<T, Args> {
   maxAttempts?: number
   /** Told after a message is dead-lettered. */
   onPoison?: (key: string, dead: DeadLetter) => void
+  /**
+   * How long a message may go unacknowledged before a `scheduler` presumes
+   * the activation handling it is gone and wakes the key. Set it above your
+   * slowest message (a `sleep` sets its own deadline instead). Default 30s,
+   * the scheduler's default lease.
+   */
+  redeliverAfter?: number
 }
 
 /**
@@ -97,7 +104,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
   proc: DurableProc<T, In, Args>,
   opts: DurableOpts<T, Args>,
 ): Proc<T, In, Args> {
-  const { store, now = Date.now, version = 0, migrate, maxAttempts = Infinity } = opts
+  const { store, now = Date.now, version = 0, migrate, maxAttempts = Infinity, redeliverAfter = 30_000 } = opts
 
   return async function* (self: Self<In>, args: Args): AsyncGenerator<T> {
     const key = opts.key(args)
@@ -118,8 +125,24 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     // journaled messages waiting for the process; one reader, ended by the signal
     const inbox: Logged[] = []
     let wake = (): void => {}
+
+    // Busy while a message is unacknowledged: a registry must not evict work
+    // in flight. Not while parked on a sleep, whose journaled deadline wakes
+    // the key wherever it is, so a sleeping process may leave memory.
+    let hold: Disposable | undefined
+    let sleeping = false
+    const holdWhileWorking = (): void => {
+      const working = !sleeping && !self.signal.aborted && (inbox.length > 0 || handling > cursor)
+      if (working && hold === undefined) hold = self.busy()
+      else if (!working && hold !== undefined) {
+        hold[Symbol.dispose]()
+        hold = undefined
+      }
+    }
+
     const push = (logged: Logged): void => {
       inbox.push(logged)
+      holdWhileWorking()
       wake()
     }
     self.signal.addEventListener('abort', () => wake(), { once: true })
@@ -166,7 +189,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
         try {
           const { reply, callId } = msg as { reply?: Reply; callId?: unknown }
           if (typeof reply !== 'function') {
-            push({ seq: await write(store.append(key, epoch, msg as Json)), msg: msg as Json })
+            push({ seq: await write(store.append(key, epoch, msg as Json, undefined, now() + redeliverAfter)), msg: msg as Json })
             return
           }
           // enforced here as well as in the types: a call journaled without an
@@ -179,7 +202,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
           const answered = await store.result(key, callId)
           if (answered !== undefined) return settle(callId, answered) // asked and answered before: no work, no log entry
           const plain = plainly(msg as object)
-          push({ seq: await write(store.append(key, epoch, plain, callId)), msg: plain, callId })
+          push({ seq: await write(store.append(key, epoch, plain, callId, now() + redeliverAfter)), msg: plain, callId })
         } catch (e) {
           broken = true
           fail(e)
@@ -200,9 +223,10 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
       if (handling <= cursor) return
       const results = answers
       answers = []
+      const wakeAt = now() + redeliverAfter // for the messages queued behind this one, if any
       await write(store.commit(key, epoch, dead === undefined
-        ? { snapshot: latest, version, cursor: handling, results }
-        : { snapshot: before, version, cursor: handling, results: [], dead }))
+        ? { snapshot: latest, version, cursor: handling, results, wakeAt }
+        : { snapshot: before, version, cursor: handling, results: [], dead, wakeAt }))
       cursor = handling
       for (const [callId, answer] of results) settle(callId, answer)
     }
@@ -212,6 +236,7 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
       async next(): Promise<IteratorResult<In>> {
         inside = false
         await commit() // asking for the next message is what finishes the last one
+        holdWhileWorking()
         while (inbox.length === 0 && !self.signal.aborted)
           await Promise.race([new Promise<void>((resolve) => (wake = resolve)), failed])
         if (self.signal.aborted) return { value: undefined as never, done: true }
@@ -233,6 +258,8 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
     const inner: Self<In> = {
       signal: self.signal,
       cast: journal,
+      spawn: self.spawn,
+      busy: self.busy,
       latest: () => ({ [Symbol.asyncIterator]: () => deliver(true) }),
       [Symbol.asyncIterator]: () => deliver(false),
     }
@@ -256,7 +283,15 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
       call: (name, fn) => step(name, fn),
       sleep: async (name, ms) => {
         const left = (await step(`${name}:deadline`, () => now() + ms, true)) - now()
-        if (left > 0) await delay(left, self.signal)
+        if (left <= 0) return
+        sleeping = true
+        holdWhileWorking()
+        try {
+          await delay(left, self.signal)
+        } finally {
+          sleeping = false
+          holdWhileWorking()
+        }
       },
     }
 
@@ -282,6 +317,8 @@ export function durable<T extends Json, In extends Json | DurableCall, Args>(
         }
       }
       throw e
+    } finally {
+      hold?.[Symbol.dispose]()
     }
   }
 }

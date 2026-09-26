@@ -97,7 +97,7 @@ mount(document.getElementById('app')!, div({},
   span({}, () =&gt; (count() % 2 === 0 ? ' even' : ' odd'))))  // so is a function
 </code></pre>
 
-  <p>The view runs once and creates real DOM nodes. A process or a function placed in the tree is a <strong>binding</strong>: a live spot that updates itself when the state it read changes. Nothing else runs again. There is no re-render, so there are no dependency arrays, no memoization, and no stale closures to manage.</p>
+  <p>The view runs once and creates real DOM nodes. A process or a function placed in the tree is a <strong>binding</strong>: a live spot that updates itself when the state it read changes. Nothing else runs again. There is no re-render, so there are no dependency arrays or memoization, and an event handler never holds the props of an old render. (A closure can still keep a value you copied into it; read the process when you want the current one.)</p>
 
   <div class="demo" data-demo="counter">
     <div class="demo-head">
@@ -117,17 +117,17 @@ mount(document.getElementById('app')!, div({},
   <div class="grid2">
     <div class="card">
       <h4>Plain data, precise updates</h4>
-      <p>State is ordinary immutable objects and arrays, not signals or observable stores. Each <code>yield</code> is compared with the previous one, and only the bindings that read a changed value run again. Editing one row of a long list writes to that row alone.</p>
+      <p>State is ordinary immutable objects and arrays, not signals or observable stores. Each <code>yield</code> is compared with the previous one, and only the bindings that read a changed value run again. Editing one row of a long list writes to that row alone, though the work of finding that row still grows with the list.</p>
       <a class="more" href="./guide.html#updates">How updates stay small →</a>
     </div>
     <div class="card">
-      <h4>Input can't race</h4>
-      <p>Each process handles one message at a time. A double-submitted form queues instead of colliding, a search box can skip straight to the newest query, and in-flight requests are cancelled when their process ends.</p>
+      <h4>Input, in order</h4>
+      <p>Each process handles one message at a time, so its state never sees two updates interleave. What happens to input that arrives mid-work is a choice you write per process: handle it next, keep only the newest, cancel the work in flight, or drop answers that come back late. Ordering stops at the process: two processes can still act on the same record.</p>
       <a class="more" href="./guide.html#input">Input, in order →</a>
     </div>
     <div class="card">
       <h4>Location doesn't matter</h4>
-      <p>A process doesn't know where it runs. One line moves it into a Web Worker, another tab, or a server, and the code that reads it stays the same. Only small patches of data cross the connection, never HTML.</p>
+      <p>A process doesn't know where it runs. One line moves it into a Web Worker, another tab, or a server, and the code that reads it stays the same. What it can do wrong changes: across a connection its value can go stale and a call can fail, and both show up on the same handle. Only small patches of data cross the connection, never HTML.</p>
       <a class="more" href="./anywhere.html">Run it anywhere →</a>
     </div>
     <div class="card">
@@ -142,7 +142,7 @@ mount(document.getElementById('app')!, div({},
     </div>
     <div class="card">
       <h4>Measured, not promised</h4>
-      <p>The claims about update precision are assertions in CI: exact DOM-write counts for a game and a 1,000-row benchmark, a bound on diff time, and checks that nothing leaks after disposal.</p>
+      <p>The claims about update precision are assertions in CI: exact DOM-write counts for a game and a 1,000-row benchmark, a bound on diff time, and checks that nothing leaks after disposal. End-to-end timings are measured separately, with the slow cases shown.</p>
       <a class="more" href="./guide.html#budgets">The numbers →</a>
     </div>
   </div>
@@ -152,6 +152,17 @@ mount(document.getElementById('app')!, div({},
   <div class="sec-head"><span class="sec-num">04</span><h2>See it run</h2></div>
 
   <p>These demos run on this page using the library directly. Under each one, <em>source</em> shows the file that is running, so the listing and the demo are always the same code.</p>
+
+  <p>The first one is where the pieces meet. A durable job imports twelve records on a simulated worker in this tab, and the page reads it over the wire like any other process. Disconnect the client and the job keeps going while the page shows its last value as stale, then catches up when you reconnect. Kill the worker and it restarts from its last saved state: records already written are not written again, and a write that was in flight at the kill is retried under the same idempotency key, which the destination applies once. The counts on each row come from the destination, not from the job. Records show as written the moment they are, but they are saved when the job moves on, so a kill can briefly send one back to queued before the replay writes it.</p>
+
+  <div class="demo" data-demo="job">
+    <div class="demo-head">
+      <span class="demo-title">A long-running job</span>
+      <span class="demo-note">start it, then disconnect the client or kill the worker mid-run · the counts are the destination's own</span>
+    </div>
+    <div class="demo-stage" data-stage></div>
+    <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
+  </div>
 
   <div class="demo" data-demo="todos">
     <div class="demo-head">
@@ -165,13 +176,13 @@ mount(document.getElementById('app')!, div({},
   <div class="demo" data-demo="typeahead">
     <div class="demo-head">
       <span class="demo-title">Typeahead</span>
-      <span class="demo-note">type quickly: while a search runs, only the newest query waits its turn</span>
+      <span class="demo-note">type quickly: each keystroke cancels the search in flight, and a late answer is never shown</span>
     </div>
     <div class="demo-stage" data-stage></div>
     <details class="demo-src"><summary>source</summary><pre><code data-src></code></pre></details>
   </div>
 
-  <p>There are more demos further on: a form, a drag gesture, and a game in <a href="./guide.html">the guide</a>, a Web Worker in <a href="./anywhere.html#worker">Run anywhere</a>, and an AI agent in <a href="./server.html#agents">Server &amp; agents</a>. The <a href="./examples/">example gallery</a> adds TodoMVC, routing, undo and redo, a query cache, the 7GUIs, and the js-framework-benchmark app.</p>
+  <p>The job's full source and its failure tests are in the <a href="./examples/job/">example gallery</a>. There are more demos further on: a form, a drag gesture, and a game in <a href="./guide.html">the guide</a>, a Web Worker in <a href="./anywhere.html#worker">Run anywhere</a>, and an AI agent in <a href="./server.html#agents">Server &amp; agents</a>. The <a href="./examples/">example gallery</a> adds TodoMVC, routing, undo and redo, a query cache, the 7GUIs, and the js-framework-benchmark app.</p>
 </section>
 
 <section id="fit">
@@ -193,7 +204,7 @@ mount(document.getElementById('app')!, div({},
   </table>
   </div>
 
-  <p>What's new is putting all of these behind one primitive. A piece of state can grow from a widget into shared state, move to a server, and become a durable workflow without being rewritten, and the code that reads it doesn't change along the way.</p>
+  <p>What's new is putting all of these behind one primitive. A piece of state can grow from a widget into shared state and move to a server without being rewritten, and the code that reads it doesn't change along the way. Making it durable keeps the same shape but asks more of the body: it restarts from its last saved snapshot rather than resuming mid-generator, and its side effects go through recorded steps. <a href="./server.html#durable">Server &amp; agents</a> spells out what changes.</p>
 
   <h3>What it isn't</h3>
 

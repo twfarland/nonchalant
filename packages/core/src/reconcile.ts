@@ -82,51 +82,64 @@ function walk(prev: Json, next: Json, path: string, ops: Patch): void {
 
 /** Pure: never mutates `doc`, the patch, or the patch's inserted values. */
 export function applyPatch(doc: Json, patch: Patch): Json {
+  // containers this call copied: nothing outside it holds them yet, so later
+  // ops edit them in place and each container is copied at most once per patch
+  const fresh = new Set<object>()
   let root = doc
   for (const op of patch) {
     const keys = parsePath(op[1])
-    if (keys.length !== 0) root = applyAt(root, keys, 0, op)
+    if (keys.length !== 0) root = applyAt(root, keys, 0, op, fresh)
     else if (op[0] === 'del') throw new Error('applyPatch: cannot del the root')
-    else root = applyLeaf(root, op)
+    else root = applyLeaf(root, op, fresh)
   }
   return root
 }
 
-function applyAt(node: Json, keys: string[], i: number, op: Op): Json {
+/** `node` itself if this patch already copied it, else a copy it now owns. */
+function writable<T extends Json[] | { [key: string]: Json }>(node: T, fresh: Set<object>): T {
+  if (fresh.has(node)) return node
+  const copy = (Array.isArray(node) ? node.slice() : { ...node }) as T
+  fresh.add(copy)
+  return copy
+}
+
+function applyAt(node: Json, keys: string[], i: number, op: Op, fresh: Set<object>): Json {
   const k = keys[i] as string
   const last = i === keys.length - 1
 
   if (Array.isArray(node)) {
     const idx = arrayIndex(k, node.length)
-    const copy = node.slice()
-    copy[idx] = last ? applyLeaf(node[idx] as Json, op) : applyAt(node[idx] as Json, keys, i + 1, op)
+    const child = node[idx] as Json
+    const copy = writable(node, fresh)
+    copy[idx] = last ? applyLeaf(child, op, fresh) : applyAt(child, keys, i + 1, op, fresh)
     if (last && op[0] === 'del') copy.splice(idx, 1)
     return copy
   }
   if (isRecord(node)) {
-    const copy: { [key: string]: Json } = { ...node }
     // a del, or a set of undefined (the same rule reconcile follows), removes the key
     const remove = last && op[0] !== 'splice' && (op as unknown[])[2] === undefined
     if ((remove ? op[0] === 'del' : !last) && !Object.hasOwn(node, k))
       throw new Error(`applyPatch: missing path segment ${JSON.stringify(k)}`)
+    const child = node[k] as Json
+    const copy = writable(node, fresh)
     if (remove) {
       delete copy[k]
       return copy
     }
-    setOwn(copy, k, last ? applyLeaf(node[k] as Json, op) : applyAt(node[k] as Json, keys, i + 1, op))
+    setOwn(copy, k, last ? applyLeaf(child, op, fresh) : applyAt(child, keys, i + 1, op, fresh))
     return copy
   }
   throw new Error('applyPatch: path descends into a non-container')
 }
 
 /** The op applied to the value it targets (a root op, or the last segment's). A `del` is the container's job. */
-function applyLeaf(current: Json, op: Op): Json {
+function applyLeaf(current: Json, op: Op, fresh: Set<object>): Json {
   switch (op[0]) {
     case 'set': return op[2]
     case 'splice': {
       if (!Array.isArray(current)) throw new Error('applyPatch: splice target is not an array')
       assertSplice(current, op)
-      const copy = current.slice()
+      const copy = writable(current, fresh)
       copy.splice(op[2], op[3], ...op[4])
       return copy
     }
@@ -148,6 +161,12 @@ function assertSplice(target: Json[], op: Extract<Op, ['splice', ...unknown[]]>)
 }
 
 function setOwn(target: { [key: string]: Json }, key: string, value: Json): void {
+  // an own data property (the copy's, from the spread) takes a plain write; a
+  // new key is defined, so `__proto__` or a frozen inherited name can't intercept it
+  if (Object.hasOwn(target, key)) {
+    target[key] = value
+    return
+  }
   Object.defineProperty(target, key, {
     configurable: true,
     enumerable: true,

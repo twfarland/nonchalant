@@ -42,7 +42,7 @@ const Shell = (page: VNode | Process<VNode | undefined>): VNode =>
 
 // ---------- the router view ----------
 
-const RouterView: Proc<VNode, never, void> = async function* () {
+const RouterView: Proc<VNode, never, void> = async function* (self) {
   let current: Process<VNode | undefined> | null = null
 
   for await (const route of router.route) {
@@ -51,9 +51,9 @@ const RouterView: Proc<VNode, never, void> = async function* () {
     if (route === 'about') {
       yield Shell(Spinner()) // interim yield: the loading state
       const { AboutView } = await import('./about.ts') // the code-split point
-      current = spawn(AboutView, undefined)
+      current = self.spawn(AboutView, undefined) // owned, though spawned after an await
     } else {
-      current = spawn(HomeView, undefined)
+      current = self.spawn(HomeView, undefined)
     }
 
     yield Shell(current) // a view process is a valid slot

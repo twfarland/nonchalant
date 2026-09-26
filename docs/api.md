@@ -17,11 +17,11 @@ The runtime. No dependencies, no DOM.
 
 | export | signature | what it does | concept |
 |---|---|---|---|
-| `spawn` | `spawn(proc, args, opts?)` → `Process<T \| undefined, In>`; with `opts.initial`, `Process<T, In>` | Runs an async generator as a supervised process. Spawns made during a process's synchronous step belong to it. | [spawn](concepts.md#spawn) |
+| `spawn` | `spawn(proc, args, opts?)` → `Process<T \| undefined, In>`; with `opts.initial`, `Process<T, In>` | Runs an async generator as a supervised process. A bare `spawn` from inside a process body attaches to that process only during the synchronous part of a step; use `self.spawn` there, which is owned across `await`. | [spawn](concepts.md#spawn) |
 | `derive` | `derive<T>(fn: () => T)` → `Process<T>` | A memoised computation over other processes. Recomputes when what it read changes; notifies only when its result changes. No mailbox. | [derive](concepts.md#derive) |
 | `cell` | `cell<T>(initial: T)` → `Process<T, T>` | Sugar for widget state: a process whose messages are its next values. | [Layers](concepts.md#layers-the-primitive-and-its-sugar) |
 | `reducer` | `reducer<T, In, A = void>(init: (args: A) => T, reduce: Reducer<T, In>)` → `Proc<T, In, A>` | Sugar for the loop-switch-yield process: yields `init(args)`, then `reduce(state, msg)` for each message whose result is a different state (`!==`). `init` reruns on an `on-crash` restart; under `durable`, the restored snapshot replaces it. Named after `reduce`. | [Layers](concepts.md#reducer) |
-| `channel` | `channel<In>(signal?: AbortSignal)` → `Self<In> & Disposable` | A standalone mailbox implementing `Self`, for middleware and for driving a generator in tests. Iteration ends when `signal` aborts or the channel is disposed. | [Self](concepts.md#self-from-the-inside) |
+| `channel` | `channel<In>(signal?: AbortSignal)` → `Self<In> & Disposable` | A standalone mailbox implementing `Self`, for middleware and for driving a generator in tests. Iteration ends when `signal` aborts or the channel is disposed, and children spawned through its `spawn` are disposed then. | [Self](concepts.md#self-from-the-inside) |
 | `mount` | `mount<Out>(sink: Sink<Out>, view: ProcessBase<Out \| undefined> \| Out)` → `Disposable` | Attaches a view to any sink. `@nonchalant/dom` exports a DOM-specific `mount` that most code uses instead. | [Views and sinks](concepts.md#views-and-sinks) |
 | `onProcessError` | `onProcessError(handler: (error: unknown, name: string) => void)` → `() => void` | Observes every process crash, including ones a restart recovers from: the thrown value and the generator function's name, a microtask after the crash. One handler at a time; returns its remover. With none installed, a crash shows only on the handle and in rejected calls. | [Error handling](errors.md#processes) |
 
@@ -65,14 +65,15 @@ The runtime. No dependencies, no DOM.
 | `define` | `define(proc, opts?: DefineOpts<T>)` → `Definition<T, In, A>`; with `opts.initial`, `Definition<T, In, A, never>` | A schema entry: the generator a name resolves to, plus spawn options and `evict`. | [Registry](concepts.md#registry) |
 | `registry` | `registry<S>(defs: S, opts?: RegistryOpts)` → `RegistryHandle<S>` | A local registry over a typed schema. | [Registry](concepts.md#registry) |
 | `RegistryHandle.lookup` | `lookup(name, args?)` → `ProcessOf<S[name]>` | Get-or-spawn by name plus arguments (argument key order ignored). Reads are `T \| undefined` unless the definition has `initial`. Throws for a name not in the schema. | [Registry](concepts.md#registry) |
-| `RegistryHandle.evict` | `evict(name, args?)` → `void` | Disposes and forgets one entry, or every entry under the name. | [Registry](concepts.md#registry) |
+| `RegistryHandle.evict` | `evict(name, args?)` → `void` | Disposes and forgets one entry, or every entry under the name, busy or not. | [Registry](concepts.md#registry) |
 
 `DefineOpts<T>` is `SpawnOpts<T>` plus `evict?: number`: milliseconds to keep an
-unwatched process alive (finite, non-negative; omit to never auto-evict).
+unwatched process alive (finite, non-negative; omit to never auto-evict). A
+process that is busy when its idle window ends gets another window.
 
 `RegistryOpts` is `{ maxEntries?: number }` (positive; omit for no cap). Past
 the cap, the least recently looked-up *unwatched* entries are disposed.
-Watched entries, and entries holding unanswered calls, are never evicted, so a registry whose every entry is watched
+Watched entries, and busy ones (holding unanswered calls, or a `self.busy()` hold), are never evicted, so a registry whose every entry is watched
 can sit above the cap until watchers leave. A watcher is an effect, or a
 derive or iterator an effect reads through; a derive read only as a snapshot
 does not keep an entry alive.
@@ -94,7 +95,7 @@ does not keep an entry alive.
 | `Res<M>` | The reply type of a call member. |
 | `Process<T, In>` | The outside face: `ProcessBase<T>` plus `cast` and `call` where `In` allows them. |
 | `ProcessBase<T>` | Read, `pending`, `stale`, `error`, iteration, and disposal. |
-| `Self<In>` | The inside face: an `AsyncIterable<In>` mailbox, `signal`, `latest()`, `cast`. |
+| `Self<In>` | The inside face: an `AsyncIterable<In>` mailbox, `signal`, `latest()`, `cast`, `spawn` (same signature as `spawn`; the child is owned by this process from anywhere in the body, including after an `await`), and `busy()` (a `Disposable` hold: a registry does not evict the process while one is open). |
 | `Reducer<T, In>` | `(state: T, msg: In) => T`: what `reducer` folds with. Returns the next state, or the same state for no change; a `Call` member answers through `msg.reply` before returning. |
 | `Proc<T, In, Args>` | `(self: Self<In>, args: Args) => AsyncGenerator<T, unknown, undefined>`: what `spawn` runs. A return value is not a `T`, so driving one by hand needs a `done` check before reading `next().value`. |
 | `Definition<T, In, Args, Before = undefined>` | A phantom-typed schema entry. `Before` is what a read returns ahead of the first yield: `undefined`, or `never` when `define` got `initial`. |
@@ -254,6 +255,7 @@ storage port. Isomorphic. [Processes on the server](server.md) is the guide.
 | `migrate` | none | `(old: Json, from: number) => T`: brings a snapshot committed under another version up to date. Required once `version` moves. |
 | `maxAttempts` | no limit | How many times one message may crash the process before it is dead-lettered and the cursor steps past it. |
 | `onPoison` | none | `(key: string, dead: DeadLetter) => void`: told after a message is dead-lettered. |
+| `redeliverAfter` | `30_000` | How long a message may go unacknowledged before its key is due and a `scheduler` wakes it, presuming the activation handling it gone. Set it above your slowest message; a `sleep` sets its own deadline. |
 
 `SchedulerOpts`:
 
@@ -274,11 +276,11 @@ change nothing and reject with `Fenced` if the key has been claimed since;
 | method | signature | job |
 |---|---|---|
 | `load` | `(key) => Promise<Loaded>` | Claim the key (raise its epoch) and return the acknowledged state. |
-| `append` | `(key, epoch, msg: Json, callId?) => Promise<number>` | Journal an inbound message before it is handled; returns its sequence number. |
+| `append` | `(key, epoch, msg: Json, callId?, wakeAt?: number) => Promise<number>` | Journal an inbound message before it is handled; returns its sequence number. With `wakeAt`, a key that has no wake time becomes due then. |
 | `pending` | `(key, cursor) => Promise<Logged[]>` | Messages after `cursor`, in order: what a restart replays. |
 | `putStep` | `(key, epoch, seq, index, name, result: Json, wakeAt?: number) => Promise<void>` | Record one completed effect, or a failed attempt, of message `seq`. With `wakeAt`, the key is also due at that time, replacing any earlier wake. |
 | `steps` | `(key, seq) => Promise<StepRecord[]>` | What is already recorded for that message. |
-| `commit` | `(key, epoch, commit: Commit) => Promise<void>` | Acknowledge one message: snapshot, version, cursor, answers, and any dead letter land together or not at all, and the key's wake time is cleared. |
+| `commit` | `(key, epoch, commit: Commit) => Promise<void>` | Acknowledge one message: snapshot, version, cursor, answers, and any dead letter land together or not at all, with the key's wake time moved to `commit.wakeAt` if messages remain past the cursor, and cleared if none do. |
 | `result` | `(key, callId) => Promise<Json \| undefined>` | The answer already given to that call, if any. |
 | `due` | `(now: number, until: number, limit: number) => Promise<string[]>` | Up to `limit` keys whose wake time is at or before `now`, earliest first; in the same operation each one's wake time moves to `until` (a lease). |
 

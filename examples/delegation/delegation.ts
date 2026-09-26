@@ -9,7 +9,6 @@
 // runs belong to the agent that spawned them, so disposing the root aborts
 // every model call and tool in the tree through `self.signal`.
 
-import { spawn } from '@nonchalant/core'
 import type { Proc, Process } from '@nonchalant/core'
 import { evaluate } from '../agent/tools.ts'
 
@@ -193,10 +192,7 @@ export const agent = (name: string, { model, tools }: Env): Tool => ({
       n = { ...n, status: 'calling', children: [...n.children, ...calls.map((c) => c.node)] }
       yield n
 
-      // Spawned straight after a yield, before any await: that is this
-      // process's own step, so the runs are owned by it and die with it.
-      // (Spawned after the `await model.plan` above, they would run unowned.)
-      const runs: Process<Node>[] = calls.map((c) => spawn(c.use.run, c.run, { initial: c.node }))
+      const runs: Process<Node>[] = calls.map((c) => self.spawn(c.use.run, c.run, { initial: c.node }))
       for await (const [i, child] of merge(runs, self.signal)) {
         n = { ...n, children: n.children.with(at + i, child) }
         yield n

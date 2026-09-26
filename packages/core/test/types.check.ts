@@ -65,10 +65,21 @@ const b: boolean = open()
 void b
 
 // --- Self: the inside face ---
+declare const clockProcEarly: Proc<number, never, void>
 declare const self: Self<CartMsg>
 self.signal satisfies AbortSignal
 self.latest() satisfies AsyncIterable<CartMsg>
+self.busy() satisfies Disposable
 self.cast({ type: 'remove', id: 1 })
+const ownedClock: Process<number | undefined, never> = self.spawn(clockProcEarly, undefined)
+const seededClock: Process<number, never> = self.spawn(clockProcEarly, undefined, { initial: 0 })
+const ownedCart = self.spawn(cartProc, { userId: 'u1' })
+ownedCart.cast({ type: 'remove', id: 1 })
+// @ts-expect-error — without initial, an owned child reads T | undefined like spawn
+const ownedNow: number = self.spawn(clockProcEarly, undefined)()
+// @ts-expect-error — args are checked against the proc
+self.spawn(cartProc, { user: 'u1' })
+void ownedClock, seededClock, ownedNow
 
 // --- registry schema: typed lookup, arity-checked ---
 interface Shop {

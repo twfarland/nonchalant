@@ -71,10 +71,11 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
       const e = entry(key)
       return { snapshot: e.snapshot, version: e.version, cursor: e.cursor, epoch: ++e.epoch }
     },
-    append: async (key, epoch, msg, callId) => {
+    append: async (key, epoch, msg, callId, wakeAt) => {
       const e = owned(key, epoch)
       const seq = e.next++
       e.log.push(callId === undefined ? { seq, msg } : { seq, msg, callId })
+      if (wakeAt !== undefined && !wakes.has(key)) setWake(key, wakeAt)
       return seq
     },
     pending: async (key, cursor) => entry(key).log.filter((l) => l.seq > cursor),
@@ -89,10 +90,11 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
       e.snapshot = c.snapshot
       e.version = c.version
       e.cursor = c.cursor
-      wakes.delete(key)
       for (const [callId, answer] of c.results) e.results.set(callId, [answer, now()])
       if (c.dead !== undefined) e.dead.push(c.dead)
       e.log = e.log.filter((l) => l.seq > c.cursor)
+      if (e.log.length > 0 && c.wakeAt !== undefined) setWake(key, c.wakeAt)
+      else wakes.delete(key)
       for (const seq of [...e.steps.keys()]) if (seq <= c.cursor) e.steps.delete(seq)
     },
     result: async (key, callId) => entry(key).results.get(callId)?.[0],

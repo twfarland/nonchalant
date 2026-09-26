@@ -1,6 +1,5 @@
 // The mailbox: a FIFO queue of messages plus a FIFO of parked takers, and
-// the `Self` face a generator iterates. `channel` is the same mailbox without
-// a process around it.
+// the `Self` face a generator iterates.
 
 import type { Self } from './types.ts'
 
@@ -144,32 +143,13 @@ export class Mailbox<In> {
 
 // ---------- self ----------
 
-export const selfFor = <In>(mailbox: Mailbox<In>, signal: AbortSignal, cast: (msg: In) => void): Self<In> => ({
-  signal,
-  cast,
+export const selfFor = <In>(
+  mailbox: Mailbox<In>,
+  face: Pick<Self<In>, 'signal' | 'cast' | 'spawn' | 'busy'>,
+): Self<In> => ({
+  ...face,
   [Symbol.asyncIterator]: (): AsyncIterator<In> => ({ next: () => mailbox.take(false) }),
   latest: (): AsyncIterable<In> => ({
     [Symbol.asyncIterator]: (): AsyncIterator<In> => ({ next: () => mailbox.take(true) }),
   }),
 })
-
-/**
- * A standalone Self — a private mailbox for wrapping or testing processes
- * (middleware hands one to an inner proc). Iteration ends when `signal` aborts
- * or the channel is disposed.
- */
-export function channel<In>(signal?: AbortSignal): Self<In> & Disposable {
-  const mailbox = new Mailbox<In>({})
-  const controller = signal === undefined ? new AbortController() : undefined
-  const sig = signal ?? controller!.signal
-  if (signal !== undefined) {
-    if (signal.aborted) mailbox.close()
-    else signal.addEventListener('abort', () => mailbox.close(), { once: true })
-  }
-  return Object.assign(selfFor(mailbox, sig, (msg) => mailbox.push(msg)), {
-    [Symbol.dispose]: (): void => {
-      controller?.abort()
-      mailbox.close()
-    },
-  })
-}

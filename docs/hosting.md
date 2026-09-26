@@ -184,9 +184,10 @@ limit multiplies with the number of connections:
   recently looked-up entries that nobody is watching are disposed, and a
   later lookup spawns them afresh. Watched entries are never evicted, so
   live processes can exceed the cap by the number that clients hold open;
-  set `maxWatchesPerConnection` to bound that too. An entry holding unanswered
-  calls is also kept; one merely busy with a cast, or asleep, is not. A plain
-  process evicted that way loses its state. A process whose state must
+  set `maxWatchesPerConnection` to bound that too. A busy entry is also
+  kept: one holding unanswered calls or a `self.busy()` hold, which a durable
+  process takes while a message is unacknowledged. One asleep, or plain and
+  busy with a cast, is not. A plain process evicted that way loses its state. A process whose state must
   outlive eviction should be durable, so the respawn resumes from its journal,
   and a sleeping one comes back when a `scheduler` wakes it (see
   [Processes on the server](server.md)). Pass `Infinity` for no cap.

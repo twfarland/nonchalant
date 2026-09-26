@@ -1,7 +1,8 @@
-// `self.latest()` reads the mailbox in skip-to-newest mode: while a search is
-// in flight the loop is not listening, and when it comes back it picks up the
-// most recent query and drops everything queued in between. No debounce timer,
-// no cancellation bookkeeping — the mailbox already has an answer for this.
+// A search box has to decide what happens to input that arrives while a search
+// is running. This one does two things: a new query aborts the search in
+// flight, and an answer to any query but the newest is dropped, not shown.
+// The search runs beside the loop and reports back with a self-cast, so the
+// mailbox stays open while it waits.
 
 import { spawn } from '@nonchalant/core'
 import type { Cast, Proc } from '@nonchalant/core'
@@ -9,7 +10,9 @@ import { mount } from '@nonchalant/dom'
 import { div, input, li, span, ul } from '@nonchalant/dom/tags'
 
 type State = { q: string; results: string[]; pending: boolean }
-type Msg = Cast<{ q: string }>
+type Msg =
+  | Cast<{ type: 'query'; q: string }>
+  | Cast<{ type: 'found'; seq: number; results: string[] }>
 
 const FRUIT = [
   'apricot', 'banana', 'blackberry', 'blueberry', 'cherry', 'clementine',
@@ -34,17 +37,30 @@ const search = (q: string, opts: { signal: AbortSignal }): Promise<string[]> =>
   })
 
 const typeahead: Proc<State, Msg, void> = async function* (self) {
-  let results: string[] = []
-  yield { q: '', results, pending: false }
+  let s: State = { q: '', results: [], pending: false }
+  let seq = 0                            // which query the box is showing
+  let inflight = new AbortController()
+  yield s
 
-  for await (const { q } of self.latest()) {
-    yield { q, results, pending: true }
-    try {
-      results = await search(q, { signal: self.signal })  // self.signal aborts on dispose
-      yield { q, results, pending: false }
-    } catch {
-      /* aborted or failed — keep listening */
+  for await (const msg of self) {
+    switch (msg.type) {
+      case 'query': {
+        inflight.abort()                 // cancel the search in flight
+        inflight = new AbortController()
+        const mine = ++seq
+        search(msg.q, { signal: AbortSignal.any([self.signal, inflight.signal]) }).then(
+          (results) => self.cast({ type: 'found', seq: mine, results }),
+          () => {},                      // aborted: a newer query or disposal
+        )
+        s = { ...s, q: msg.q, pending: true }
+        break
+      }
+      case 'found':
+        if (msg.seq !== seq) continue    // answered after a newer query: drop it
+        s = { ...s, results: msg.results, pending: false }
+        break
     }
+    yield s
   }
 }
 
@@ -55,7 +71,7 @@ export function run(host: Element): Disposable {
     input({
       type: 'text',
       placeholder: 'type a fruit — the fake API is slow, so type fast',
-      oninput: (e) => s.cast({ q: e.currentTarget.value }),
+      oninput: (e) => s.cast({ type: 'query', q: e.currentTarget.value }),
     }),
     span({ class: 'muted' }, () => (s().pending ? 'searching…' : `${s().results.length} matches`)),
     ul({ class: 'list' }, () => s().results.slice(0, 6).map((r) => li({ key: r }, r)))))

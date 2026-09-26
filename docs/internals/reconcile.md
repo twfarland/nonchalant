@@ -116,6 +116,15 @@ by live bindings while the next one is being built. This is the same
 structural-sharing discipline the docs ask of application code, applied
 internally.
 
+A container is copied at most once per patch. `applyPatch` keeps the set of
+copies it has made during the call (`fresh`), and a later op that reaches one
+of them writes into it rather than copying again: nothing outside the call can
+hold a copy that the call itself created. Values that arrive in the patch are
+never in that set, so an op that descends into a value an earlier op `set`
+copies it first. That keeps a k-op patch into an array of n at O(n + k) rather
+than O(k × n); a reverse of 10,000 rows is 20,000 ops and one array copy
+(`reconcile.test.ts`, "copies each container once per patch").
+
 It is strict about malformed input: a path that descends into a non-container
 or a missing key, a `del` of a missing key or of the root, a splice on a
 non-array, a splice range past the end, or an invalid `~` escape all throw. An

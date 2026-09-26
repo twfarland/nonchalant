@@ -19,11 +19,14 @@
 //   the key by raising its epoch; a write carrying an older one must change
 //   nothing and reject with `Fenced`. That is what keeps two hosts that both
 //   think they own a key from interleaving one log.
-// - A key's wake time is set by `putStep` (when given one), cleared by
-//   `commit`, and pushed forward by `due` for every key it hands out, in the
-//   same operation that reads it: that is what stops two schedulers sharing a
-//   store from both waking a key on the same pass. `load` leaves it alone, so
-//   an activation that dies before it commits is woken again.
+// - A key with unacknowledged messages always has a wake time, so work in
+//   flight is never stranded. `append` sets one when the key has none;
+//   `putStep` replaces it when given one; `commit` moves it to the commit's
+//   `wakeAt` when messages remain past the cursor, and clears it when none
+//   do; `due` pushes it forward for every key it hands out, in the same
+//   operation that reads it, which stops two schedulers sharing a store from
+//   both waking a key on the same pass. `load` leaves it alone, so an
+//   activation that dies before it commits is woken again.
 
 import type { Json } from '@nonchalant/core'
 
@@ -66,6 +69,8 @@ export interface Commit {
   results: [string, Json][]
   /** Set when the message at `cursor` is being dead-lettered rather than acknowledged. */
   dead?: DeadLetter
+  /** When messages remain past `cursor`, the key becomes due at this time; with none left, its wake is cleared. */
+  wakeAt?: number
 }
 
 /** A write refused because a later `load` of the same key has claimed it. */
@@ -78,8 +83,12 @@ export class Fenced extends Error {
 export interface Store {
   /** Claim the key: raise its epoch and return it with the acknowledged state. Its wake time is left as it was. */
   load(key: string): Promise<Loaded>
-  /** Journal an inbound message before it is handled; returns its sequence number. */
-  append(key: string, epoch: number, msg: Json, callId?: string): Promise<number>
+  /**
+   * Journal an inbound message before it is handled; returns its sequence
+   * number. With `wakeAt`, a key that has no wake time becomes due then: a
+   * message still unacknowledged at that time is presumed abandoned.
+   */
+  append(key: string, epoch: number, msg: Json, callId?: string, wakeAt?: number): Promise<number>
   /** Messages after `cursor`, in order — what a restart must replay. */
   pending(key: string, cursor: number): Promise<Logged[]>
   /**
@@ -90,7 +99,7 @@ export interface Store {
   putStep(key: string, epoch: number, seq: number, index: number, name: string, result: Json, wakeAt?: number): Promise<void>
   /** Effects and failed attempts already recorded for that message. */
   steps(key: string, seq: number): Promise<StepRecord[]>
-  /** Acknowledge one message, atomically, and clear the key's wake time. */
+  /** Acknowledge one message, atomically, and move or clear the key's wake time (see `Commit.wakeAt`). */
   commit(key: string, epoch: number, commit: Commit): Promise<void>
   /**
    * The answer this process already gave to that call, if it gave one. Answers
