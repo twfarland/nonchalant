@@ -289,6 +289,6 @@ your own data shapes when the write path is performance-sensitive.
 | reconcile: 1 change in 10k ≤ 100 µs | `reconcile.perf.test.ts` |
 | Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 node churn | `mario.golden.test.ts` |
 | js-framework-benchmark: exact DOM operation counts per operation (swap = 2 moves, clear = one bulk removal) | `bench.test.ts` |
-| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.7 KB, wire ≤ 9.8 KB, durable ≤ 2.4 KB, inspect ≤ 15 KB | `test/size.test.ts` |
+| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.6 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB, inspect ≤ 15 KB | `test/size.test.ts` |
 | an idle registry process (a chat room) ≤ 8 KB of heap | `test/room-memory.test.ts` |
 | nothing retained after dispose | `process.leaks.test.ts` |

@@ -119,7 +119,7 @@ enforces it:
 |---|---|
 | reconcile: 1 change in 10k ≤ 100 µs | `packages/core/test/reconcile.perf.test.ts` |
 | Mario: 1 view yield, ≤ 2 DOM writes/frame, 0 structural ops | `examples/mario/mario.golden.test.ts` |
-| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.7 KB, wire ≤ 9.8 KB, durable ≤ 2.4 KB, inspect ≤ 15 KB | `test/size.test.ts` |
+| bundle sizes: core ≤ 8.3 KB gzip, app ≤ 13.6 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB, inspect ≤ 15 KB | `test/size.test.ts` |
 | nothing retained after dispose | `packages/core/test/process.leaks.test.ts` |
 
 ## Test environment notes

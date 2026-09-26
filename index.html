@@ -283,7 +283,7 @@ yield s                                     // diffed → only /total readers wa
       <tr><td>One changed label in a 50-row list is one DOM write</td><td><code>dom.test.ts</code></td></tr>
       <tr><td>A 60 fps game: 1 view yield, at most 2 DOM writes in any frame, 0 structural ops</td><td><code>mario.golden.test.ts</code></td></tr>
       <tr><td>1,000 keyed rows: swap is exactly 2 moves; select writes exactly 2 class attributes; appending a row inserts 1, rebinds the 1,000 existing bindings in place with 0 re-created, and writes to no existing row; update every 10th is exactly 100 text writes</td><td><code>bench.test.ts</code></td></tr>
-      <tr><td>core ≤ 8.3 KB gzip, core + DOM ≤ 13.7 KB, wire ≤ 9.8 KB, durable ≤ 2.4 KB</td><td><code>size.test.ts</code></td></tr>
+      <tr><td>core ≤ 8.3 KB gzip, core + DOM ≤ 13.6 KB, wire ≤ 9.7 KB, durable ≤ 2.4 KB</td><td><code>size.test.ts</code></td></tr>
       <tr><td>Nothing retained after dispose</td><td><code>process.leaks.test.ts</code></td></tr>
     </tbody>
   </table>

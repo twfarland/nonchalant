@@ -113,16 +113,23 @@ Structure:
   comments — nothing fancier).
 
 ## Map
-- `packages/core` — types (`types.ts`), reconcile/patches, the reactive graph
-  (`system.ts` port + `graph.ts` + `track.ts`), the process runtime
-  (`process.ts`), the registry. `graph.ts` also holds `binding`/`rebind`, an
-  effect whose body swaps in place (how dom rebinds without recreating);
-  `process.ts` holds the `instrument()` hook (one null check per event site
-  when unused).
+- `packages/core` — types (`types.ts`); reconcile/patches (`reconcile.ts` +
+  `pointer.ts`); the reactive graph (`system.ts` port + `graph.ts`, with
+  `watch.ts` for watched-reader counting and `queue.ts` for effect
+  scheduling); read tracking (`track.ts` + `paths.ts` for patch matching +
+  `unwrap.ts`); the process runtime (`process.ts` + `mailbox.ts`, `scope.ts`
+  for ambient ownership, `calls.ts`, `instrument.ts` for `onProcessError`
+  and the `instrument()` sink — one null check per event site when unused);
+  the registry (`registry.ts` + `key.ts`). `graph.ts` also holds
+  `binding`/`rebind`, an effect whose body swaps in place (how dom rebinds
+  without recreating).
 - `packages/dom` — `h.ts`/`tags.ts` constructors, `attrs.ts` (type-only
-  per-tag attribute and event typing), `render.ts` sink.
-- `packages/wire` — `protocol.ts` codec, transports, `client.ts` (connect),
-  `host.ts` (expose), `spec/` conformance vectors.
+  per-tag attribute and event typing), and the sink: `render.ts` (mount)
+  over `element.ts`, `children.ts`, `region.ts`, `keyed.ts` (pure LIS move
+  planning), `attribute.ts`, `events.ts`, `report.ts`.
+- `packages/wire` — `protocol.ts` codec, transports, `client.ts` (connect,
+  with `pump.ts`/`entry.ts`), `host.ts` (expose, with `screen.ts`/`watch.ts`),
+  `spec/` conformance vectors.
 - `packages/durable` — `durable(proc)`: a message journal, an effect journal
   (`step`), durable calls (`call`), timers with a `scheduler`, and the
   eight-method `Store` port (epoch-fenced; answers commit atomically with the
@@ -131,7 +138,9 @@ Structure:
   real store belongs wherever its driver does; `examples/durable-sqlite` shows
   one (built-in `node:sqlite`) certified against the suite.
   Backend-facing but isomorphic; `docs/server.md` is its front page.
-- `packages/host` — the Node WebSocket host.
+- `packages/host` — the Node WebSocket host: `index.ts` (`serve`) over
+  `options.ts` (validation), `rate.ts` (token buckets keyed per client),
+  `http.ts` (upgrade gate, /schema), `session.ts` (per-connection wiring).
 - `packages/inspect` — the inspector (process tree, timeline, time travel),
   built on `instrument()` and rendered with nonchalant itself; `?inspect` on
   the todomvc and agent examples; `docs/inspect.md`.
@@ -166,9 +175,10 @@ Structure:
   (the read proxy can't see identity use) — documented approximation in
   `track.ts`.
 - A derive result is unwrapped only where it may hold read proxies, and a
-  container once found proxy-free is not walked again: a derive that mutates
-  and re-returns the same object (the mutate-in-place anti-pattern) can leak
-  a proxy out. Immutable updates never hit this.
+  container once found proxy-free is not walked again: only a container that
+  was proxy-free when first returned and later mutated in place to hold a
+  proxy (the mutate-in-place anti-pattern) can leak one out. Immutable
+  updates never hit this (`unwrap.test.ts` pins the limit).
 
 ## Status
 Implementation and docs are complete and tested. The Pages site is built and

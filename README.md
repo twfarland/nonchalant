@@ -144,7 +144,7 @@ expect((await it.next()).value).toMatchObject({ todos: [{ title: 'milk' }] })
   state patches rather than markup or code. Other languages can implement a
   host against the conformance vectors in `packages/wire/spec/`.
 - **Small, with enforced limits.** CI keeps core at or below 8.3 KB gzipped and
-  core + DOM + tags at or below 13.7 KB gzipped (`test/size.test.ts`).
+  core + DOM + tags at or below 13.6 KB gzipped (`test/size.test.ts`).
 - **Text is never parsed as HTML.** The DOM renderer creates elements and text
   nodes directly and sets attributes with `setAttribute`, so markup in
   application data stays inert text. That closes markup injection; it does not
