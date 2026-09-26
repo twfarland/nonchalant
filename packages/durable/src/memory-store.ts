@@ -46,6 +46,12 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
   const keys = new Map<string, Entry>()
   // a key with no wake time has no row here
   const wakes = new Map<string, number>()
+  // re-inserted, not updated: Map keeps insertion order, and same-time wakes go
+  // to whichever was set earliest
+  const setWake = (key: string, at: number): void => {
+    wakes.delete(key)
+    wakes.set(key, at)
+  }
   const entry = (key: string): Entry => {
     let e = keys.get(key)
     if (e === undefined) {
@@ -75,7 +81,7 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
     putStep: async (key, epoch, seq, index, name, result, wakeAt) => {
       const e = owned(key, epoch)
       e.steps.set(seq, [...(e.steps.get(seq) ?? []), { index, name, result }])
-      if (wakeAt !== undefined) wakes.set(key, wakeAt)
+      if (wakeAt !== undefined) setWake(key, wakeAt)
     },
     steps: async (key, seq) => [...(entry(key).steps.get(seq) ?? [])],
     commit: async (key, epoch, c) => {
@@ -93,7 +99,7 @@ export function memoryStore(now: () => number = Date.now): MemoryStore {
     // selection and lease in one synchronous turn: nothing can interleave between them
     due: async (at, until, limit) => {
       const ready = dueKeys(wakes, at, limit)
-      for (const key of ready) wakes.set(key, until)
+      for (const key of ready) setWake(key, until)
       return ready
     },
     keys: () => keys.size,

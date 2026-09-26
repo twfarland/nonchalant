@@ -2,7 +2,7 @@
 // the retention window keeps.
 
 import { describe, it, expect } from 'vitest'
-import { dueKeys, retained } from '../src/memory-store.ts'
+import { dueKeys, memoryStore, retained } from '../src/memory-store.ts'
 
 describe('dueKeys', () => {
   it('picks keys whose wake is at or before the time, earliest first', () => {
@@ -20,6 +20,28 @@ describe('dueKeys', () => {
 
   it('reads a Map of wake times as it is', () => {
     expect(dueKeys(new Map([['k', 1], ['j', 2]]), 1, 10)).toStrictEqual(['k'])
+  })
+})
+
+describe('memoryStore wake order', () => {
+  it('orders same-time wakes by when each was last set, so a re-set one goes last', async () => {
+    const store = memoryStore(() => 0)
+    const a = (await store.load('a')).epoch
+    const b = (await store.load('b')).epoch
+    await store.putStep('a', a, 1, 0, 'sleep', null, 10)
+    await store.putStep('b', b, 1, 0, 'sleep', null, 10)
+    await store.putStep('a', a, 1, 1, 'sleep', null, 10)
+    expect(await store.due(10, 20, 10)).toStrictEqual(['b', 'a'])
+  })
+
+  it('a lease counts as setting the wake: a key leased to a time goes after one already waiting for it', async () => {
+    const store = memoryStore(() => 0)
+    const a = (await store.load('a')).epoch
+    const b = (await store.load('b')).epoch
+    await store.putStep('a', a, 1, 0, 'sleep', null, 5)
+    await store.putStep('b', b, 1, 0, 'sleep', null, 30)
+    expect(await store.due(5, 30, 10)).toStrictEqual(['a'])
+    expect(await store.due(30, 40, 10)).toStrictEqual(['b', 'a'])
   })
 })
 

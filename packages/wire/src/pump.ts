@@ -23,13 +23,17 @@ export class WireError extends Error {
 export const pumpProc: Proc<Json, HostMsg, void> = async function* (self: Self<HostMsg>) {
   let snapshot: Json = null
   for await (const m of self) {
-    if (m.op === 'yield') {
-      snapshot = applyPatch(snapshot, m.patch) // first patch is a full snapshot: ops against the root
-      yield snapshot
-    } else if (m.op === 'done') {
-      return
-    } else if (m.op === 'raise') {
-      throw new WireError(m.error)
+    switch (m.op) {
+      case 'yield':
+        snapshot = applyPatch(snapshot, m.patch) // first patch is a full snapshot: ops against the root
+        break
+      case 'reply':
+        continue // settled by the client's call table; no state change
+      case 'done':
+        return
+      case 'raise':
+        throw new WireError(m.error)
     }
+    yield snapshot
   }
 }

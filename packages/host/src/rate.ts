@@ -10,14 +10,19 @@ export interface Bucket {
   readonly at: number
 }
 
+/**
+ * Tokens a bucket holds at `now`, capped at the burst. A clock that steps back
+ * refills nothing, and NaN must not reach tokens: NaN < 1 never refuses.
+ */
+export const refilled = (bucket: Bucket, now: number, rate: RateLimit): number => {
+  const elapsed = now - bucket.at
+  return elapsed > 0 ? Math.min(rate.burst ?? rate.max, bucket.tokens + (elapsed * rate.max) / rate.perMs) : bucket.tokens
+}
+
 /** Refill for the time since the last take, then spend one whole token if there is one. A new bucket starts full. */
 export function take(bucket: Bucket | undefined, now: number, rate: RateLimit): { ok: boolean; bucket: Bucket } {
-  const burst = rate.burst ?? rate.max
-  const from = bucket ?? { tokens: burst, at: now }
-  const elapsed = now - from.at
-  // a clock that steps back refills nothing, and NaN must not reach tokens:
-  // NaN < 1 never refuses
-  const tokens = elapsed > 0 ? Math.min(burst, from.tokens + (elapsed * rate.max) / rate.perMs) : from.tokens
+  const from = bucket ?? { tokens: rate.burst ?? rate.max, at: now }
+  const tokens = refilled(from, now, rate)
   const at = Number.isNaN(now) ? from.at : now
   return tokens < 1 ? { ok: false, bucket: { tokens, at } } : { ok: true, bucket: { tokens: tokens - 1, at } }
 }
@@ -33,11 +38,8 @@ export const bucket = (rate: RateLimit): (() => boolean) => {
 }
 
 /** A bucket that would have refilled to its burst by `now` is indistinguishable from a new one. */
-export const isFull = (bucket: Bucket, now: number, rate: RateLimit): boolean => {
-  const elapsed = now - bucket.at
-  const refill = elapsed > 0 ? (elapsed * rate.max) / rate.perMs : 0
-  return bucket.tokens + refill >= (rate.burst ?? rate.max)
-}
+export const isFull = (bucket: Bucket, now: number, rate: RateLimit): boolean =>
+  refilled(bucket, now, rate) >= (rate.burst ?? rate.max)
 
 /** The bucket key for a connection: its scope's principal, else its remote address, else none (a bucket of its own). */
 export const clientKey = (principal: string | undefined, address: string | undefined): string | undefined =>

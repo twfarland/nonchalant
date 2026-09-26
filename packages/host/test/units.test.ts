@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest'
 import type { IncomingMessage } from 'node:http'
 import type { Exposable } from '@nonchalant/wire'
 import { checkRate, resolveLimits } from '../src/options.ts'
-import { clientKey, isFull, keyedBuckets, take, type Bucket } from '../src/rate.ts'
+import { clientKey, isFull, keyedBuckets, refilled, take, type Bucket } from '../src/rate.ts'
 import { originAllowed, refusal, screenUpgrade } from '../src/http.ts'
 import { sessionGate } from '../src/session.ts'
 
@@ -81,6 +81,19 @@ describe('checkRate', () => {
 // ---------- the token bucket ----------
 
 const rate = { max: 2, perMs: 1_000, burst: 4 } // one token per 500 ms, four at most
+
+describe('refilled', () => {
+  const rate = { max: 10, perMs: 1_000, burst: 20 }
+  it.each([
+    ['no time passed', { tokens: 3, at: 100 }, 100, 3],
+    ['refills at max per perMs', { tokens: 3, at: 0 }, 500, 8],
+    ['caps at the burst', { tokens: 3, at: 0 }, 10_000, 20],
+    ['a clock stepping back refills nothing', { tokens: 3, at: 500 }, 100, 3],
+    ['NaN time refills nothing', { tokens: 3, at: 0 }, Number.NaN, 3],
+  ] as const)('%s', (_name, bucket, now, tokens) => {
+    expect(refilled(bucket, now, rate)).toBe(tokens)
+  })
+})
 
 describe('take', () => {
   it('starts a new bucket full and spends one token', () => {
