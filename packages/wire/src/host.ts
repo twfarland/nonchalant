@@ -12,15 +12,11 @@
 // screened before delivery: one malformed message from one client must not be
 // able to crash a process every other client is watching.
 
-import { reconcile } from '@nonchalant/core'
-import type { Json, ProcessBase } from '@nonchalant/core'
-import { encode, decodeClient, isRecord, PROTOCOL, type HostMsg } from './protocol.ts'
+import type { Json } from '@nonchalant/core'
+import { encode, decodeClient, PROTOCOL, type HostMsg } from './protocol.ts'
+import { errorJson, screen } from './screen.ts'
 import type { Transport } from './transport.ts'
-
-interface HostProcess extends ProcessBase<unknown> {
-  cast?(msg: unknown): void
-  call?(msg: unknown): Promise<unknown>
-}
+import { openWatch, type HostProcess, type Watch } from './watch.ts'
 
 export interface Exposable {
   lookup(name: string, ...args: unknown[]): unknown
@@ -58,12 +54,6 @@ export interface ExposeOpts {
   lookupRate?: { max: number; perMs: number; burst?: number }
 }
 
-interface Watch {
-  name: string
-  proc: HostProcess
-  stop(): void
-}
-
 /** Serve a registry over a transport; returns a disposer that releases every watch. */
 export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts): () => void {
   const watches = new Map<string, Watch>()
@@ -74,12 +64,6 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
     throw new Error('nonchalant/wire: lookupRate needs non-negative integer max and burst and a positive perMs')
   let tokens = rate?.burst ?? rate?.max ?? 0
   let refilledAt = Date.now()
-
-  const errorJson = (e: unknown, id?: number): Json => {
-    const base: { message: string; id?: number } = { message: e instanceof Error ? e.message : String(e) }
-    if (id !== undefined) base.id = id
-    return base as Json
-  }
 
   const stopWatch = (ref: string): void => {
     const w = watches.get(ref)
@@ -93,12 +77,20 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
     if (opts?.maxWatches !== undefined && watches.size >= opts.maxWatches) return 'watch limit reached'
     if (rate !== undefined) {
       const now = Date.now()
-      tokens = Math.min(rate.burst ?? rate.max, tokens + ((now - refilledAt) * rate.max) / rate.perMs)
+      // a clock that steps back refills nothing
+      tokens = Math.min(rate.burst ?? rate.max, tokens + (Math.max(0, now - refilledAt) * rate.max) / rate.perMs)
       refilledAt = now
       if (tokens < 1) return 'lookup rate exceeded'
       tokens--
     }
     return undefined
+  }
+
+  // the watch's own end (done or raise) is reported only while it is still the ref's current watch
+  const finish = (ref: string) => (w: Watch, last: HostMsg): void => {
+    if (watches.get(ref) !== w) return
+    out(last)
+    watches.delete(ref)
   }
 
   const startWatch = (ref: string, name: string, args: unknown, v: unknown): void => {
@@ -112,56 +104,7 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
       out({ op: 'raise', ref, error: errorJson(e) })
       return
     }
-    const it = proc[Symbol.asyncIterator]()
-    let active = true
-    const watch: Watch = {
-      name,
-      proc,
-      stop: () => {
-        active = false
-        void it.return?.()
-      },
-    }
-    watches.set(ref, watch)
-    void (async () => {
-      let prev: Json | undefined
-      try {
-        while (active) {
-          const r = await it.next()
-          if (r.done) break
-          const cur = r.value as Json
-          const patch = reconcile(prev as Json, cur) // prev undefined on the first pass → full snapshot
-          prev = cur
-          if (patch.length > 0) out({ op: 'yield', ref, patch })
-        }
-        if (active && watches.get(ref) === watch) {
-          if (proc.error !== undefined) out({ op: 'raise', ref, error: errorJson(proc.error) })
-          else out({ op: 'done', ref })
-          watches.delete(ref)
-        }
-      } catch (e) {
-        if (active && watches.get(ref) === watch) {
-          out({ op: 'raise', ref, error: errorJson(e) })
-          watches.delete(ref)
-        }
-      }
-    })()
-  }
-
-  /** The message to deliver to the watch's process, or an Error saying why not. */
-  const screen = (w: Watch, msg: unknown): Json | Error => {
-    if (!isRecord(msg) || typeof msg['type'] !== 'string') return new Error('invalid message: expected an object with a string type')
-    let admitted: Json | undefined = msg as Json
-    try {
-      if (reg.admit !== undefined) admitted = reg.admit(w.name, msg as { type: string } & { [key: string]: Json })
-    } catch {
-      admitted = undefined
-    }
-    if (admitted === undefined) return new Error('message refused')
-    const principal = reg.principal
-    if (principal !== undefined && isRecord(admitted) && typeof admitted['callId'] === 'string')
-      admitted = { ...admitted, callId: JSON.stringify([principal, admitted['callId']]) }
-    return admitted
+    watches.set(ref, openWatch(ref, name, proc, out, finish(ref)))
   }
 
   const stopAll = (): void => {
@@ -179,14 +122,14 @@ export function expose(reg: Exposable, transport: Transport, opts?: ExposeOpts):
         case 'cast': {
           const w = watches.get(msg.ref)
           if (w === undefined || w.proc.cast === undefined) return // fire-and-forget: nowhere to report
-          const m = screen(w, msg.msg)
+          const m = screen(msg.msg, w.name, reg)
           if (!(m instanceof Error)) w.proc.cast(m)
           return
         }
         case 'call': {
           const { ref, id } = msg
           const w = watches.get(ref)
-          const m = w === undefined ? new Error('no such process') : screen(w, msg.msg)
+          const m = w === undefined ? new Error('no such process') : screen(msg.msg, w.name, reg)
           if (m instanceof Error || w?.proc.call === undefined) {
             out({ op: 'raise', ref, error: errorJson(m instanceof Error ? m : new Error('not callable'), id) })
             return
