@@ -6,9 +6,9 @@ invariants, and changes that can break them.
 
 | doc | module | what it covers |
 |---|---|---|
-| [reconcile.md](reconcile.md) | `reconcile.ts` | the structural diff, the op vocabulary, array splices |
-| [tracking.md](tracking.md) | `track.ts` | recording proxies, path trees, patch intersection |
-| [graph.md](graph.md) | `graph.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
+| [reconcile.md](reconcile.md) | `reconcile.ts` + `pointer.ts` | the structural diff, the op vocabulary, array splices |
+| [tracking.md](tracking.md) | `track.ts` + `paths.ts` + `unwrap.ts` | recording proxies, path trees, patch intersection |
+| [graph.md](graph.md) | `graph.ts` + `watch.ts` + `queue.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
 | [process.md](process.md) | `process.ts` + `mailbox.ts`, `scope.ts`, `calls.ts`, `instrument.ts` | mailbox, drive loop, ownership, dispose ordering |
 | [registry.md](registry.md) | `registry.ts` + `key.ts` | key encoding, sharing, refcounting, eviction |
 | [dom.md](dom.md) | `dom/src/render.ts` and its siblings | regions, keyed LIS moves, rebinding, listeners, exit |
@@ -47,10 +47,10 @@ Keep two consequences in mind when changing this code:
 flowchart TD
     subgraph core["@nonchalant/core"]
         TY["types.ts<br/>the Process type surface"]
-        RC["reconcile.ts<br/>diff + apply"]
-        TR["track.ts<br/>read recording"]
+        RC["reconcile.ts + pointer.ts<br/>diff + apply"]
+        TR["track.ts + paths.ts + unwrap.ts<br/>read recording, patch matching"]
         SY["system.ts<br/>alien-signals port; do not layer here"]
-        GR["graph.ts<br/>source / gate / effect / flush"]
+        GR["graph.ts + watch.ts + queue.ts<br/>source / gate / effect / flush"]
         PR["process.ts + mailbox / scope / calls / instrument<br/>mailbox + drive loop + ownership"]
         RG["registry.ts + key.ts<br/>get-or-spawn by name"]
         IX["index.ts<br/>spawn, derive, cell, mount"]

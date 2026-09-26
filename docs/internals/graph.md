@@ -3,6 +3,15 @@
 `packages/core/src/graph.ts`, sitting on `system.ts`, `reconcile.ts`, and
 `track.ts`. This is where path precision becomes actual subscriptions.
 
+| file | holds |
+|---|---|
+| `graph.ts` | sources and their gates, computeds, effects and bindings: everything that shares the running reader (`activeSub`) |
+| `watch.ts` | watched-ness: `isWatched`, `rewatch`, and the per-source watcher `count` |
+| `queue.ts` | the effect queue: `enqueue` (the system's `notify`), `schedule`, `drain` |
+
+`watch.ts` and `queue.ts` touch no graph state, so their tests
+(`watch.test.ts`, `queue.test.ts`) drive them over hand-built nodes.
+
 The graph has two separate layers:
 
 - **`system.ts`** is a faithful port of [alien-signals](https://github.com/stackblitz/alien-signals)
@@ -55,14 +64,16 @@ Gate bookkeeping:
   stays linked to its gates indefinitely. Counting links would let that
   snapshot read pin a registry entry forever.
 
-The watched bit is not stored. `isWatched(node)` walks subscribers up to an
-effect, which is usually one hop. Each walk stamps the computeds it reaches
-(`seen`, one epoch per query), so a node is visited at most once per query:
-on a DAG of computeds the walk is O(nodes + links), not O(paths), which a
-diamond chain makes exponential. `rewatch` stamps the same way (`swept`).
-`graph.scale.test.ts` holds a 30-level diamond (2^30 paths) to exact
-recompute counts and a time bound. It is re-judged only at the transitions,
-all of them in `graph.ts`:
+The watched bit is not stored. `isWatched(node)` (`watch.ts`) walks
+subscribers up to an effect, which is usually one hop. Each walk stamps the
+computeds it reaches (`seen`, one epoch per query), so a node is visited at
+most once per query: on a DAG of computeds the walk is O(nodes + links), not
+O(paths), which a diamond chain makes exponential. `rewatch` stamps the same
+way (`swept`). `watch.test.ts` builds a 30-level diamond (2^30 paths) from
+nodes whose stamps are counting accessors and asserts exactly one visit per
+node for a query and one sweep per node for `rewatch`; `graph.scale.test.ts`
+runs the same diamond through real computeds to exact recompute counts. It is
+re-judged only at the transitions, all of them raised by `graph.ts`:
 
 - a gate is created: counted if its reader is watched;
 - `computedOper` links a computed that was not watched under a watched
@@ -128,7 +139,7 @@ publishing a value that diffs to nothing wakes nobody, which is what makes
 ## The mid-run publish problem
 
 This is the most subtle part of the module and explains why `Gate` carries
-`deferredOps`.
+`deferred`.
 
 A reader's dependency set is not known until its run finishes. If a publish
 lands *while* a reader is running, the question "did this reader read a path
@@ -142,7 +153,9 @@ touch it re-run for nothing.
 
 So the decision is deferred. A publish arriving while a gate's recorder is open
 parks its ops on the gate. When the run ends, `finalizeGates` seals the freshly
-recorded paths and *then* judges the parked ops against them:
+recorded paths and *then* judges the parked ops against them. Parked ops keep
+only their pointers, so `affects` parses them again there: the price of the
+rare path, paid instead of carrying pre-parsed segments on every gate.
 
 ```mermaid
 sequenceDiagram
@@ -152,7 +165,7 @@ sequenceDiagram
 
     E->>G: first read; recorder opens
     P->>G: publish lands mid-run
-    G->>G: park ops (deferredOps)
+    G->>G: park ops (deferred)
     E->>E: more reads (still the old snapshot)
     E->>G: run ends
     G->>G: finalize(); paths sealed
@@ -163,9 +176,10 @@ sequenceDiagram
 
 `openGates` is a stack and `finalizeGates(mark)` pops down to a mark, so nested
 runs (an effect inside an effect, a derive read by a derive) finalize only
-their own recordings. Every path that runs a reader body, including `updateComputed`,
-the cold-read branch of `computedOper`, `effect`, and `run`, takes a mark
-before and finalizes in a `finally`.
+their own recordings. Every path that runs a reader body takes a mark before
+and finalizes in a `finally`: `updateComputed`, the cold-read branch of
+`computedOper`, and `runBody`, which both an effect's first run (`start`) and
+its re-runs (`run`) go through.
 
 Callers clear `RECURSED_CHECK` before finalizing so a wake raised from
 `finalizeGates` notifies normally rather than being swallowed as re-entrancy.
@@ -179,17 +193,22 @@ path read only after the mid-run publish still wakes the reader".
 
 ## Scheduling
 
-Upstream alien-signals flushes synchronously on write. Here, writes never do:
+Upstream alien-signals flushes synchronously on write. Here, writes never do.
+The queue lives in `queue.ts`, and takes the effect runner as an argument so
+it knows nothing of what an effect is:
 
-- `scheduleFlush()` schedules one drain per burst on the microtask queue, via
+- `schedule(run)` asks for one drain per burst on the microtask queue, via
   `Promise.resolve().then(...)` rather than `queueMicrotask`, keeping the code
   core free of host-specific globals.
-- `flush()` is exported for a synchronous drain (what tests and the DOM golden
-  budgets use).
-- Wakes raised *during* a flush are drained by the running loop; no extra
+- `flush()` (graph.ts, `drain(run)`) is exported for a synchronous drain
+  (what tests and the DOM golden budgets use).
+- Wakes raised *during* a drain are run by the running loop; no extra
   microtask is scheduled.
-- One effect throwing must not strand the effects queued behind it: `flush`
+- One effect throwing must not strand the effects queued behind it: `drain`
   catches per effect, runs them all, and rethrows the first error afterwards.
+
+`queue.test.ts` pins each of these, and the parents-first order below, over
+fake effect nodes.
 
 Derives (computeds) are pull-based and unaffected by flush timing. Reading one
 always returns a consistent value, whether or not effects have run. That is the

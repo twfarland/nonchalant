@@ -1,7 +1,8 @@
 # reconcile.ts: the structural diff
 
-`packages/core/src/reconcile.ts`. No internal imports; everything else in core
-sits on top of it.
+`packages/core/src/reconcile.ts`, with the JSON-pointer syntax in
+`pointer.ts` (its only import). Everything else in core sits on top of these
+two.
 
 Two pure functions and an op vocabulary:
 
@@ -24,7 +25,9 @@ is one diff in the system, and this is it.
 | `splice` | `['splice', path, start, remove, insert]` | the array at `path` had `remove` elements at `start` replaced by `insert` |
 
 Paths are RFC 6901 JSON pointers (`/items/3/done`), with `~` escaped as `~0`
-and `/` as `~1`. The root is the empty string.
+and `/` as `~1`. The root is the empty string. `pointer.ts` holds the syntax:
+`escapeSegment` for the diff, `parsePath` for the apply and the patch matcher,
+and `arrayIndex`, the index rule below; `pointer.test.ts` tables each.
 
 This format differs from RFC 6902 JSON Patch by including `splice`, which lets a
 JSON Patch representation of "insert one row at the front of a 10,000-item
@@ -48,6 +51,9 @@ That is the ~4,900 µs row in [concepts.md](../concepts.md).
 Path strings are built only along the changed spine. `${path}/${key}` is
 constructed after the identity check fails, never for the untouched
 neighbours (measured ~5× on 10k items).
+
+`walk()` stays one function, array and record cases inline: split into a
+function per kind it measured roughly 15% slower on the budget case below.
 
 ## Objects
 
@@ -113,7 +119,7 @@ internally.
 It is strict about malformed input: a path that descends into a non-container
 or a missing key, a `del` of a missing key or of the root, a splice on a
 non-array, a splice range past the end, or an invalid `~` escape all throw. An
-array index must match RFC 6901's `0|[1-9][0-9]*` and be in range: `'01'`,
+array index (`arrayIndex`) must match RFC 6901's `0|[1-9][0-9]*` and be in range: `'01'`,
 `'1e0'`, `' 1'`, `''` and `'-'` are all rejected, although `Number()` would
 accept most of them. The wire vectors in `packages/wire/spec/vectors/patches.json`
 pin each of these cases. The wire's decoder does a structural

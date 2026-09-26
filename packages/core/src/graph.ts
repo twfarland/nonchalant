@@ -11,17 +11,9 @@
 // alien-signals propagation with its equality cuts, so the ported core in
 // system.ts stays untouched.
 //
-// Scheduling differs from upstream: writes never flush synchronously — a
-// flush is scheduled on the microtask queue (one per burst), and flush() is
-// exported for a manual synchronous drain. Derives are pull-based and always
-// read consistently regardless of flush timing.
-//
-// Watchers are gates whose reader is *watched*: an effect, or a computed with
-// an effect somewhere downstream. A derive read once outside any effect keeps
-// its links (alien-signals only drops a computed's deps when its last
-// subscriber leaves), but it does not keep a source watched: gates count in
-// only when their reader gains a watched path, and count out when it loses
-// the last one, even while some other unwatched computed still links it.
+// Derives are pull-based and always read consistently regardless of flush
+// timing; the effect queue and its microtask scheduling live in queue.ts.
+// Watchers are gates whose reader is *watched* (watch.ts).
 //
 // A publish that lands while a reader is mid-run cannot be judged then: the
 // run's final read-set is unknowable (reads later in the run still see the
@@ -41,20 +33,22 @@ import {
   type Link,
   type ReactiveNode,
 } from './system.ts'
-import { parsePath, reconcile, type Json, type Op } from './reconcile.ts'
-import { affects, createRecorder, handed, unwrap, type PathTree, type Recorder } from './track.ts'
+import { reconcile, type Json, type Op } from './reconcile.ts'
+import { parsePath } from './pointer.ts'
+import { affects, type PathTree } from './paths.ts'
+import { createRecorder, handed, type Recorder } from './track.ts'
+import { unproxy, unwrap } from './unwrap.ts'
+import { count, isWatched, rewatch, type Counted, type Stamped } from './watch.ts'
+import { drain, enqueue, schedule } from './queue.ts'
 
 interface EffectNode extends ReactiveNode {
   fn: () => void | (() => void)
   cleanup: (() => void) | void
 }
 
-interface ComputedNode<T = unknown> extends ReactiveNode {
+interface ComputedNode<T = unknown> extends Stamped {
   value: T | undefined
   getter: (previousValue?: T) => T
-  // visit stamps: the last isWatched query / rewatch walk that reached this node
-  seen: number
-  swept: number
 }
 
 interface SignalNode<T = unknown> extends ReactiveNode {
@@ -70,16 +64,14 @@ interface SourceState {
   onWatchers: ((count: number) => void) | undefined
 }
 
-interface Gate {
+interface Gate extends Counted {
   node: SignalNode<number>
   source: SourceState
   reader: ReactiveNode
   paths: PathTree | null
   recorder: Recorder | null
-  counted: boolean
-  // ops published while `recorder` was open, judged at finalizeGates
-  deferredOps: Op[]
-  deferredSegs: string[][]
+  // ops published while `recorder` was open, judged (and parsed: the rare path) at finalizeGates
+  deferred: Op[]
 }
 
 // Marks a parent whose deps include at least one child effect, gating the
@@ -88,33 +80,12 @@ const HAS_CHILD_EFFECT = 64
 
 let cycle = 0
 let runDepth = 0
-let notifyIndex = 0
-let queuedLength = 0
 let activeSub: ReactiveNode | undefined
-
-const queued: (EffectNode | undefined)[] = []
 
 // Gates whose recorder is open for the currently running reader body; used as
 // a stack so nested runs finalize only their own recordings.
 const openGates: Gate[] = []
 
-function enqueue(node: ReactiveNode): void {
-  let insertIndex = queuedLength
-  let firstInsertedIndex = insertIndex
-  let e: EffectNode | undefined = node as EffectNode
-  do {
-    queued[insertIndex++] = e
-    e.flags &= ~WATCHING
-    e = e.subs?.sub as EffectNode | undefined
-  } while (e !== undefined && e.flags & WATCHING)
-  queuedLength = insertIndex
-  // reverse the inserted run so parent effects run before their children
-  while (firstInsertedIndex < --insertIndex) {
-    const left = queued[firstInsertedIndex]
-    queued[firstInsertedIndex++] = queued[insertIndex]
-    queued[insertIndex] = left
-  }
-}
 
 const { link, unlink, propagate, checkDirty, shallowPropagate } = createReactiveSystem({
   update(node: ReactiveNode): boolean {
@@ -160,22 +131,7 @@ export function source<T extends Json>(
   const read = (): T => {
     const sub = activeSub
     if (sub === undefined) return state.snapshot as T
-    let gate = state.gates.get(sub)
-    if (gate === undefined) {
-      const node: SignalNode<number> = {
-        currentValue: 0,
-        pendingValue: 0,
-        deps: undefined,
-        depsTail: undefined,
-        subs: undefined,
-        subsTail: undefined,
-        flags: MUTABLE,
-      }
-      gate = { node, source: state, reader: sub, paths: null, recorder: null, counted: false, deferredOps: [], deferredSegs: [] }
-      node.gate = gate
-      state.gates.set(sub, gate)
-      count(gate, isWatched(sub))
-    }
+    const gate = state.gates.get(sub) ?? openGate(state, sub)
     const node = gate.node
     if (node.flags & DIRTY) {
       if (updateSignal(node)) {
@@ -199,60 +155,57 @@ export function source<T extends Json>(
     // O(watchers) scan; an inverted path index would make it O(affected) —
     // headroom, not needed at documented scales (reconcile.perf budget)
     for (const gate of state.gates.values()) {
-      if (gate.recorder !== null) {
-        // reader mid-run: park the ops, finalizeGates judges them
-        for (let i = 0; i < patch.length; i++) {
-          gate.deferredOps.push(patch[i]!)
-          gate.deferredSegs.push(segsList[i]!)
-        }
-        continue
-      }
+      // reader mid-run: its read-set is not sealed yet, so park the ops for finalizeGates to judge
+      if (gate.recorder !== null) for (const op of patch) gate.deferred.push(op)
       // recorder === null ⇒ paths !== null (finalizeGates runs in every reader's finally)
-      if (gate.paths !== null && !affects(gate.paths, patch, segsList)) continue
-      wakeGate(gate)
+      else if (gate.paths === null || affects(gate.paths, patch, segsList)) wakeGate(gate)
     }
   }
 
   return Object.assign(read, { publish })
 }
 
-// ---------- watchers ----------
+// ---------- gates ----------
 
-// Walk epochs. A computed DAG has exponentially many paths but linearly many
-// nodes; stamping each node per walk keeps both walks O(nodes + links).
-let seenEpoch = 0
-let sweptEpoch = 0
-
-/** Does an effect sit at or downstream of this node? Disposed effects have flags 0. */
-const isWatched = (node: ReactiveNode): boolean => watchedFrom(node, ++seenEpoch)
-
-function watchedFrom(node: ReactiveNode, epoch: number): boolean {
-  if ('fn' in node) return node.flags !== 0
-  // a node already reached this walk answered false (a true ends the walk)
-  if ((node as ComputedNode).seen === epoch) return false
-  ;(node as ComputedNode).seen = epoch
-  for (let l = node.subs; l; l = l.nextSub) if (watchedFrom(l.sub, epoch)) return true
-  return false
+/** The gate for a reader's first tracked read of a source, counted if that reader is watched. */
+function openGate(state: SourceState, reader: ReactiveNode): Gate {
+  const node: SignalNode<number> = {
+    currentValue: 0,
+    pendingValue: 0,
+    deps: undefined,
+    depsTail: undefined,
+    subs: undefined,
+    subsTail: undefined,
+    flags: MUTABLE,
+  }
+  const gate: Gate = { node, source: state, reader, paths: null, recorder: null, counted: false, deferred: [] }
+  node.gate = gate
+  state.gates.set(reader, gate)
+  count(gate, isWatched(reader))
+  return gate
 }
 
-function count(gate: Gate, on: boolean): void {
-  if (gate.counted === on) return
-  gate.counted = on
-  const s = gate.source
-  s.onWatchers?.((s.watched += on ? 1 : -1))
+function wakeGate(gate: Gate): void {
+  const node = gate.node
+  node.pendingValue = node.pendingValue + 1
+  node.flags = MUTABLE | DIRTY
+  const subs = node.subs
+  if (subs !== undefined) {
+    propagate(subs, runDepth !== 0)
+    schedule(run)
+  }
 }
 
-/** A computed just gained (`on`) or lost its watched path: re-judge the gates beneath it. */
-const rewatch = (node: ReactiveNode, on: boolean): void => sweep(node, on, ++sweptEpoch)
-
-function sweep(node: ReactiveNode, on: boolean, epoch: number): void {
-  for (let l = node.deps; l; l = l.nextDep) {
-    const dep = l.dep
-    const gate = (dep as SignalNode).gate
-    if (gate) count(gate, on)
-    else if ('getter' in dep && (dep as ComputedNode).swept !== epoch) {
-      ;(dep as ComputedNode).swept = epoch
-      if (on || !isWatched(dep)) sweep(dep, on, epoch)
+function finalizeGates(mark: number): void {
+  while (openGates.length > mark) {
+    const gate = openGates.pop()!
+    gate.paths = gate.recorder!.finalize()
+    gate.recorder = null
+    const ops = gate.deferred
+    if (ops.length !== 0) {
+      gate.deferred = []
+      // callers clear RECURSED_CHECK before finalizing, so this wake notifies normally
+      if (affects(gate.paths, ops)) wakeGate(gate)
     }
   }
 }
@@ -263,33 +216,6 @@ function unlinkDep(l: Link, sub: ReactiveNode): Link | undefined {
   const next = unlink(l, sub)
   if ('getter' in dep && !isWatched(dep)) rewatch(dep, false)
   return next
-}
-
-function wakeGate(gate: Gate): void {
-  const node = gate.node
-  node.pendingValue = node.pendingValue + 1
-  node.flags = MUTABLE | DIRTY
-  const subs = node.subs
-  if (subs !== undefined) {
-    propagate(subs, runDepth !== 0)
-    scheduleFlush()
-  }
-}
-
-function finalizeGates(mark: number): void {
-  while (openGates.length > mark) {
-    const gate = openGates.pop()!
-    gate.paths = gate.recorder!.finalize()
-    gate.recorder = null
-    if (gate.deferredOps.length !== 0) {
-      const ops = gate.deferredOps
-      const segs = gate.deferredSegs
-      gate.deferredOps = []
-      gate.deferredSegs = []
-      // callers clear RECURSED_CHECK before finalizing, so this wake notifies normally
-      if (affects(gate.paths, ops, segs)) wakeGate(gate)
-    }
-  }
 }
 
 // ---------- computeds ----------
@@ -349,8 +275,12 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   }
 }
 
-/** A getter's result, free of read proxies if the run was handed any. */
-const settle = <T>(v: T, h: number): T => (handed !== h ? unwrap(v) : v)
+/**
+ * A getter's result, free of read proxies: walked if the run was handed any;
+ * otherwise only checked for being a proxy itself (one captured in an earlier
+ * run and returned whole), which costs a lookup, not a walk.
+ */
+const settle = <T>(v: T, h: number): T => (handed !== h ? unwrap(v) : unproxy(v))
 
 function computedOper<T>(c: ComputedNode<T>): T {
   const flags = c.flags
@@ -411,28 +341,74 @@ function start(fn: () => void | (() => void)): EffectNode {
     subsTail: undefined,
     flags: WATCHING | RECURSED_CHECK,
   }
+  const parent = activeSub
+  if (parent !== undefined) {
+    link(e, parent, 0)
+    parent.flags |= HAS_CHILD_EFFECT
+  }
+  try {
+    runBody(e)
+  } catch (error) {
+    disposeEffect(e)
+    throw error
+  }
+  requeueIfDirtied(e)
+  return e
+}
+
+function run(e: EffectNode): void {
+  const flags = e.flags
+  if (flags & DIRTY || (flags & PENDING && checkDirty(e.deps!, e))) {
+    if (flags & HAS_CHILD_EFFECT) pruneChildEffects(e)
+    if (e.cleanup) {
+      runCleanup(e)
+      if (!e.flags) return // disposed by its own cleanup
+    }
+    e.depsTail = undefined
+    e.flags = WATCHING | RECURSED_CHECK
+    ++cycle
+    try {
+      runBody(e)
+    } finally {
+      purgeDeps(e)
+    }
+    requeueIfDirtied(e)
+  } else if (e.deps !== undefined) {
+    e.flags = WATCHING | (flags & HAS_CHILD_EFFECT)
+  }
+}
+
+/** The body as the active reader, its gates finalized even when it throws. */
+function runBody(e: EffectNode): void {
   const prevSub = activeSub
   activeSub = e
-  if (prevSub !== undefined) {
-    link(e, prevSub, 0)
-    prevSub.flags |= HAS_CHILD_EFFECT
-  }
   const mark = openGates.length
   try {
     ++runDepth
     const cleanup = e.fn()
     e.cleanup = typeof cleanup === 'function' ? cleanup : undefined
-  } catch (error) {
-    disposeEffect(e)
-    throw error
   } finally {
     --runDepth
     activeSub = prevSub
     e.flags &= ~RECURSED_CHECK
     finalizeGates(mark)
   }
-  requeueIfDirtied(e)
-  return e
+}
+
+/** An inner publish reaching a running effect through a computed sets PENDING without queueing (RECURSED_CHECK was up) — catch it once the run is over. */
+function requeueIfDirtied(e: EffectNode): void {
+  const flags = e.flags
+  // WATCHING absent ⇒ disposed, or already queued by a finalizeGates wake
+  if (flags & WATCHING && flags & (DIRTY | PENDING)) {
+    enqueue(e)
+    schedule(run)
+  }
+}
+
+function runCleanup(e: EffectNode): void {
+  const cleanup = e.cleanup as () => void
+  e.cleanup = undefined
+  untracked(cleanup)
 }
 
 // ---------- bindings (effects with a replaceable body) ----------
@@ -462,58 +438,7 @@ export function rebind(b: Binding, fn: () => void | (() => void)): void {
 
 export const unbind = (b: Binding): void => disposeEffect(b as unknown as EffectNode)
 
-/** An inner publish reaching a running effect through a computed sets PENDING without queueing (RECURSED_CHECK was up) — catch it once the run is over. */
-function requeueIfDirtied(e: EffectNode): void {
-  const flags = e.flags
-  // WATCHING absent ⇒ disposed, or already queued by a finalizeGates wake
-  if (flags & WATCHING && flags & (DIRTY | PENDING)) {
-    enqueue(e)
-    scheduleFlush()
-  }
-}
-
-function run(e: EffectNode): void {
-  const flags = e.flags
-  if (flags & DIRTY || (flags & PENDING && checkDirty(e.deps!, e))) {
-    if (flags & HAS_CHILD_EFFECT) pruneChildEffects(e)
-    if (e.cleanup) {
-      runCleanup(e)
-      if (!e.flags) return // disposed by its own cleanup
-    }
-    e.depsTail = undefined
-    e.flags = WATCHING | RECURSED_CHECK
-    const prevSub = activeSub
-    activeSub = e
-    const mark = openGates.length
-    try {
-      ++cycle
-      ++runDepth
-      const cleanup = e.fn()
-      e.cleanup = typeof cleanup === 'function' ? cleanup : undefined
-    } finally {
-      --runDepth
-      activeSub = prevSub
-      e.flags &= ~RECURSED_CHECK
-      finalizeGates(mark)
-      purgeDeps(e)
-    }
-    requeueIfDirtied(e)
-  } else if (e.deps !== undefined) {
-    e.flags = WATCHING | (flags & HAS_CHILD_EFFECT)
-  }
-}
-
-function runCleanup(e: EffectNode): void {
-  const cleanup = e.cleanup as () => void
-  e.cleanup = undefined
-  const prevSub = activeSub
-  activeSub = undefined
-  try {
-    cleanup()
-  } finally {
-    activeSub = prevSub
-  }
-}
+// ---------- disposal ----------
 
 function disposeEffect(e: EffectNode): void {
   e.flags = 0
@@ -554,47 +479,8 @@ function purgeDeps(sub: ReactiveNode): void {
 
 // ---------- scheduling ----------
 
-let flushScheduled = false
-let flushing = false
-
-function scheduleFlush(): void {
-  // wakes raised mid-flush are drained by the running loop — no microtask needed
-  if (flushScheduled || flushing) return
-  flushScheduled = true
-  // Promise, not queueMicrotask: pure ES, keeps core free of host-specific APIs
-  Promise.resolve().then(() => {
-    flushScheduled = false
-    flush()
-  })
-}
-
 /** Drain pending effect notifications now. Publishes otherwise batch to one flush per microtask. */
-export function flush(): void {
-  const prevFlushing = flushing
-  flushing = true
-  let firstError: unknown
-  let errored = false
-  try {
-    while (notifyIndex < queuedLength) {
-      const e = queued[notifyIndex]!
-      queued[notifyIndex++] = undefined
-      try {
-        run(e)
-      } catch (error) {
-        // one effect throwing must not strand the ones queued behind it
-        if (!errored) {
-          errored = true
-          firstError = error
-        }
-      }
-    }
-  } finally {
-    flushing = prevFlushing
-    notifyIndex = 0
-    queuedLength = 0
-  }
-  if (errored) throw firstError
-}
+export const flush = (): void => drain(run)
 
 /** Run fn with dependency tracking suspended — the "pull, don't subscribe" escape hatch. */
 export function untracked<T>(fn: () => T): T {

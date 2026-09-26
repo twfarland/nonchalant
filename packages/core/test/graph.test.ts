@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { source, effect, flush, untracked, binding, rebind, unbind, type Binding, type Source } from '../src/graph.ts'
 import { derive } from '../src/index.ts'
-import { affects, createRecorder, type PathTree } from '../src/track.ts'
+import { createRecorder } from '../src/track.ts'
+import { affects, type PathTree } from '../src/paths.ts'
 import type { Json, Patch } from '../src/reconcile.ts'
 
 type Item = { done: boolean; n: number }
@@ -885,6 +886,41 @@ describe('derive returns raw values, never read proxies', () => {
     expect(v.self).toBe(v)
     expect(v.meta).toBe(snap.meta)
     cyclic[Symbol.dispose]()
+  })
+
+  it('a container reused across recomputes and refilled with a proxy each time comes back raw every time', () => {
+    const src = source<{ item: { n: number } }>({ item: { n: 0 } })
+    const box: { cur?: { n: number } } = {}
+    const d = derive(() => {
+      box.cur = src().item
+      return box
+    })
+    const stop = effect(() => void d())
+    expect(d().cur).toBe(src().item)
+    src.publish({ item: { n: 1 } })
+    flush()
+    expect(d().cur).toBe(src().item)
+    expect(structuredClone(d())).toStrictEqual({ cur: { n: 1 } })
+    stop()
+    d[Symbol.dispose]()
+  })
+
+  it('a proxy captured in an earlier run and returned by a run that read no container comes back raw', () => {
+    const src = source<{ item: { n: number } }>({ item: { n: 0 } })
+    const n = source<number>(0)
+    let saved: { n: number } | undefined
+    const d = derive(() => {
+      if (saved === undefined) saved = src().item
+      return n() >= 0 ? saved : undefined
+    })
+    const stop = effect(() => void d())
+    const first = src().item
+    expect(d()).toBe(first)
+    n.publish(1)
+    flush()
+    expect(d()).toBe(first)
+    stop()
+    d[Symbol.dispose]()
   })
 })
 
