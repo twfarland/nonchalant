@@ -103,10 +103,11 @@ the processes `fn` spawns as the inspector's own; the panel uses it.
 Every emit site in `process.ts` is an optional call, `sink?.({ ... })`, and an
 optional call skips its argument when the callee is missing. With no sink
 installed, each event site is one check of a module variable: no event object
-is built, and a yield is not diffed a second time. The diff is the one thing
-that could be measurably expensive, so it is pinned with an exact count: a
-yield is diffed once with no sink and twice with one (`instrument.test.ts`,
-"diffs a yield once with no sink installed"). The reconcile perf budget and
+is built. The diff is the one thing that could be measurably expensive, so
+it is pinned with an exact count: a yield is diffed once whenever a reader or
+a sink needs the patch, and the sink receives the same ops readers are
+woken by, so installing a sink adds no second diff (`instrument.test.ts`,
+"diffs a yield only when something consumes the patch"). The reconcile perf budget and
 the mario golden budgets are unchanged. The hook adds about 220 bytes gzipped
 to core.
 

@@ -118,8 +118,9 @@ sequenceDiagram
     participant Q as flush queue
 
     C->>S: publish(next)
+    Note over S: no gates → snapshot = next, no diff
     S->>S: patch = reconcile(snapshot, next)
-    S->>S: snapshot = next
+    S->>S: commit: snapshot = next
     Note over S: no ops → return, nobody wakes
     S->>S: parse each op path once
     loop each gate
@@ -130,6 +131,12 @@ sequenceDiagram
         G->>Q: schedule flush (once per burst)
     end
 ```
+
+`publish` is discovery (`reconcile`) followed by publication (`commit`,
+which installs and invalidates). A caller that already holds the patch calls
+`commit(base, next, patch)` directly and skips the diff; the base must be the
+current snapshot. [publication.md](publication.md) has the contract and every
+path a change takes in.
 
 Note the ordering: the snapshot is assigned *before* any reader wakes, so a
 woken reader always observes the new state. An empty patch returns early, so

@@ -6,7 +6,8 @@
 
 import { describe, it, expect } from 'vitest'
 import { spawn, derive } from '../src/index.ts'
-import { computed, effect, type ComputedHandle } from '../src/graph.ts'
+import { computed, effect, flush, source, untracked, type ComputedHandle } from '../src/graph.ts'
+import type { Json } from '../src/reconcile.ts'
 import type { Proc, Self } from '../src/index.ts'
 
 // gc({execution:'async'}) collects from a clean stack — plain gc() leaves V8's
@@ -192,5 +193,32 @@ describe.skipIf(gcNow === undefined)('leak suite (nothing retained after dispose
     parent[Symbol.dispose]()
     await tick()
     expect(await collected(refs)).toBe(true) // parent still strongly held
+  })
+  it('ops parked for a reader mid-run, and the snapshots they came from, are released once judged', async () => {
+    const src = source<Json>({ a: 0 })
+    // a commit inside the reader's own run parks its ops on the gate; the
+    // next run and a later commit must leave nothing holding the old values
+    const churn = (): WeakRef<object> => {
+      const big = { blob: new Array(10_000).fill(0) }
+      let first = true
+      const stop = effect(() => {
+        const d = src() as { a: unknown }
+        if (first) {
+          first = false
+          const base = untracked(src)
+          const next = { a: big }
+          src.commit(base, next, [['set', '/a', next.a]])
+        }
+        void d.a
+      })
+      flush()
+      src.commit(src(), { a: 1 }, [['set', '/a', 1]])
+      flush()
+      stop()
+      return new WeakRef(big)
+    }
+    const ref = churn()
+    expect(await collected([ref])).toBe(true) // src is still alive and strongly held
+    expect(src()).toEqual({ a: 1 })
   })
 })

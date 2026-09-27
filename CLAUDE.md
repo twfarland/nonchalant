@@ -136,7 +136,10 @@ Structure:
   and the `instrument()` sink — one null check per event site when unused);
   the registry (`registry.ts` + `key.ts`). `graph.ts` also holds
   `binding`/`rebind`, an effect whose body swaps in place (how dom rebinds
-  without recreating). `reducer.ts` is optional sugar, like `cell`.
+  without recreating), and a source's internal `commit(base, next, patch)`:
+  publication without discovery, for producers that already know their ops
+  (`docs/internals/publication.md`; `paths.ts` alone decides what an op
+  wakes). `reducer.ts` is optional sugar, like `cell`.
 - `packages/dom` — `h.ts`/`tags.ts` constructors, `attrs.ts` (type-only
   per-tag attribute and event typing), and the sink: `render.ts` (mount)
   over `element.ts`, `children.ts`, `region.ts`, `keyed.ts` (pure LIS move

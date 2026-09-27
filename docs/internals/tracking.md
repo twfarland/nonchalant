@@ -170,6 +170,10 @@ Two cases need explicit handling at the end of a path:
   reader. Readers that enumerate keys also hold a presence node for each key,
   and that node wakes on a replacement anyway, so telling the two apart would
   add a walk of the previous snapshot per op and save nothing.
+- **An array `del`** is a one-element splice: besides a reader of that index
+  or a structural reader, it wakes any reader of a later index, since those
+  shift. The diff never emits one; `applyPatch`, the wire spec, and a
+  producer calling `commit` directly may ([publication.md](publication.md)).
 - **`splice`** wakes on `leaf`, `structural`, or `subtree` here, and otherwise
   only if a recorded child index is at or after the splice point. Indices
   before the splice point neither shift nor change, so readers of those rows

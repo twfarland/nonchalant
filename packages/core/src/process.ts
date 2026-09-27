@@ -188,8 +188,14 @@ export function spawnProcess<T, In, A>(
 
   const publish = (value: T): void => {
     if (phase !== 'running') return
-    sink?.({ type: 'yield', id, ops: reconcile(untracked(src), value as unknown as Json) })
-    src.publish(value as unknown as Json)
+    const next = value as unknown as Json
+    if (sink) {
+      // one diff serves both consumers: the sink's ops are the patch readers are invalidated with
+      const prev = untracked(src)
+      const ops = reconcile(prev, next)
+      sink({ type: 'yield', id, ops })
+      src.commit(prev, next, ops)
+    } else src.publish(next)
     hasValue = true
     errorValue = undefined
     setMeta({ pending: false, stale: false, errored: false })

@@ -44,7 +44,9 @@ flowchart TD
 ```
 
 **Every yield goes through a graph `source`.** The local update path therefore
-matches the wire path: `reconcile` runs on either type of yield. That is why a
+matches the wire path: `reconcile` runs on either type of yield (when the
+source has readers or a sink wants the ops; see
+[publication.md](publication.md)). That is why a
 remote process behaves like a local one, and why remote reads are as
 fine-grained as local ones.
 

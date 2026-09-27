@@ -3,7 +3,9 @@
 // the piece alien-signals does not have — `source`, a state root that wakes
 // readers per *path*: every publish reconciles prev → next and only dirties
 // the readers whose recorded read-paths intersect the patch ("write plain,
-// read tracked" — see docs/concepts.md).
+// read tracked" — see docs/concepts.md). Discovering the patch (reconcile)
+// and publishing it (`commit`: install, then invalidate) are separate steps,
+// so a producer that already knows its changes skips the diff.
 //
 // Mechanism: each (source, reader) pair gets a hidden *gate* — an ordinary
 // signal node whose value is a change epoch. publish() bumps only the gates
@@ -33,7 +35,7 @@ import {
   type Link,
   type ReactiveNode,
 } from './system.ts'
-import { reconcile, type Json, type Op } from './reconcile.ts'
+import { reconcile, type Json, type Op, type Patch } from './reconcile.ts'
 import { parsePath } from './pointer.ts'
 import { affects, type PathTree } from './paths.ts'
 import { createRecorder, handed, type Recorder } from './track.ts'
@@ -120,6 +122,14 @@ export interface Source<T extends Json> {
   (): T
   /** Publish the next immutable snapshot; wakes only readers whose paths the patch touches. */
   publish(next: T): void
+  /**
+   * Publish a transition whose changes are already known: install `next` and
+   * invalidate readers by `patch`, with no diff. `patch` must take `base` to
+   * `next` (applyPatch(base, patch) equals next) and `base` must be the
+   * current snapshot — a patch means nothing against any other, so a stale
+   * base throws before anything is installed. Internal: no public face.
+   */
+  commit(base: T, next: T, patch: Patch): void
 }
 
 export function source<T extends Json>(
@@ -147,22 +157,42 @@ export function source<T extends Json>(
     return gate.recorder.wrap(state.snapshot) as T
   }
 
+  // discovery: a reader-less source installs without diffing — the patch
+  // would only be matched against gates, and a reader that arrives later
+  // records against whatever snapshot is current then
   const publish = (next: T): void => {
-    const patch = reconcile(state.snapshot, next)
+    const prev = state.snapshot
     state.snapshot = next
-    if (patch.length === 0) return
-    const segsList = patch.map((op) => parsePath(op[1]))
-    // O(watchers) scan; an inverted path index would make it O(affected) —
-    // headroom, not needed at documented scales (reconcile.perf budget)
-    for (const gate of state.gates.values()) {
-      // reader mid-run: its read-set is not sealed yet, so park the ops for finalizeGates to judge
-      if (gate.recorder !== null) for (const op of patch) gate.deferred.push(op)
-      // recorder === null ⇒ paths !== null (finalizeGates runs in every reader's finally)
-      else if (gate.paths === null || affects(gate.paths, patch, segsList)) wakeGate(gate)
-    }
+    if (state.gates.size !== 0) invalidate(state, reconcile(prev, next))
   }
 
-  return Object.assign(read, { publish })
+  // publication, from changes a producer already has; identity is the
+  // revision check (snapshots are immutable, so an equal base is the same state)
+  const commit = (base: T, next: T, patch: Patch): void => {
+    if (!Object.is(base, state.snapshot)) throw new Error('nonchalant: commit base is not the current snapshot')
+    state.snapshot = next
+    if (state.gates.size !== 0) invalidate(state, patch)
+  }
+
+  return Object.assign(read, { publish, commit })
+}
+
+/**
+ * Wake the gates `patch` affects. The snapshot is already installed, so a
+ * woken reader sees the new state. Ops are only matched, never applied or
+ * retained past a parked reader's run.
+ */
+function invalidate(state: SourceState, patch: Patch): void {
+  if (patch.length === 0) return
+  const segsList = patch.map((op) => parsePath(op[1]))
+  // O(watchers) scan; an inverted path index would make it O(affected) —
+  // headroom, not needed at documented scales (reconcile.perf budget)
+  for (const gate of state.gates.values()) {
+    // reader mid-run: its read-set is not sealed yet, so park the ops for finalizeGates to judge
+    if (gate.recorder !== null) for (const op of patch) gate.deferred.push(op)
+    // recorder === null ⇒ paths !== null (finalizeGates runs in every reader's finally)
+    else if (gate.paths === null || affects(gate.paths, patch, segsList)) wakeGate(gate)
+  }
 }
 
 // ---------- gates ----------

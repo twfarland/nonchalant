@@ -38,9 +38,13 @@ export function opAffects(tree: PathTree, op: Op, segs: string[]): boolean {
     const c = node.children !== null ? node.children.get(key) : undefined
     if (i === segs.length - 1 && op[0] !== 'splice') {
       // set/del of the binding `key` under `node`: wakes if anything was read
-      // at/below that binding, or if this node's key set was observed (an
-      // array `set` replaces an element; its length changes only by splice)
-      return c !== undefined || (node.structural && !(node.array && op[0] === 'set'))
+      // at/below that binding, or if this node's key set was observed. An
+      // array `set` replaces an element in place; an array `del` is a
+      // one-element splice, shifting every later index (the diff never emits
+      // one, but applyPatch and the wire spec accept it)
+      if (c !== undefined) return true
+      if (!node.array) return node.structural
+      return op[0] === 'del' && (node.structural || readsFrom(node, Number(key)))
     }
     if (c === undefined) return false
     node = c

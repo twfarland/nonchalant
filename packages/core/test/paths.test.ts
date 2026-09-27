@@ -63,6 +63,14 @@ describe('opAffects: set and del', () => {
     expect(wakes(len, ['del', '/items/0'])).toBe(true)
   })
 
+  it('an array del is a one-element splice: a later index wakes, an earlier one sleeps', () => {
+    // read items[4] only (no length): the del at 2 shifts it
+    const row4 = t({ traversed: true }, { items: t({ traversed: true, array: true }, { 4: t({ leaf: true }) }) })
+    expect(wakes(row4, ['del', '/items/2'])).toBe(true)
+    expect(wakes(row4, ['del', '/items/5'])).toBe(false)
+    expect(wakes(row4, ['set', '/items/2', 'x'])).toBe(false)
+  })
+
   it('a bare presence node wakes for a set or del of that key only', () => {
     const presence = t({ traversed: true }, { meta: t({ traversed: true }, { tag: t() }) })
     expect(wakes(presence, ['set', '/meta/tag', 'y'])).toBe(true)

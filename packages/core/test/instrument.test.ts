@@ -1,7 +1,7 @@
 // instrument(sink): the runtime's event stream, as an inspector sees it.
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { spawn, define, registry, instrument, onProcessError } from '../src/index.ts'
+import { spawn, effect, define, registry, instrument, onProcessError } from '../src/index.ts'
 import type { Call, Cast, Proc, ProcessEvent } from '../src/index.ts'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -137,9 +137,9 @@ describe('instrument', () => {
     p[Symbol.dispose]()
   })
 
-  it('diffs a yield once with no sink installed, and once more for the sink when one is', async () => {
+  it('diffs a yield only when something consumes the patch, and once for readers and sink together', async () => {
     // reconcile lists a record's keys once per diff: count them on the yielded value
-    const keyReads = async (): Promise<number> => {
+    const keyReads = async (withReader: boolean): Promise<number> => {
       let reads = 0
       const next = new Proxy({ a: 2 }, {
         ownKeys: (target) => {
@@ -150,13 +150,17 @@ describe('instrument', () => {
       const p = spawn(async function* () {
         yield next
       }, undefined, { initial: { a: 1 } })
+      const stop = withReader ? effect(() => void p().a) : undefined
       await tick()
+      stop?.()
       p[Symbol.dispose]()
       return reads
     }
-    expect(await keyReads()).toBe(1)
+    expect(await keyReads(false)).toBe(0)
+    expect(await keyReads(true)).toBe(1)
     record()
-    expect(await keyReads()).toBe(2)
+    expect(await keyReads(false)).toBe(1)
+    expect(await keyReads(true)).toBe(1)
   })
 
   it('reports nothing once removed, and a stale remover does not unhook a newer sink', async () => {

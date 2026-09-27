@@ -9,6 +9,7 @@ invariants, and changes that can break them.
 | [reconcile.md](reconcile.md) | `reconcile.ts` + `pointer.ts` | the structural diff, the op vocabulary, array splices |
 | [tracking.md](tracking.md) | `track.ts` + `paths.ts` + `unwrap.ts` | recording proxies, path trees, patch intersection |
 | [graph.md](graph.md) | `graph.ts` + `watch.ts` + `queue.ts` + `system.ts` | sources, gates, mid-run publishes, scheduling |
+| [publication.md](publication.md) | `graph.ts` (`commit`) + `process.ts`, `wire/pump.ts` | discovery vs publication, the paths a change takes in, batching and retention |
 | [process.md](process.md) | `process.ts` + `mailbox.ts`, `scope.ts`, `calls.ts`, `instrument.ts` | mailbox, drive loop, ownership, dispose ordering |
 | [registry.md](registry.md) | `registry.ts` + `key.ts` | key encoding, sharing, refcounting, eviction |
 | [dom.md](dom.md) | `dom/src/render.ts` and its siblings | regions, keyed LIS moves, rebinding, listeners, exit |
@@ -102,6 +103,7 @@ the full list.
 | symptom | start here |
 |---|---|
 | a reader wakes too often, or not at all | [tracking.md](tracking.md) for precision rules, then `affects` |
+| a producer's supplied ops wake too little | [publication.md](publication.md) for the `commit` contract, then `opAffects` |
 | a reader misses an update that landed mid-run | [graph.md](graph.md) for deferred operations and `finalizeGates` |
 | a patch is wrong, or an apply throws | [reconcile.md](reconcile.md) for array trimming and path escaping |
 | a process outlives its parent, or dies early | [process.md](process.md) for the ambient ownership window |

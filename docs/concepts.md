@@ -119,7 +119,8 @@ inside a tracked context that should not subscribe.
 
 Every yield goes through the same pipeline: diff the new value against the old
 (`reconcile`), keep the new snapshot, wake only the readers whose recorded
-paths the diff touched.
+paths the diff touched. A process nobody reads skips the diff; there is no
+one to wake.
 
 ```mermaid
 flowchart LR
